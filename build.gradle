@@ -12,10 +12,6 @@ description = 'EndlessLevelingAddon'
 
 def hytaleInstallPath = providers.gradleProperty('hytaleInstallPath')
         .orElse('C:/Users/jojoj/AppData/Roaming/Hytale/install/release/package/game/latest')
-def hytaleToolkitPath = providers.gradleProperty('hytaleToolkitPath')
-        .orElse('C:/Users/jojoj/AppData/Local/Hytale-Toolkit')
-def hytaleJdkPath = providers.gradleProperty('hytaleJdkPath')
-        .orElse('C:/Program Files/Eclipse Adoptium/jdk-25.0.1.8-hotspot')
 
 repositories {
     // Any external repositories besides: MavenLocal, MavenCentral, HytaleMaven, and CurseMaven
@@ -25,4 +21,6 @@ repositories {
 dependencies {
     // Compile against the local server API without bundling it into the addon jar.
     compileOnly files("${hytaleInstallPath.get()}/Server/HytaleServer.jar")
+    // Compile against Endless Leveling from the sibling project output without shading it.
+    compileOnly fileTree(dir: '../Endless-Leveling-Hytale/build/libs', include: ['EndlessLeveling-*.jar'])
 }

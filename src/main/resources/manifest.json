@@ -10,7 +10,9 @@
     ],
     "DisabledByDefault": false,
     "IncludesAssetPack": true,
-    "Dependencies": {},
+    "Dependencies": {
+        "com.airijko:endlessleveling": ">=6.1"
+    },
     "OptionalDependencies": {},
     "ServerVersion": "*",
     "Main": "com.airijko.endlessleveling.EndlessLevelingAddon"
