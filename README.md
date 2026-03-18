@@ -1,2 +1,2 @@
 # Endless Leveling Addon Template
-This is a template for creating an Endless Leveling Addon for World of Warcraft. It provides a basic structure and example code to help you get started with your own addon development.
+This is a template for creating an Endless Leveling Addon
