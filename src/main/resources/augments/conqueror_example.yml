@@ -1,10 +1,24 @@
 id: conqueror_example
-name: "Conqueror_Example"
-enabled: true
+name: "Conqueror (Example)"
 tier: MYTHIC
-description: "Example custom augment based on Conqueror. Sustained combat builds momentum, increasing your damage. At full stacks your attacks pierce defenses with true damage."
+description: "Sustained combat builds momentum, increasing your damage. At full stacks your attacks pierce defenses with true damage."
 category: ON_HIT
+enabled: true
 
+ui:
+  sections:
+    - title: "Buffs"
+      body: |
+        +5% Bonus Damage per stack
+        Max stacks: +8
+      color: "#8adf9e"
+    - title: "Max Stacks Bonus"
+      body: |
+        True Damage: 25 + (15% Damage Dealt)
+      color: "#8adf9e"
+    - title: "Duration"
+      body: "Duration: 8s"
+      color: "#9ecbff"
 passives:
   buffs:
     bonus_damage:

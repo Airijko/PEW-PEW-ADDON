@@ -1,5 +1,18 @@
-id: "example_augment"
+id: example_augment
 name: "Example Augment"
+tier: COMMON
 description: "Starter augment definition for EndlessLevelingAddon"
+category: PASSIVE_STAT
 enabled: true
+
+ui:
+	sections:
+		- title: "Buffs"
+			body: |
+				+5% Strength
+			color: "#8adf9e"
+passives:
+	buffs:
+		strength:
+			value: 0.05
 
