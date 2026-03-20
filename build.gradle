@@ -21,6 +21,8 @@ repositories {
 dependencies {
     // Compile against the local server API without bundling it into the addon jar.
     compileOnly files("${hytaleInstallPath.get()}/Server/HytaleServer.jar")
-    // Compile against Endless Leveling from the sibling project output without shading it.
-    compileOnly fileTree(dir: '../Endless-Leveling-Hytale/build/libs', include: ['EndlessLeveling-*.jar'])
+    // Compile against Endless Leveling classes from the sibling project's build output.
+    compileOnly files('../Endless-Leveling-Hytale/build/classes/java/main')
+    // Augment registration parses YAML definitions from this addon.
+    compileOnly 'org.yaml:snakeyaml:2.2'
 }

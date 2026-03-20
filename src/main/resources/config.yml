@@ -1,0 +1,24 @@
+# EndlessLevelingAddon configuration
+
+# True = merge Endless Leveling Core defaults with your custom content.
+# False = fresh start for that system (Core defaults are not merged in by this addon workflow).
+core_content_merge:
+  races: true
+  classes: true
+  augments: true
+  passives: true
+
+sync:
+  # True = seed addon example files on startup when a system merge is enabled.
+  # False = do not seed addon defaults; keep only what you create manually.
+  seed_addon_examples_on_startup: true
+
+  # Core-style forced sync controls.
+  # True = overwrite that section with bundled addon defaults when version changes.
+  # False = keep custom files and only seed when missing/empty.
+  force_builtin_config: false
+  force_builtin_races: false
+  force_builtin_classes: false
+  force_builtin_augments: false
+  force_builtin_passives: false
+

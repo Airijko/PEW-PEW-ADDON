@@ -1,0 +1,7 @@
+# Use this block inside a race/class passives list, or as a reference for custom generation.
+passive:
+  type: BERZERKER
+  enabled: true
+  value: 0.2 # Up to +20% damage when hurt (full bonus at/below 35% HP)
+  threshold: 0.35 # Health percent required for max bonus; scales to 0% at full health
+

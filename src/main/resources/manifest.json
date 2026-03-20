@@ -11,7 +11,7 @@
     "DisabledByDefault": false,
     "IncludesAssetPack": true,
     "Dependencies": {
-        "com.airijko:endlessleveling": ">=6.1"
+        "com.airijko:EndlessLeveling": ">=6.1"
     },
     "OptionalDependencies": {},
     "ServerVersion": "*",

@@ -1,0 +1,5 @@
+id: "example_augment"
+name: "Example Augment"
+description: "Starter augment definition for EndlessLevelingAddon"
+enabled: true
+
