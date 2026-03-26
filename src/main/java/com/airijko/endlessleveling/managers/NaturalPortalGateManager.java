@@ -41,6 +41,12 @@ public final class NaturalPortalGateManager {
     private static final long GATE_LIFETIME_MINUTES = 30L;
     private static final int MAX_OFFSET_BLOCKS = 96;
     private static final int PLACEMENT_ATTEMPTS = 16;
+    private static final String PREFIX = "[EndlessLeveling] ";
+    private static final String PREFIX_COLOR = "#ff3b30";
+    private static final String HEADLINE_COLOR = "#ffc300";
+    private static final String WORLD_COLOR = "#66d9ff";
+    private static final String POSITION_COLOR = "#ffd166";
+    private static final String LEVEL_COLOR = "#6cff78";
 
     private static JavaPlugin plugin;
     private static ScheduledFuture<?> periodicTask;
@@ -181,7 +187,20 @@ public final class NaturalPortalGateManager {
                 int spawnLevel = resolveLevel(playerRef.getUuid());
                 int levelMin = (spawnLevel / 15) * 15;
                 int levelMax = levelMin + 15;
-                announceGate(world, blockId, x, y, z, isTestSpawn, levelMin, levelMax);
+                announceGate(world, x, y, z, levelMin, levelMax);
+                if (plugin != null) {
+                    plugin.getLogger().at(Level.INFO).log(
+                            "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d levelRange=%d-%d",
+                            world.getName(),
+                            blockId,
+                            isTestSpawn,
+                            x,
+                            y,
+                            z,
+                            levelMin,
+                            levelMax
+                    );
+                }
                 scheduleRemoval(world, blockId, x, y, z);
                 future.complete(true);
                 return;
@@ -234,35 +253,30 @@ public final class NaturalPortalGateManager {
         }, GATE_LIFETIME_MINUTES, TimeUnit.MINUTES);
     }
 
-    private static void announceGate(@Nonnull World world,
-                                     @Nonnull String blockId,
-                                     int x,
-                                     int y,
-                                     int z,
-                                     boolean isTestSpawn,
-                                     int levelMin,
-                                     int levelMax) {
+        private static void announceGate(@Nonnull World world,
+                         int x,
+                         int y,
+                         int z,
+                         int levelMin,
+                         int levelMax) {
         Universe universe = Universe.get();
         if (universe == null) {
             return;
         }
 
-        String testTag = isTestSpawn ? " [TEST]" : "";
-        Message message = Message.raw(String.format(
-            "[EndlessLeveling]%s Portal gate spawned!\n"
-                + "[EndlessLeveling] World: %s\n"
-                + "[EndlessLeveling] Position: (%d, %d, %d)\n"
-                + "[EndlessLeveling] Level Range: %d-%d\n"
-                + "[EndlessLeveling] Block: %s",
-            testTag,
-            world.getName(),
-            x,
-            y,
-            z,
-            levelMin,
-            levelMax,
-            blockId
-        )).color("#ffcc66");
+        Message message = Message.join(
+            Message.raw(PREFIX).color(PREFIX_COLOR),
+            Message.raw("Portal gate spawned!").color(HEADLINE_COLOR),
+            Message.raw("\n"),
+            Message.raw(PREFIX).color(PREFIX_COLOR),
+            Message.raw("World: " + world.getName()).color(WORLD_COLOR),
+            Message.raw("\n"),
+            Message.raw(PREFIX).color(PREFIX_COLOR),
+            Message.raw(String.format("Position: (%d, %d, %d)", x, y, z)).color(POSITION_COLOR),
+            Message.raw("\n"),
+            Message.raw(PREFIX).color(PREFIX_COLOR),
+            Message.raw(String.format("Level Range: %d-%d", levelMin, levelMax)).color(LEVEL_COLOR)
+        );
         universe.sendMessage(message);
     }
 

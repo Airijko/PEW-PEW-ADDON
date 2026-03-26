@@ -29,8 +29,8 @@ import com.airijko.endlessleveling.events.ExampleEvent;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
-import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
@@ -69,7 +69,13 @@ public class EndlessLevelingAddon extends JavaPlugin {
         if (this.filesManager.shouldMergePassivesWithCore()) {
             PassiveRegistration.registerAll(this.filesManager.getPassivesFolder());
         }
-        
+
+        ExampleFeatureManager.get().configure(
+            this.filesManager.shouldEnableExamples(),
+            this.filesManager.shouldEnableExampleCommand(),
+            this.filesManager.shouldEnableExampleEvents());
+        ExampleFeatureManager.get().registerExamples(this);
+
         this.getCommandRegistry().registerCommand(new MajorDungeonsPortalCommand());
         this.getCommandRegistry().registerCommand(new EndgameQoLPortalCommand());
         this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
@@ -79,7 +85,6 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
         this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);
-        this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, ExampleEvent::onPlayerReady);
     }
 
     @Override

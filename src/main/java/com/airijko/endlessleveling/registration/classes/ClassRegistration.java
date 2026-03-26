@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.registration.classes;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.classes.CharacterClassDefinition;
+import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.parsing.ClassParser;
 import com.hypixel.hytale.logger.HytaleLogger;
 import org.yaml.snakeyaml.Yaml;
@@ -71,6 +72,11 @@ public final class ClassRegistration {
 
             if (!definition.isEnabled()) {
                 LOGGER.atFine().log("Skipping disabled class: %s", definition.getId());
+                return false;
+            }
+
+            if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
+                LOGGER.atFine().log("Skipping example class due to config: %s", definition.getId());
                 return false;
             }
 

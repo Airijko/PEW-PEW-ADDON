@@ -1,6 +1,7 @@
 package com.airijko.endlessleveling.registration.races;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.parsing.RaceParser;
 import com.airijko.endlessleveling.races.RaceDefinition;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -71,6 +72,11 @@ public final class RaceRegistration {
 
             if (!definition.isEnabled()) {
                 LOGGER.atFine().log("Skipping disabled race: %s", definition.getId());
+                return false;
+            }
+
+            if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
+                LOGGER.atFine().log("Skipping example race due to config: %s", definition.getId());
                 return false;
             }
 

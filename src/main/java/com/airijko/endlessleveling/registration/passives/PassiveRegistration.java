@@ -6,6 +6,7 @@ import com.airijko.endlessleveling.enums.DamageLayer;
 import com.airijko.endlessleveling.enums.PassiveStackingStyle;
 import com.airijko.endlessleveling.enums.PassiveTier;
 import com.airijko.endlessleveling.enums.SkillAttributeType;
+import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.hypixel.hytale.logger.HytaleLogger;
 import org.yaml.snakeyaml.Yaml;
 
@@ -78,6 +79,11 @@ public final class PassiveRegistration {
 
             if (!config.enabled) {
                 LOGGER.atFine().log("Skipping disabled passive: %s", config.id);
+                return false;
+            }
+
+            if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), config.id)) {
+                LOGGER.atFine().log("Skipping example passive due to config: %s", config.id);
                 return false;
             }
 

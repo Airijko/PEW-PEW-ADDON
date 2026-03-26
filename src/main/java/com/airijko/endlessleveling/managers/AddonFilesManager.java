@@ -18,7 +18,6 @@ import java.security.CodeSource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
@@ -87,8 +86,7 @@ public final class AddonFilesManager {
                 AddonVersionRegistry.RACES_VERSION_FILE,
                 AddonVersionRegistry.BUILTIN_RACES_VERSION,
                 contentOptions.mergeRacesWithCore,
-                contentOptions.forceBuiltinRaces,
-                contentOptions.seedAddonExamplesOnStartup);
+                contentOptions.examplesEnabled);
 
         syncDirectoryIfNeeded(
                 "classes",
@@ -96,8 +94,7 @@ public final class AddonFilesManager {
                 AddonVersionRegistry.CLASSES_VERSION_FILE,
                 AddonVersionRegistry.BUILTIN_CLASSES_VERSION,
                 contentOptions.mergeClassesWithCore,
-                contentOptions.forceBuiltinClasses,
-                contentOptions.seedAddonExamplesOnStartup);
+                contentOptions.examplesEnabled);
 
         syncDirectoryIfNeeded(
                 "augments",
@@ -105,8 +102,7 @@ public final class AddonFilesManager {
                 AddonVersionRegistry.AUGMENTS_VERSION_FILE,
                 AddonVersionRegistry.BUILTIN_AUGMENTS_VERSION,
                 contentOptions.mergeAugmentsWithCore,
-                contentOptions.forceBuiltinAugments,
-                contentOptions.seedAddonExamplesOnStartup);
+                contentOptions.examplesEnabled);
 
         syncDirectoryIfNeeded(
                 "passives",
@@ -114,28 +110,29 @@ public final class AddonFilesManager {
                 AddonVersionRegistry.PASSIVES_VERSION_FILE,
                 AddonVersionRegistry.BUILTIN_PASSIVES_VERSION,
                 contentOptions.mergePassivesWithCore,
-                contentOptions.forceBuiltinPassives,
-                contentOptions.seedAddonExamplesOnStartup);
+                contentOptions.examplesEnabled);
     }
 
     private void syncConfigIfNeeded() {
-        if (!contentOptions.forceBuiltinConfig) {
-            return;
-        }
         int storedVersion = readConfigVersion(configFile);
-        if (storedVersion == AddonVersionRegistry.CONFIG_YML_VERSION) {
+        int targetVersion = AddonVersionRegistry.CONFIG_YML_VERSION;
+        if (storedVersion == targetVersion) {
             return;
         }
 
+        AddonContentOptions migratedOptions = contentOptions == null ? AddonContentOptions.defaults() : contentOptions;
+
         archiveFileIfExists(configFile, "config.yml", "config_version:" + storedVersion);
-        copyResourceToFile("config.yml", configFile, true);
+        writeNormalizedConfig(migratedOptions, targetVersion);
+
+        LOGGER.atInfo().log("Migrated config.yml to version %d and normalized schema", targetVersion);
+
         try {
             ensureConfigVersionMarkerOnCreate("config.yml", configFile);
         } catch (IOException exception) {
             LOGGER.atWarning().log("Failed to append config version marker: %s", exception.getMessage());
         }
-        LOGGER.atInfo().log("Synced built-in config.yml to version %d (force_builtin_config=true)",
-                AddonVersionRegistry.CONFIG_YML_VERSION);
+
         this.contentOptions = loadContentOptions();
     }
 
@@ -144,22 +141,19 @@ public final class AddonFilesManager {
             String versionFileName,
             int targetVersion,
             boolean mergeEnabled,
-            boolean forceBuiltin,
             boolean allowSeed) {
         if (!mergeEnabled || destination == null) {
             return;
         }
 
-        if (forceBuiltin) {
-            int storedVersion = readDirectoryVersion(destination, versionFileName);
-            if (storedVersion == targetVersion) {
-                return;
-            }
-            archivePathIfExists(destination.toPath(), resourceRoot, versionFileName + ":" + storedVersion);
-            clearDirectory(destination.toPath());
-            exportResourceDirectory(resourceRoot, destination, true);
+        int storedVersion = readDirectoryVersion(destination, versionFileName);
+        if (storedVersion >= 0 && storedVersion < targetVersion) {
+            exportResourceDirectory(resourceRoot, destination, false);
             writeDirectoryVersion(destination, versionFileName, targetVersion);
-            LOGGER.atInfo().log("Synced built-in %s to version %d", resourceRoot, targetVersion);
+            LOGGER.atInfo().log("Migrated %s from version %d to %d (non-destructive)",
+                    resourceRoot,
+                    storedVersion,
+                    targetVersion);
             return;
         }
 
@@ -188,17 +182,7 @@ public final class AddonFilesManager {
             Map<String, Object> root = (Map<String, Object>) rootRaw;
             Map<String, Object> merge = asMap(root.get("core_content_merge"));
             Map<String, Object> sync = asMap(root.get("sync"));
-
-            boolean forceConfig = readBoolean(sync.get("force_builtin_config"),
-                    readBoolean(root.get("force_builtin_config"), false));
-            boolean forceRaces = readBoolean(sync.get("force_builtin_races"),
-                    readBoolean(root.get("force_builtin_races"), false));
-            boolean forceClasses = readBoolean(sync.get("force_builtin_classes"),
-                    readBoolean(root.get("force_builtin_classes"), false));
-            boolean forceAugments = readBoolean(sync.get("force_builtin_augments"),
-                    readBoolean(root.get("force_builtin_augments"), false));
-            boolean forcePassives = readBoolean(sync.get("force_builtin_passives"),
-                    readBoolean(root.get("force_builtin_passives"), false));
+            Map<String, Object> examples = asMap(root.get("examples"));
 
             boolean mergeRaces = readBoolean(
                     merge.get("races"),
@@ -213,20 +197,27 @@ public final class AddonFilesManager {
                     merge.get("passives"),
                     readBoolean(root.get("enable_builtin_passives"), readBoolean(root.get("enable_passives"), true)));
 
-            boolean seedExamples = readBoolean(sync.get("seed_addon_examples_on_startup"),
+            boolean legacySeedExamples = readBoolean(sync.get("seed_addon_examples_on_startup"),
                     readBoolean(sync.get("seed_defaults_on_startup"), true));
+
+            boolean enableExamples = readBoolean(
+                    examples.get("enabled"),
+                    readBoolean(root.get("enable_examples"), legacySeedExamples));
+            boolean enableExampleCommand = readBoolean(
+                    examples.get("command"),
+                    readBoolean(root.get("enable_example_command"), true));
+            boolean enableExampleEvents = readBoolean(
+                    examples.get("events"),
+                    readBoolean(root.get("enable_example_events"), true));
 
             return new AddonContentOptions(
                     mergeRaces,
                     mergeClasses,
                     mergeAugments,
                     mergePassives,
-                    seedExamples,
-                    forceConfig,
-                    forceRaces,
-                    forceClasses,
-                    forceAugments,
-                    forcePassives);
+                    enableExamples,
+                    enableExampleCommand,
+                    enableExampleEvents);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -327,6 +318,39 @@ public final class AddonFilesManager {
         } catch (Exception ignored) {
         }
         return -1;
+    }
+
+    private void writeNormalizedConfig(AddonContentOptions options, int targetVersion) {
+        StringBuilder text = new StringBuilder();
+        text.append("# EndlessLevelingAddon configuration\n\n");
+        text.append("# True = merge Endless Leveling Core defaults with your custom content.\n");
+        text.append("# False = fresh start for that system (Core defaults are not merged in by this addon workflow).\n");
+        text.append("core_content_merge:\n");
+        text.append("  races: ").append(options.mergeRacesWithCore).append("\n");
+        text.append("  classes: ").append(options.mergeClassesWithCore).append("\n");
+        text.append("  augments: ").append(options.mergeAugmentsWithCore).append("\n");
+        text.append("  passives: ").append(options.mergePassivesWithCore).append("\n\n");
+
+        text.append("# Addon updates are always migration-only and never force overwrite your files.\n\n");
+
+        text.append("examples:\n");
+        text.append("  # Master switch for all Java example features in this addon.\n");
+        text.append("  enabled: ").append(options.examplesEnabled).append("\n\n");
+
+        text.append("  # Toggle /example command registration + execution.\n");
+        text.append("  command: ").append(options.exampleCommandEnabled).append("\n\n");
+
+        text.append("  # Toggle example event hooks (e.g. player ready welcome message).\n");
+        text.append("  events: ").append(options.exampleEventsEnabled).append("\n\n");
+
+        text.append(AddonVersionRegistry.CONFIG_VERSION_KEY).append(": ").append(targetVersion).append("\n");
+
+        try {
+            Files.writeString(configFile.toPath(), text.toString(), StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to migrate config.yml", exception);
+        }
     }
 
     private void copyResourceToFile(String resourcePath, File targetFile, boolean overwriteExisting) {
@@ -589,25 +613,6 @@ public final class AddonFilesManager {
         }
     }
 
-    private void clearDirectory(Path root) {
-        if (root == null || !Files.exists(root)) {
-            return;
-        }
-        try (Stream<Path> stream = Files.walk(root)) {
-            stream.sorted(Comparator.reverseOrder())
-                    .filter(path -> !path.equals(root))
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException e) {
-                            LOGGER.atWarning().log("Failed to delete %s: %s", path, e.getMessage());
-                        }
-                    });
-        } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to clear %s: %s", root, e.getMessage());
-        }
-    }
-
     public File getPluginFolder() {
         return pluginFolder;
     }
@@ -664,42 +669,45 @@ public final class AddonFilesManager {
         return contentOptions == null || contentOptions.mergePassivesWithCore;
     }
 
+    public boolean shouldEnableExamples() {
+        return contentOptions == null || contentOptions.examplesEnabled;
+    }
+
+    public boolean shouldEnableExampleCommand() {
+        return contentOptions == null || contentOptions.exampleCommandEnabled;
+    }
+
+    public boolean shouldEnableExampleEvents() {
+        return contentOptions == null || contentOptions.exampleEventsEnabled;
+    }
+
     private static final class AddonContentOptions {
         private final boolean mergeRacesWithCore;
         private final boolean mergeClassesWithCore;
         private final boolean mergeAugmentsWithCore;
         private final boolean mergePassivesWithCore;
-        private final boolean seedAddonExamplesOnStartup;
-        private final boolean forceBuiltinConfig;
-        private final boolean forceBuiltinRaces;
-        private final boolean forceBuiltinClasses;
-        private final boolean forceBuiltinAugments;
-        private final boolean forceBuiltinPassives;
+        private final boolean examplesEnabled;
+        private final boolean exampleCommandEnabled;
+        private final boolean exampleEventsEnabled;
 
         private AddonContentOptions(boolean mergeRacesWithCore,
                 boolean mergeClassesWithCore,
                 boolean mergeAugmentsWithCore,
                 boolean mergePassivesWithCore,
-                boolean seedAddonExamplesOnStartup,
-                boolean forceBuiltinConfig,
-                boolean forceBuiltinRaces,
-                boolean forceBuiltinClasses,
-                boolean forceBuiltinAugments,
-                boolean forceBuiltinPassives) {
+                boolean examplesEnabled,
+                boolean exampleCommandEnabled,
+                boolean exampleEventsEnabled) {
             this.mergeRacesWithCore = mergeRacesWithCore;
             this.mergeClassesWithCore = mergeClassesWithCore;
             this.mergeAugmentsWithCore = mergeAugmentsWithCore;
             this.mergePassivesWithCore = mergePassivesWithCore;
-            this.seedAddonExamplesOnStartup = seedAddonExamplesOnStartup;
-            this.forceBuiltinConfig = forceBuiltinConfig;
-            this.forceBuiltinRaces = forceBuiltinRaces;
-            this.forceBuiltinClasses = forceBuiltinClasses;
-            this.forceBuiltinAugments = forceBuiltinAugments;
-            this.forceBuiltinPassives = forceBuiltinPassives;
+            this.examplesEnabled = examplesEnabled;
+            this.exampleCommandEnabled = exampleCommandEnabled;
+            this.exampleEventsEnabled = exampleEventsEnabled;
         }
 
         private static AddonContentOptions defaults() {
-            return new AddonContentOptions(true, true, true, true, true, false, false, false, false, false);
+            return new AddonContentOptions(true, true, true, true, true, true, true);
         }
     }
 }

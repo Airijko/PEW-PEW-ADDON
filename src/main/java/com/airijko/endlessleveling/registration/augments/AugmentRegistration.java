@@ -5,6 +5,7 @@ import com.airijko.endlessleveling.augments.Augment;
 import com.airijko.endlessleveling.augments.AugmentDefinition;
 import com.airijko.endlessleveling.enums.PassiveCategory;
 import com.airijko.endlessleveling.enums.PassiveTier;
+import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.registration.augments.examples.ConquerorExampleAugment;
 import com.hypixel.hytale.logger.HytaleLogger;
 import org.yaml.snakeyaml.Yaml;
@@ -85,6 +86,11 @@ public final class AugmentRegistration {
 
             AugmentDefinition definition = parseDefinition(yamlFile, yaml);
             if (definition == null) {
+                return false;
+            }
+
+            if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
+                LOGGER.atFine().log("Skipping example augment due to config: %s", definition.getId());
                 return false;
             }
 
