@@ -44,6 +44,7 @@ public final class AddonFilesManager {
     private final File augmentsFolder;
     private final File passivesFolder;
     private final File configFile;
+    private final File dungeonGateFile;
     private final File conquerorExampleAugmentFile;
     private final File berzerkerExamplePassiveFile;
     private final File humanExampleRaceFile;
@@ -51,6 +52,7 @@ public final class AddonFilesManager {
     private final Object archiveLock = new Object();
 
     private AddonContentOptions contentOptions;
+    private DungeonGateOptions dungeonGateOptions;
     private Path currentArchiveSession;
 
     public AddonFilesManager(JavaPlugin plugin) {
@@ -66,6 +68,7 @@ public final class AddonFilesManager {
         this.augmentsFolder = new File(pluginFolder, "augments");
         this.passivesFolder = new File(pluginFolder, "passives");
         this.configFile = new File(pluginFolder, "config.yml");
+        this.dungeonGateFile = new File(pluginFolder, "dungeongate.yml");
         this.conquerorExampleAugmentFile = new File(augmentsFolder, "conqueror_example.yml");
         this.berzerkerExamplePassiveFile = new File(passivesFolder, "berzerker_example.yml");
         this.humanExampleRaceFile = new File(racesFolder, "human_example.yml");
@@ -77,8 +80,11 @@ public final class AddonFilesManager {
     private void initialize() {
         createFolders();
         initYamlFile("config.yml");
+        initYamlFile("dungeongate.yml");
         this.contentOptions = loadContentOptions();
+        this.dungeonGateOptions = loadDungeonGateOptions();
         syncConfigIfNeeded();
+        syncDungeonGateIfNeeded();
 
         syncDirectoryIfNeeded(
                 "races",
@@ -134,6 +140,87 @@ public final class AddonFilesManager {
         }
 
         this.contentOptions = loadContentOptions();
+    }
+
+    private void syncDungeonGateIfNeeded() {
+        int storedVersion = readConfigVersion(dungeonGateFile);
+        int targetVersion = AddonVersionRegistry.DUNGEON_GATE_YML_VERSION;
+        if (storedVersion == targetVersion) {
+            return;
+        }
+
+        DungeonGateOptions migratedOptions = dungeonGateOptions == null ? DungeonGateOptions.defaults() : dungeonGateOptions;
+
+        archiveFileIfExists(dungeonGateFile, "dungeongate.yml", "config_version:" + storedVersion);
+        writeDungeonGateConfig(migratedOptions, targetVersion);
+
+        LOGGER.atInfo().log("Migrated dungeongate.yml to version %d and normalized schema", targetVersion);
+
+        try {
+            ensureConfigVersionMarkerOnCreate("dungeongate.yml", dungeonGateFile);
+        } catch (IOException exception) {
+            LOGGER.atWarning().log("Failed to append dungeongate config version marker: %s", exception.getMessage());
+        }
+
+        this.dungeonGateOptions = loadDungeonGateOptions();
+    }
+
+    private void writeDungeonGateConfig(DungeonGateOptions options, int targetVersion) {
+        StringBuilder text = new StringBuilder();
+        text.append("# EndlessLevelingAddon - Dungeon Gate configuration\n\n");
+        text.append("# Master switch. Set to false to completely disable dungeon gate spawning.\n");
+        text.append("enabled: ").append(options.enabled).append("\n\n");
+
+        text.append("# -----------------------------------------------------------------------\n");
+        text.append("# Spawning\n");
+        text.append("# -----------------------------------------------------------------------\n\n");
+
+        text.append("# How frequently (in minutes) a new dungeon gate can naturally spawn.\n");
+        text.append("# Minimum enforced value: 1.\n");
+        text.append("spawn_interval_minutes: ").append(options.spawnIntervalMinutes).append("\n\n");
+
+        text.append("# Maximum number of dungeon gate instances that may be active at the same time.\n");
+        text.append("# Set to -1 for no limit.\n");
+        text.append("max_concurrent_spawns: ").append(options.maxConcurrentSpawns).append("\n\n");
+
+        text.append("# Announce in global chat when a dungeon gate spawns.\n");
+        text.append("announce_on_spawn: ").append(options.announceOnSpawn).append("\n\n");
+
+        text.append("# -----------------------------------------------------------------------\n");
+        text.append("# Gate lifetime\n");
+        text.append("# -----------------------------------------------------------------------\n\n");
+
+        text.append("# How long (in minutes) an open gate stays active before it closes on its own.\n");
+        text.append("# Set to -1 to never auto-close.\n");
+        text.append("gate_duration_minutes: ").append(options.gateDurationMinutes).append("\n\n");
+
+        text.append("# Close the gate early if all players have left the instance.\n");
+        text.append("despawn_when_empty: ").append(options.despawnWhenEmpty).append("\n\n");
+
+        text.append("# -----------------------------------------------------------------------\n");
+        text.append("# Entry restrictions\n");
+        text.append("# -----------------------------------------------------------------------\n\n");
+
+        text.append("# Whether players who die inside a dungeon instance are allowed to re-enter it.\n");
+        text.append("# false = locked out for that run (recommended for challenge content).\n");
+        text.append("allow_reentry_after_death: ").append(options.allowReentryAfterDeath).append("\n\n");
+
+        text.append("# Maximum number of players allowed inside one gate instance at a time.\n");
+        text.append("# Set to -1 for no limit.\n");
+        text.append("max_players_per_instance: ").append(options.maxPlayersPerInstance).append("\n\n");
+
+        text.append("# Minimum player level required to enter a gate.\n");
+        text.append("# Set to 1 to allow everyone.\n");
+        text.append("min_level_required: ").append(options.minLevelRequired).append("\n\n");
+
+        text.append(AddonVersionRegistry.CONFIG_VERSION_KEY).append(": ").append(targetVersion).append("\n");
+
+        try {
+            Files.writeString(dungeonGateFile.toPath(), text.toString(), StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to migrate dungeongate.yml", exception);
+        }
     }
 
     private void syncDirectoryIfNeeded(String resourceRoot,
@@ -679,6 +766,130 @@ public final class AddonFilesManager {
 
     public boolean shouldEnableExampleEvents() {
         return contentOptions == null || contentOptions.exampleEventsEnabled;
+    }
+
+    public boolean allowDungeonReentryAfterDeath() {
+        return dungeonGateOptions != null && dungeonGateOptions.allowReentryAfterDeath;
+    }
+
+    public boolean isDungeonGateEnabled() {
+        return dungeonGateOptions == null || dungeonGateOptions.enabled;
+    }
+
+    public int getDungeonMaxConcurrentSpawns() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().maxConcurrentSpawns : dungeonGateOptions.maxConcurrentSpawns;
+    }
+
+    public int getDungeonSpawnIntervalMinutes() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().spawnIntervalMinutes : dungeonGateOptions.spawnIntervalMinutes;
+    }
+
+    public int getDungeonDurationMinutes() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().gateDurationMinutes : dungeonGateOptions.gateDurationMinutes;
+    }
+
+    public boolean isDungeonAnnounceOnSpawn() {
+        return dungeonGateOptions == null || dungeonGateOptions.announceOnSpawn;
+    }
+
+    public boolean isDungeonDespawnWhenEmpty() {
+        return dungeonGateOptions != null && dungeonGateOptions.despawnWhenEmpty;
+    }
+
+    public int getDungeonMaxPlayersPerInstance() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().maxPlayersPerInstance : dungeonGateOptions.maxPlayersPerInstance;
+    }
+
+    public int getDungeonMinLevelRequired() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().minLevelRequired : dungeonGateOptions.minLevelRequired;
+    }
+
+    @SuppressWarnings("unchecked")
+    private DungeonGateOptions loadDungeonGateOptions() {
+        DungeonGateOptions defaults = DungeonGateOptions.defaults();
+        if (!dungeonGateFile.isFile()) {
+            return defaults;
+        }
+
+        try (InputStream in = Files.newInputStream(dungeonGateFile.toPath())) {
+            Object loaded = new Yaml().load(in);
+            if (!(loaded instanceof Map<?, ?> rootRaw)) {
+                return defaults;
+            }
+
+            Map<String, Object> root = (Map<String, Object>) rootRaw;
+
+            boolean enabled = readBoolean(root.get("enabled"), defaults.enabled);
+            boolean allowReentry = readBoolean(root.get("allow_reentry_after_death"), defaults.allowReentryAfterDeath);
+            boolean announceOnSpawn = readBoolean(root.get("announce_on_spawn"), defaults.announceOnSpawn);
+            boolean despawnWhenEmpty = readBoolean(root.get("despawn_when_empty"), defaults.despawnWhenEmpty);
+
+            int maxSpawns = defaults.maxConcurrentSpawns;
+            if (root.get("max_concurrent_spawns") instanceof Number n) {
+                maxSpawns = n.intValue();
+            }
+
+            int spawnInterval = defaults.spawnIntervalMinutes;
+            if (root.get("spawn_interval_minutes") instanceof Number n) {
+                spawnInterval = Math.max(1, n.intValue());
+            }
+
+            int gateDuration = defaults.gateDurationMinutes;
+            if (root.get("gate_duration_minutes") instanceof Number n) {
+                gateDuration = n.intValue();
+            }
+
+            int maxPlayers = defaults.maxPlayersPerInstance;
+            if (root.get("max_players_per_instance") instanceof Number n) {
+                maxPlayers = n.intValue();
+            }
+
+            int minLevel = defaults.minLevelRequired;
+            if (root.get("min_level_required") instanceof Number n) {
+                minLevel = Math.max(1, n.intValue());
+            }
+
+            return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, despawnWhenEmpty,
+                    maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel);
+        } catch (IOException ignored) {
+            return defaults;
+        }
+    }
+
+    private static final class DungeonGateOptions {
+        private final boolean enabled;
+        private final boolean allowReentryAfterDeath;
+        private final boolean announceOnSpawn;
+        private final boolean despawnWhenEmpty;
+        private final int maxConcurrentSpawns;
+        private final int spawnIntervalMinutes;
+        private final int gateDurationMinutes;
+        private final int maxPlayersPerInstance;
+        private final int minLevelRequired;
+
+        private DungeonGateOptions(boolean enabled,
+                boolean allowReentryAfterDeath,
+                boolean announceOnSpawn,
+                boolean despawnWhenEmpty,
+                int maxConcurrentSpawns,
+                int spawnIntervalMinutes,
+                int gateDurationMinutes,
+                int maxPlayersPerInstance,
+                int minLevelRequired) {
+            this.enabled = enabled;
+            this.allowReentryAfterDeath = allowReentryAfterDeath;
+            this.announceOnSpawn = announceOnSpawn;
+            this.despawnWhenEmpty = despawnWhenEmpty;
+            this.maxConcurrentSpawns = maxConcurrentSpawns;
+            this.spawnIntervalMinutes = spawnIntervalMinutes;
+            this.gateDurationMinutes = gateDurationMinutes;
+            this.maxPlayersPerInstance = maxPlayersPerInstance;
+            this.minLevelRequired = minLevelRequired;
+        }
+
+        private static DungeonGateOptions defaults() {
+            return new DungeonGateOptions(true, false, true, false, 3, 30, 30, -1, 1);
+        }
     }
 
     private static final class AddonContentOptions {

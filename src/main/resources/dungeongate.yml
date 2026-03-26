@@ -1,0 +1,46 @@
+# EndlessLevelingAddon - Dungeon Gate configuration
+
+# Master switch. Set to false to completely disable dungeon gate spawning.
+enabled: true
+
+# -----------------------------------------------------------------------
+# Spawning
+# -----------------------------------------------------------------------
+
+# How frequently (in minutes) a new dungeon gate can naturally spawn.
+# Minimum enforced value: 1.
+spawn_interval_minutes: 30
+
+# Maximum number of dungeon gate instances that may be active at the same time.
+# Set to -1 for no limit.
+max_concurrent_spawns: 3
+
+# Announce in global chat when a dungeon gate spawns.
+announce_on_spawn: true
+
+# -----------------------------------------------------------------------
+# Gate lifetime
+# -----------------------------------------------------------------------
+
+# How long (in minutes) an open gate stays active before it closes on its own.
+# Set to -1 to never auto-close.
+gate_duration_minutes: 30
+
+# Close the gate early if all players have left the instance.
+despawn_when_empty: false
+
+# -----------------------------------------------------------------------
+# Entry restrictions
+# -----------------------------------------------------------------------
+
+# Whether players who die inside a dungeon instance are allowed to re-enter it.
+# false = locked out for that run (recommended for challenge content).
+allow_reentry_after_death: false
+
+# Maximum number of players allowed inside one gate instance at a time.
+# Set to -1 for no limit.
+max_players_per_instance: -1
+
+# Minimum player level required to enter a gate.
+# Set to 1 to allow everyone.
+min_level_required: 1

@@ -13,6 +13,7 @@ public final class AddonVersionRegistry {
     public static final String CONFIG_VERSION_KEY = "config_version";
 
     public static final int CONFIG_YML_VERSION = 2;
+    public static final int DUNGEON_GATE_YML_VERSION = 1;
 
     public static final int BUILTIN_AUGMENTS_VERSION = 1;
     public static final int BUILTIN_CLASSES_VERSION = 1;
@@ -30,6 +31,7 @@ public final class AddonVersionRegistry {
         }
         return switch (resourceName.trim().toLowerCase(Locale.ROOT)) {
             case "config.yml" -> CONFIG_YML_VERSION;
+            case "dungeongate.yml" -> DUNGEON_GATE_YML_VERSION;
             default -> null;
         };
     }
