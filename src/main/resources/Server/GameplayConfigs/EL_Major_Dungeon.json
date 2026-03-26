@@ -1,0 +1,44 @@
+{
+  "Parent": "Default",
+  "World": {
+    "AllowBlockBreaking": false,
+    "AllowBlockGathering": false,
+    "AllowBlockPlacement": false
+  },
+  "Death": {
+    "ItemsLossMode": "None",
+    "RespawnController": {
+      "Type": "ExitInstance"
+    }
+  },
+  "WorldMap": {
+    "DisplaySpawn": false
+  },
+  "Plugin": {
+    "Portal": {
+      "VoidEvent": {
+        "DurationSeconds": 180,
+        "MusicAmbienceFX": "Mus_Portal_VoidEvent",
+        "InvasionPortals": {
+          "BlockKey": "VoidInvasion_Portal",
+          "SpawnBeacons": [
+            "Portal_Void_Event_Minor",
+            "Portal_Void_Event_Major",
+            "Portal_Void_Event_Critter"
+          ],
+          "OnSpawnParticles": "Void_Dragon_Effects"
+        },
+        "Stages": [
+          {
+            "SecondsInto": 0,
+            "ForcedWeather": "Portals_Void_Event_Light"
+          },
+          {
+            "SecondsInto": 120,
+            "ForcedWeather": "Portals_Void_Event_Intense"
+          }
+        ]
+      }
+    }
+  }
+}

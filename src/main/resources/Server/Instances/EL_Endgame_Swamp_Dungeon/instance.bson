@@ -1,0 +1,50 @@
+{
+  "$Comment": "EL-bridged Endgame instance using original EndgameAndQoL world assets",
+  "GameMode": "Adventure",
+  "RequiredPlugins": {},
+  "DeleteOnRemove": false,
+  "SpawnProvider": {
+    "Id": "Global",
+    "SpawnPoint": {
+      "X": 4,
+      "Y": 115.0,
+      "Z": 145,
+      "Pitch": 0,
+      "Yaw": 0,
+      "Roll": 0.0
+    }
+  },
+  "WorldGen": {
+    "Type": "HytaleGenerator",
+    "WorldStructure": "Endgame_Swamp_Dungeon"
+  },
+  "ChunkStorage": {
+    "Type": "Hytale"
+  },
+  "IsPvpEnabled": false,
+  "IsSpawningNPC": true,
+  "IsSpawnMarkersEnabled": true,
+  "GameTime": "0001-01-30T18:30:00Z",
+  "UUID": {
+    "$binary": "BgYGBgYGBgYGBgYGBgYGBg==",
+    "$type": "04"
+  },
+  "GameplayConfig": "EL_Endgame_Dungeon",
+  "WorldMap": {
+    "Type": "Disabled"
+  },
+  "IsCompassUpdating": true,
+  "IsTicking": true,
+  "IsGameTimePaused": true,
+  "IsObjectiveMarkersEnabled": true,
+  "IsAllNPCFrozen": false,
+  "IsSavingPlayers": true,
+  "Instance": {
+    "RemovalConditions": [
+      {
+        "Type": "WorldEmpty"
+      }
+    ]
+  },
+  "Version": 4
+}

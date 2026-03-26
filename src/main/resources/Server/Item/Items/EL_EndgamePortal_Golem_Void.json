@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "Endgame_Golem_Void",
+            "InstanceName": "EL_Endgame_Golem_Void",
             "PositionOffset": {
               "X": 0,
               "Y": 0,

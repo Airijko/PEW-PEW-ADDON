@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "MJ_Instance_D03",
+            "InstanceName": "EL_MJ_Instance_D03",
             "PositionOffset": {
               "X": 0,
               "Y": 0,

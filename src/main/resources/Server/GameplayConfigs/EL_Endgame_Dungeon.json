@@ -1,0 +1,23 @@
+{
+  "Parent": "Portal",
+  "Death": {
+    "ItemsLossMode": "None",
+    "RespawnController": {
+      "Type": "ExitInstance"
+    }
+  },
+  "World": {
+    "AllowBlockBreaking": false,
+    "AllowBlockGathering": false,
+    "AllowBlockPlacement": false,
+    "DaytimeDurationSeconds": 0,
+    "NighttimeDurationSeconds": 1800
+  },
+  "Combat": {
+    "DisplayHealthBars": true,
+    "DisplayCombatText": true
+  },
+  "WorldMap": {
+    "DisplaySpawn": false
+  }
+}

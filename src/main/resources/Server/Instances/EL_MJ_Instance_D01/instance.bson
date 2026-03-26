@@ -1,0 +1,51 @@
+{
+  "$Comment": "EL-bridged Major Dungeon instance using original MajorDungeons world assets",
+  "RequiredPlugins": {},
+  "ChunkStorage": {
+    "Type": "Hytale"
+  },
+  "GameMode": "Adventure",
+  "SpawnProvider": {
+    "Id": "Global",
+    "SpawnPoint": {
+      "X": 0,
+      "Y": 130.0,
+      "Z": 0,
+      "Pitch": 0,
+      "Yaw": 180,
+      "Roll": 0.0
+    }
+  },
+  "IsPvpEnabled": false,
+  "IsSpawningNPC": true,
+  "GameTime": "0001-01-01T20:00:00Z",
+  "GameplayConfig": "EL_Major_Dungeon",
+  "UUID": {
+    "$binary": "AQEBAQEBAQEBAQEBAQEBAQ==",
+    "$type": "04"
+  },
+  "WorldMap": {
+    "Type": "Disabled"
+  },
+  "IsCompassUpdating": true,
+  "IsTicking": true,
+  "IsGameTimePaused": true,
+  "IsObjectiveMarkersEnabled": true,
+  "IsAllNPCFrozen": false,
+  "IsSavingPlayers": true,
+  "WorldGen": {
+    "Type": "HytaleGenerator",
+    "Environment": "MJ_Environment_D01",
+    "WorldStructure": "MJ_WorldStructureAsset_D01"
+  },
+  "IsSpawnMarkersEnabled": false,
+  "Instance": {
+    "RemovalConditions": [
+      {
+        "Type": "WorldEmpty"
+      }
+    ]
+  },
+  "DeleteOnRemove": true,
+  "Version": 2
+}

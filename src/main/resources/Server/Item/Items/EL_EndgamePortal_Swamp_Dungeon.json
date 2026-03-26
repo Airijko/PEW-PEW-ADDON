@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "Endgame_Swamp_Dungeon",
+            "InstanceName": "EL_Endgame_Swamp_Dungeon",
             "PositionOffset": {
               "X": 0,
               "Y": 0,

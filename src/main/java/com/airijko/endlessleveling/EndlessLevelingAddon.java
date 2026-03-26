@@ -22,17 +22,22 @@
 
 package com.airijko.endlessleveling;
 
-import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
-import com.hypixel.hytale.server.core.plugin.JavaPlugin;
-import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
-import com.airijko.endlessleveling.registration.augments.AugmentRegistration;
-import com.airijko.endlessleveling.registration.classes.ClassRegistration;
-import com.airijko.endlessleveling.registration.passives.PassiveRegistration;
-import com.airijko.endlessleveling.registration.races.RaceRegistration;
 import com.airijko.endlessleveling.commands.EndgameQoLPortalCommand;
 import com.airijko.endlessleveling.commands.MajorDungeonsPortalCommand;
 import com.airijko.endlessleveling.events.ExampleEvent;
+import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
+import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
+import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
+import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
+import com.hypixel.hytale.server.core.plugin.JavaPlugin;
+import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
+import com.airijko.endlessleveling.registration.classes.ClassRegistration;
+import com.airijko.endlessleveling.registration.augments.AugmentRegistration;
+import com.airijko.endlessleveling.registration.passives.PassiveRegistration;
+import com.airijko.endlessleveling.registration.races.RaceRegistration;
+import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 
 import javax.annotation.Nonnull;
 
@@ -65,6 +70,11 @@ public class EndlessLevelingAddon extends JavaPlugin {
         
         this.getCommandRegistry().registerCommand(new MajorDungeonsPortalCommand());
         this.getCommandRegistry().registerCommand(new EndgameQoLPortalCommand());
+        this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
+        PortalInstanceDiagnostics.initialize(this);
+        this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
+        this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
+        this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, ExampleEvent::onPlayerReady);
     }
 
