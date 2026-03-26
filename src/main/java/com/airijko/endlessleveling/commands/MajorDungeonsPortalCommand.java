@@ -1,19 +1,12 @@
 package com.airijko.endlessleveling.commands;
 
-import com.hypixel.hytale.builtin.portals.resources.PortalWorld;
-import com.hypixel.hytale.component.Ref;
-import com.hypixel.hytale.component.Store;
-import com.hypixel.hytale.math.util.ChunkUtil;
-import com.hypixel.hytale.math.util.MathUtil;
-import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
-import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
-import com.hypixel.hytale.server.core.universe.world.World;
-import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
-import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import com.hypixel.hytale.server.core.inventory.ItemStack;
+import com.hypixel.hytale.server.core.inventory.container.CombinedItemContainer;
+import com.hypixel.hytale.server.core.inventory.transaction.ItemStackTransaction;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -47,69 +40,38 @@ public class MajorDungeonsPortalCommand extends AbstractCommand {
         return CompletableFuture.completedFuture(null);
     }
 
-    private static CompletableFuture<Void> spawnPortal(@Nonnull CommandContext context,
-                                                       @Nonnull String blockId,
-                                                       int xOffset) {
+    private static CompletableFuture<Void> givePortal(@Nonnull CommandContext context,
+                                                      @Nonnull String blockId) {
         if (!(context.sender() instanceof Player player)) {
             context.sendMessage(Message.raw("This command is player-only.").color("#ff9900"));
             return CompletableFuture.completedFuture(null);
         }
 
-        World world = player.getWorld();
-        if (world == null) {
-            context.sendMessage(Message.raw("You are not in a world right now.").color("#ff6666"));
+        CombinedItemContainer container = player.getInventory() != null
+                ? player.getInventory().getCombinedHotbarFirst()
+                : null;
+        if (container == null) {
+            context.sendMessage(Message.raw("Could not access your inventory right now.").color("#ff6666"));
             return CompletableFuture.completedFuture(null);
         }
 
-        CompletableFuture<Void> future = new CompletableFuture<>();
         try {
-            world.execute(() -> {
-                Ref<EntityStore> ref = player.getReference();
-                if (ref == null || !ref.isValid()) {
-                    context.sendMessage(Message.raw("Your player reference is not available right now.").color("#ff6666"));
-                    future.complete(null);
-                    return;
-                }
+            ItemStack stack = new ItemStack(blockId, 1);
+            ItemStackTransaction transaction = container.addItemStack(stack);
+            ItemStack remainder = transaction.getRemainder();
 
-                Store<EntityStore> store = ref.getStore();
-                PortalWorld portalWorld = store.getResource(PortalWorld.getResourceType());
-                if (!portalWorld.exists()) {
-                    context.sendMessage(Message.raw("This command only works in fragment worlds.").color("#ff6666"));
-                    future.complete(null);
-                    return;
-                }
-
-                TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
-                if (transform == null || transform.getPosition() == null) {
-                    context.sendMessage(Message.raw("Could not resolve your position right now.").color("#ff6666"));
-                    future.complete(null);
-                    return;
-                }
-
-                Vector3d position = transform.getPosition();
-                int x = MathUtil.floor(position.x) + xOffset;
-                int y = MathUtil.floor(position.y);
-                int z = MathUtil.floor(position.z) + 2;
-
-                WorldChunk chunk = world.getNonTickingChunk(ChunkUtil.indexChunkFromBlock(x, z));
-                if (chunk == null) {
-                    context.sendMessage(Message.raw("Could not load chunk for portal placement.").color("#ff6666"));
-                    future.complete(null);
-                    return;
-                }
-
-                chunk.setBlock(x, y, z, blockId);
-
-                context.sendMessage(Message.raw("Spawned portal block: " + blockId + " at " + x + ", " + y + ", " + z)
+            if (remainder != null && !ItemStack.isEmpty(remainder)) {
+                context.sendMessage(Message.raw("Inventory full. Could not add portal block: " + blockId)
+                        .color("#ff6666"));
+            } else {
+                context.sendMessage(Message.raw("Gave portal block: " + blockId)
                         .color("#6cff78"));
-                future.complete(null);
-            });
+            }
         } catch (Exception ex) {
-            context.sendMessage(Message.raw("Failed to spawn portal right now.").color("#ff6666"));
-            future.complete(null);
+            context.sendMessage(Message.raw("Failed to give portal right now.").color("#ff6666"));
         }
 
-        return future;
+        return CompletableFuture.completedFuture(null);
     }
 
     private static final class SpawnSinglePortalSubCommand extends AbstractCommand {
@@ -123,7 +85,7 @@ public class MajorDungeonsPortalCommand extends AbstractCommand {
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-            return spawnPortal(context, this.blockId, 0);
+            return givePortal(context, this.blockId);
         }
     }
 
@@ -136,9 +98,9 @@ public class MajorDungeonsPortalCommand extends AbstractCommand {
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-            return spawnPortal(context, PORTAL_BLOCK_D01, -2)
-                    .thenCompose(ignored -> spawnPortal(context, PORTAL_BLOCK_D02, 0))
-                    .thenCompose(ignored -> spawnPortal(context, PORTAL_BLOCK_D03, 2));
+            return givePortal(context, PORTAL_BLOCK_D01)
+                    .thenCompose(ignored -> givePortal(context, PORTAL_BLOCK_D02))
+                    .thenCompose(ignored -> givePortal(context, PORTAL_BLOCK_D03));
         }
     }
 }

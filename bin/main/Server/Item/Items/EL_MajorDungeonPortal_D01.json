@@ -50,22 +50,32 @@
     },
     "Interactions": {
       "CollisionEnter": {
+        "Cooldown": {
+          "Id": "EL_PortalTeleport",
+          "Cooldown": 2
+        },
         "Interactions": [
           {
             "Type": "TeleportInstance",
             "InstanceName": "MJ_Instance_D01",
             "PositionOffset": {
-              "X": 0.0,
-              "Y": 0.0,
-              "Z": 2.5
+              "X": 0,
+              "Y": 0,
+              "Z": 0
             },
             "Rotation": {
-              "Pitch": 0.0,
-              "Yaw": 180.0,
-              "Roll": 0.0
+              "Pitch": 0,
+              "Yaw": 0,
+              "Roll": 0
             },
             "PersonalReturnPoint": true,
-            "CloseOnBlockRemove": true
+            "CloseOnBlockRemove": true,
+            "Next": {
+              "Type": "Simple",
+              "Effects": {
+                "LocalSoundEventId": "SFX_Portal_Neutral_Teleport_Local"
+              }
+            }
           }
         ]
       }

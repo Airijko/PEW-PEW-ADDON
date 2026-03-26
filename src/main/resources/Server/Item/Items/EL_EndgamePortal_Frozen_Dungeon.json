@@ -1,15 +1,15 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.portal_d03.name",
-    "Description": "endlesslevelingaddon.items.portal_d03.description"
+    "Name": "endlesslevelingaddon.items.endgame_portal_frozen.name",
+    "Description": "endlesslevelingaddon.items.endgame_portal_frozen.description"
   },
-  "Icon": "Icons/ItemsGenerated/MajorDungeons_PortalKey3.png",
+  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Frozen_Dungeon.png",
   "Categories": [
     "Blocks.Structural"
   ],
   "PlayerAnimationsId": "Block",
   "MaxStack": 1,
-  "Quality": "Epic",
+  "Quality": "Rare",
   "InteractionConfig": {
     "UseDistance": {
       "Adventure": 4.0,
@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "MJ_Instance_D03",
+            "InstanceName": "Endgame_Frozen_Dungeon",
             "PositionOffset": {
               "X": 0,
               "Y": 0,

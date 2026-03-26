@@ -1,9 +1,9 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.portal_d03.name",
-    "Description": "endlesslevelingaddon.items.portal_d03.description"
+    "Name": "endlesslevelingaddon.items.endgame_portal_swamp.name",
+    "Description": "endlesslevelingaddon.items.endgame_portal_swamp.description"
   },
-  "Icon": "Icons/ItemsGenerated/MajorDungeons_PortalKey3.png",
+  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Swamp_Dungeon.png",
   "Categories": [
     "Blocks.Structural"
   ],
@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "MJ_Instance_D03",
+            "InstanceName": "Endgame_Swamp_Dungeon",
             "PositionOffset": {
               "X": 0,
               "Y": 0,

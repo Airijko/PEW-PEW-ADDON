@@ -37,11 +37,11 @@
       {
         "SystemId": "MagicPortal",
         "PositionOffset": {
-          "X": 1.5,
+          "X": 1.0,
           "Y": 1.5,
-          "Z": 0.5
+          "Z": 0.0
         },
-        "Scale": 2.0
+        "Scale": 1.5
       }
     ],
     "InteractionHint": "endlesslevelingaddon.portals.interact",
@@ -50,22 +50,32 @@
     },
     "Interactions": {
       "CollisionEnter": {
+        "Cooldown": {
+          "Id": "EL_PortalTeleport",
+          "Cooldown": 2
+        },
         "Interactions": [
           {
             "Type": "TeleportInstance",
             "InstanceName": "MJ_Instance_D02",
             "PositionOffset": {
-              "X": 0.0,
-              "Y": 0.0,
-              "Z": 2.5
+              "X": 0,
+              "Y": 0,
+              "Z": 0
             },
             "Rotation": {
-              "Pitch": 0.0,
-              "Yaw": 180.0,
-              "Roll": 0.0
+              "Pitch": 0,
+              "Yaw": 0,
+              "Roll": 0
             },
             "PersonalReturnPoint": true,
-            "CloseOnBlockRemove": true
+            "CloseOnBlockRemove": false,
+            "Next": {
+              "Type": "Simple",
+              "Effects": {
+                "LocalSoundEventId": "SFX_Portal_Neutral_Teleport_Local"
+              }
+            }
           }
         ]
       }

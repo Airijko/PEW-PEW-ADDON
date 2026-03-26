@@ -29,6 +29,7 @@ import com.airijko.endlessleveling.registration.augments.AugmentRegistration;
 import com.airijko.endlessleveling.registration.classes.ClassRegistration;
 import com.airijko.endlessleveling.registration.passives.PassiveRegistration;
 import com.airijko.endlessleveling.registration.races.RaceRegistration;
+import com.airijko.endlessleveling.commands.EndgameQoLPortalCommand;
 import com.airijko.endlessleveling.commands.MajorDungeonsPortalCommand;
 import com.airijko.endlessleveling.events.ExampleEvent;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
@@ -63,6 +64,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
         }
         
         this.getCommandRegistry().registerCommand(new MajorDungeonsPortalCommand());
+        this.getCommandRegistry().registerCommand(new EndgameQoLPortalCommand());
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, ExampleEvent::onPlayerReady);
     }
 

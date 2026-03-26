@@ -12,7 +12,8 @@
     "IncludesAssetPack": true,
     "Dependencies": {
         "com.airijko:EndlessLeveling": ">=6.1",
-        "MAJOR76:MajorDungeons": ">=0.4.4"
+        "MAJOR76:MajorDungeons": ">=0.4.4",
+        "Config:Endgame&QoL": ">=4.1.1"
     },
     "OptionalDependencies": {},
     "ServerVersion": "*",
