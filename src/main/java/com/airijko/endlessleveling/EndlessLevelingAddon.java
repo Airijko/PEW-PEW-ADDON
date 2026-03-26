@@ -24,10 +24,12 @@ package com.airijko.endlessleveling;
 
 import com.airijko.endlessleveling.commands.EndgameQoLPortalCommand;
 import com.airijko.endlessleveling.commands.MajorDungeonsPortalCommand;
+import com.airijko.endlessleveling.commands.PortalGateTestCommand;
 import com.airijko.endlessleveling.events.ExampleEvent;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
@@ -70,7 +72,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
         
         this.getCommandRegistry().registerCommand(new MajorDungeonsPortalCommand());
         this.getCommandRegistry().registerCommand(new EndgameQoLPortalCommand());
+        this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
+        NaturalPortalGateManager.initialize(this);
         PortalInstanceDiagnostics.initialize(this);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
@@ -80,6 +84,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        NaturalPortalGateManager.shutdown();
         RaceRegistration.unregisterAll();
         ClassRegistration.unregisterAll();
         AugmentRegistration.unregisterAll();
