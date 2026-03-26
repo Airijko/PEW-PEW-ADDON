@@ -1,0 +1,71 @@
+{
+  "TranslationProperties": {
+    "Name": "endlesslevelingaddon.items.portal_d03.name",
+    "Description": "endlesslevelingaddon.items.portal_d03.description"
+  },
+  "Icon": "Icons/ItemsGenerated/MajorDungeons_PortalKey3.png",
+  "Categories": [
+    "Blocks.Structural"
+  ],
+  "PlayerAnimationsId": "Block",
+  "MaxStack": 1,
+  "Quality": "Epic",
+  "InteractionConfig": {
+    "UseDistance": {
+      "Adventure": 4.0,
+      "Creative": 5.0
+    }
+  },
+  "BlockType": {
+    "AmbientSoundEventId": "SFX_Portal_Neutral",
+    "DrawType": "Cube",
+    "Material": "Solid",
+    "Opacity": "Transparent",
+    "RequiresAlphaBlending": true,
+    "Group": "Stone",
+    "Textures": [
+      {
+        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "Weight": 1
+      }
+    ],
+    "HitboxType": "Portal_3x3",
+    "BlockParticleSetId": "Stone",
+    "BlockSoundSetId": "Stone",
+    "Particles": [
+      {
+        "SystemId": "MagicPortal",
+        "PositionOffset": {
+          "Y": 2.0
+        },
+        "Scale": 2.0
+      }
+    ],
+    "InteractionHint": "endlesslevelingaddon.portals.interact",
+    "Flags": {
+      "IsUsable": true
+    },
+    "Interactions": {
+      "CollisionEnter": {
+        "Interactions": [
+          {
+            "Type": "TeleportInstance",
+            "InstanceName": "MJ_Instance_D03",
+            "PositionOffset": {
+              "X": 0.0,
+              "Y": 0.0,
+              "Z": 2.5
+            },
+            "Rotation": {
+              "Pitch": 0.0,
+              "Yaw": 180.0,
+              "Roll": 0.0
+            },
+            "PersonalReturnPoint": true,
+            "CloseOnBlockRemove": true
+          }
+        ]
+      }
+    }
+  }
+}
