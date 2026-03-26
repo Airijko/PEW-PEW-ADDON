@@ -22,6 +22,7 @@
     "Material": "Solid",
     "Opacity": "Transparent",
     "RequiresAlphaBlending": true,
+    "VariantRotation": "NESW",
     "Group": "Stone",
     "Textures": [
       {
@@ -36,7 +37,9 @@
       {
         "SystemId": "MagicPortal",
         "PositionOffset": {
-          "Y": 2.0
+          "X": 1.5,
+          "Y": 1.5,
+          "Z": 0.5
         },
         "Scale": 2.0
       }
