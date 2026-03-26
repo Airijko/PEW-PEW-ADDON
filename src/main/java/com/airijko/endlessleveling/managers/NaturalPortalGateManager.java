@@ -16,6 +16,8 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 
 import javax.annotation.Nonnull;
+import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.api.PlayerSnapshot;
 import javax.annotation.Nullable;
 import java.util.List;
 import java.util.UUID;
@@ -170,8 +172,16 @@ public final class NaturalPortalGateManager {
                     continue;
                 }
 
+                // Do not overwrite world blocks when spawning portal gates.
+                if (chunk.getBlock(x, y, z) != 0) {
+                    continue;
+                }
+
                 chunk.setBlock(x, y, z, blockId);
-                announceGate(world, blockId, x, y, z, isTestSpawn);
+                int spawnLevel = resolveLevel(playerRef.getUuid());
+                int levelMin = (spawnLevel / 15) * 15;
+                int levelMax = levelMin + 15;
+                announceGate(world, blockId, x, y, z, isTestSpawn, levelMin, levelMax);
                 scheduleRemoval(world, blockId, x, y, z);
                 future.complete(true);
                 return;
@@ -229,23 +239,36 @@ public final class NaturalPortalGateManager {
                                      int x,
                                      int y,
                                      int z,
-                                     boolean isTestSpawn) {
+                                     boolean isTestSpawn,
+                                     int levelMin,
+                                     int levelMax) {
         Universe universe = Universe.get();
         if (universe == null) {
             return;
         }
 
-        String prefix = isTestSpawn ? "[TEST] " : "";
+        String testTag = isTestSpawn ? " [TEST]" : "";
         Message message = Message.raw(String.format(
-                "%sA gate has opened in world '%s' at (%d, %d, %d)! [block=%s]",
-                prefix,
-                world.getName(),
-                x,
-                y,
-                z,
-                blockId
+            "[EndlessLeveling]%s Portal gate spawned!\n"
+                + "[EndlessLeveling] World: %s\n"
+                + "[EndlessLeveling] Position: (%d, %d, %d)\n"
+                + "[EndlessLeveling] Level Range: %d-%d\n"
+                + "[EndlessLeveling] Block: %s",
+            testTag,
+            world.getName(),
+            x,
+            y,
+            z,
+            levelMin,
+            levelMax,
+            blockId
         )).color("#ffcc66");
         universe.sendMessage(message);
+    }
+
+    private static int resolveLevel(@Nonnull UUID uuid) {
+        PlayerSnapshot snapshot = EndlessLevelingAPI.get().getPlayerSnapshot(uuid);
+        return snapshot != null ? Math.max(1, snapshot.level()) : 1;
     }
 
     @Nonnull
