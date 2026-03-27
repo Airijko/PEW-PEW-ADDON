@@ -2,13 +2,13 @@
   "$Comment": "EL-bridged Endgame instance using original EndgameAndQoL world assets",
   "GameMode": "Adventure",
   "RequiredPlugins": {},
-  "DeleteOnRemove": false,
+  "DeleteOnRemove": true,
   "SpawnProvider": {
     "Id": "Global",
     "SpawnPoint": {
-      "X": -17,
-      "Y": 104.0,
-      "Z": 65,
+      "X": -2,
+      "Y": 82.0,
+      "Z": -4,
       "Pitch": 0,
       "Yaw": 0,
       "Roll": 0.0

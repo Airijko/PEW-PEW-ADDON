@@ -27,7 +27,7 @@ announce_on_spawn: true
 gate_duration_minutes: 30
 
 # Close the gate early if all players have left the instance.
-despawn_when_empty: false
+despawn_when_empty: true
 
 # -----------------------------------------------------------------------
 # Entry restrictions

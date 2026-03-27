@@ -1,0 +1,330 @@
+{
+  "World_Overrides": {
+    "*mj_instance_d01*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.075
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Azaroth": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["rebirth", "frozen_domain"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.1
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        }
+      }
+    },
+    "*mj_instance_d02*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.075
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Katherina": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["bloodthirster", "vampirism"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.1
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        },
+        "Construct_Ancient_Dark_Titan": {
+          "Level_From_Range_Max_Offset": 5,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.05
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.375,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.95
+            }
+          }
+        }
+      }
+    },
+    "*mj_instance_d03*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.075
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Baron": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["blood_surge", "bloodthirster"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.1
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        },
+        "Cult_Knight_Werewolf_Group": {
+          "Names": ["Cult_Knight", "Cult_Werewolf"],
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.05
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.375,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.95
+            }
+          }
+        }
+      }
+    },
+    "*endgame_frozen_dungeon*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.1
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Endgame_Dragon_Frost": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["blood_surge"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 2.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        }
+      }
+    },
+    "*endgame_swamp_dungeon*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.075
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Endgame_Hedera": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["rebirth"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 2.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        }
+      }
+    },
+    "*endgame_golem_void*": {
+      "Enable_XP": true,
+      "Experience": {
+        "Global_XP_Multiplier": 1.0
+      },
+      "Level_Range": {
+        "Max": "ENDLESS"
+      },
+      "Scaling": {
+        "Health": {
+          "Base_Multiplier": 3.0,
+          "Per_Level": 0.075
+        },
+        "Damage": {
+          "Base_Multiplier": 1.25,
+          "Per_Level": 0.065
+        },
+        "Defense": {
+          "At_Negative_Max_Difference": 0.25,
+          "At_Positive_Max_Difference": 0.8,
+          "Below_Negative_Max_Difference": 0.0,
+          "Above_Positive_Max_Difference": 0.9
+        }
+      },
+      "Mob_Overrides": {
+        "Endgame_Golem_Void": {
+          "Level_From_Range_Max_Offset": 5,
+          "Augments": ["rebirth"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 2.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.07
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.35,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        }
+      }
+    }
+  }
+}

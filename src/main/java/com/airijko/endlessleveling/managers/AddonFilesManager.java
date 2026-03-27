@@ -1,5 +1,6 @@
 package com.airijko.endlessleveling.managers;
 
+import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
@@ -33,6 +34,11 @@ import java.util.stream.Stream;
 public final class AddonFilesManager {
 
     private static final String PLUGIN_FOLDER_NAME = "EndlessLevelingAddon";
+    private static final String CORE_PLUGIN_FOLDER_NAME = "EndlessLeveling";
+    private static final String CORE_WORLD_SETTINGS_FOLDER_NAME = "world-settings";
+    private static final String GATE_WORLD_SETTINGS_RESOURCE = "world-settings/el-gate-dungeons.json";
+    private static final String GATE_WORLD_SETTINGS_FILE_NAME = "zz-el-gate-dungeons.json";
+    private static final String LEGACY_GATE_WORLD_SETTINGS_FILE_NAME = "el-gate-dungeons.json";
     private static final DateTimeFormatter ARCHIVE_TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Pattern MANIFEST_VERSION_PATTERN = Pattern.compile("\"Version\"\\s*:\\s*\"([^\"]+)\"");
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClassFull();
@@ -81,6 +87,7 @@ public final class AddonFilesManager {
         createFolders();
         initYamlFile("config.yml");
         initYamlFile("dungeongate.yml");
+        syncCoreWorldSettingsBundle();
         this.contentOptions = loadContentOptions();
         this.dungeonGateOptions = loadDungeonGateOptions();
         syncConfigIfNeeded();
@@ -456,6 +463,44 @@ public final class AddonFilesManager {
             Files.copy(resourceStream, targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to copy resource: " + resourcePath, exception);
+        }
+    }
+
+    private void syncCoreWorldSettingsBundle() {
+        if (PluginManager.MODS_PATH == null) {
+            return;
+        }
+
+        File coreWorldSettingsFolder = PluginManager.MODS_PATH
+                .resolve(CORE_PLUGIN_FOLDER_NAME)
+                .resolve(CORE_WORLD_SETTINGS_FOLDER_NAME)
+                .toFile();
+
+        if (!coreWorldSettingsFolder.exists() && !coreWorldSettingsFolder.mkdirs()) {
+            LOGGER.atWarning().log("Unable to create core world-settings folder at %s",
+                    coreWorldSettingsFolder.getAbsolutePath());
+            return;
+        }
+
+        File legacyTargetFile = new File(coreWorldSettingsFolder, LEGACY_GATE_WORLD_SETTINGS_FILE_NAME);
+        if (legacyTargetFile.exists() && !legacyTargetFile.getName().equals(GATE_WORLD_SETTINGS_FILE_NAME)) {
+            try {
+                Files.deleteIfExists(legacyTargetFile.toPath());
+            } catch (IOException exception) {
+                LOGGER.atWarning().log("Unable to remove legacy gate world-settings bundle at %s: %s",
+                        legacyTargetFile.getAbsolutePath(),
+                        exception.getMessage());
+            }
+        }
+
+        File targetFile = new File(coreWorldSettingsFolder, GATE_WORLD_SETTINGS_FILE_NAME);
+        copyResourceToFile(GATE_WORLD_SETTINGS_RESOURCE, targetFile, true);
+        LOGGER.atInfo().log("Synced addon gate world-settings bundle to %s", targetFile.getAbsolutePath());
+
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api != null) {
+            api.reloadWorldSettings();
+            LOGGER.atInfo().log("Triggered core world-settings reload after sync");
         }
     }
 

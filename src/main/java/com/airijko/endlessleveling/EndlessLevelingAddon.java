@@ -84,7 +84,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this);
         PortalLeveledInstanceRouter.initialize(this);
-        PortalInstanceDiagnostics.initialize(this);
+        PortalInstanceDiagnostics.initialize(this, this.filesManager);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);

@@ -1,7 +1,6 @@
 package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
-import com.airijko.endlessleveling.api.PlayerSnapshot;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
 import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
@@ -22,11 +21,10 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 
 public final class PortalLeveledInstanceRouter {
@@ -57,9 +55,22 @@ public final class PortalLeveledInstanceRouter {
             "EL_Endgame_Golem_Void", "Endgame Golem Void",
             "EL_Endgame_Swamp_Dungeon", "Endgame Swamp Dungeon"
     );
+    private static final int DYNAMIC_MIN_LEVEL = 1;
+        private static final int DYNAMIC_MAX_LEVEL = 500;
+        private static final int DYNAMIC_RANGE_SIZE = 15;
 
-    private static final Set<String> KNOWN_SUFFIXES = new HashSet<>(ROUTING_TO_SUFFIX.values());
+    /** Block ID → routing world template name (EL_MajorDungeonPortal_D01 → EL_MJ_Instance_D01, etc.) */
+    private static final Map<String, String> BLOCK_ID_TO_ROUTING_NAME = Map.of(
+            "EL_MajorDungeonPortal_D01", "EL_MJ_Instance_D01",
+            "EL_MajorDungeonPortal_D02", "EL_MJ_Instance_D02",
+            "EL_MajorDungeonPortal_D03", "EL_MJ_Instance_D03",
+            "EL_EndgamePortal_Frozen_Dungeon", "EL_Endgame_Frozen_Dungeon",
+            "EL_EndgamePortal_Swamp_Dungeon", "EL_Endgame_Swamp_Dungeon",
+            "EL_EndgamePortal_Golem_Void", "EL_Endgame_Golem_Void"
+    );
 
+    /** Routing world template name → level range announced when the portal gate was placed. */
+    private static final Map<String, LevelRange> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
     private static JavaPlugin plugin;
 
     private PortalLeveledInstanceRouter() {
@@ -67,6 +78,17 @@ public final class PortalLeveledInstanceRouter {
 
     public static void initialize(@Nonnull JavaPlugin owner) {
         plugin = owner;
+    }
+
+    /**
+     * Called by the gate manager when a portal block is placed so the announced
+     * level range is preserved and used when a player enters that instance.
+     */
+    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max) {
+        String routingName = BLOCK_ID_TO_ROUTING_NAME.get(blockId);
+        if (routingName != null) {
+            PENDING_LEVEL_RANGES.put(routingName, new LevelRange(min, max));
+        }
     }
 
     public static void onAddPlayerToWorld(@Nonnull AddPlayerToWorldEvent event) {
@@ -82,6 +104,9 @@ public final class PortalLeveledInstanceRouter {
         // "instance-EL_MJ_Instance_D03-<uuid>", bypassing the routing aliases.
         String directWorldSuffix = resolveSuffixFromWorldName(routingName);
         if (directWorldSuffix != null) {
+            // Register the level range immediately so mobs are leveled correctly
+            // before the player sends ClientReady (which fires ~4s later).
+            registerInstanceLevelOverride(routingName);
             applyFixedGateSpawn(playerRef, routingWorld, directWorldSuffix);
             log(Level.INFO,
                     "[ELPortal] Applied direct instance spawn correction player=%s world=%s suffix=%s",
@@ -96,15 +121,10 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        UUID playerUuid = playerRef.getUuid();
-        int level = resolvePlayerLevel(playerUuid);
-        int levelMin = (level / 15) * 15;
-        int levelMax = levelMin + 15;
-        String leveledWorldName = "EL_LVL_" + levelMin + "-" + levelMax + "_" + suffix;
         String displayName = ROUTING_TO_DISPLAY.getOrDefault(routingName, routingName);
 
-        log(Level.INFO, "[ELPortal] Routing player=%s from=%s to=%s level=%d bracket=%d-%d",
-                playerRef.getUsername(), routingName, leveledWorldName, level, levelMin, levelMax);
+        log(Level.INFO, "[ELPortal] Routing player=%s from=%s template=%s",
+            playerRef.getUsername(), routingName, routingName);
 
         InstancesPlugin instances = InstancesPlugin.get();
         if (instances == null) {
@@ -120,31 +140,23 @@ public final class PortalLeveledInstanceRouter {
 
         World returnWorld = resolveReturnWorld(routingWorld, universe);
         Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
-
-        World existing = universe.getWorld(leveledWorldName);
-        if (existing != null) {
-            if (teleportToInstanceSpawn(playerRef, existing, returnTransform)) {
-                applyFixedGateSpawn(playerRef, existing, suffix);
-                broadcastEntry(playerRef, displayName, levelMin, levelMax);
-            }
-        } else {
-            instances.spawnInstance(routingName, leveledWorldName, returnWorld, returnTransform)
-                    .thenAccept(leveled -> {
-                        if (teleportToInstanceSpawn(playerRef, leveled, returnTransform)) {
-                            applyFixedGateSpawn(playerRef, leveled, suffix);
-                            broadcastEntry(playerRef, displayName, levelMin, levelMax);
-                            log(Level.INFO, "[ELPortal] Created leveled instance %s for bracket %d-%d",
-                                    leveledWorldName, levelMin, levelMax);
-                        }
-                    })
-                    .exceptionally(ex -> {
-                        if (plugin != null) {
-                            plugin.getLogger().at(Level.WARNING).withCause(ex)
-                                    .log("[ELPortal] Failed to spawn leveled instance %s", leveledWorldName);
-                        }
-                        return null;
-                    });
-        }
+        instances.spawnInstance(routingName, null, returnWorld, returnTransform)
+                .thenAccept(spawned -> {
+                    if (teleportToInstanceSpawn(playerRef, spawned, returnTransform)) {
+                        LevelRange range = registerInstanceLevelOverride(spawned.getName());
+                        applyFixedGateSpawn(playerRef, spawned, suffix);
+                        broadcastEntry(playerRef, displayName, range.min(), range.max());
+                        log(Level.INFO, "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
+                                spawned.getName(), routingName, range.min(), range.max());
+                    }
+                })
+                .exceptionally(ex -> {
+                    if (plugin != null) {
+                        plugin.getLogger().at(Level.WARNING).withCause(ex)
+                                .log("[ELPortal] Failed to spawn routed instance from template %s", routingName);
+                    }
+                    return null;
+                });
     }
 
     public static void onPlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -189,14 +201,6 @@ public final class PortalLeveledInstanceRouter {
     }
 
     @Nonnull
-    public static String buildLeveledWorldName(@Nonnull String routingName, int playerLevel) {
-        String suffix = ROUTING_TO_SUFFIX.getOrDefault(routingName, routingName);
-        int levelMin = (playerLevel / 15) * 15;
-        int levelMax = levelMin + 15;
-        return "EL_LVL_" + levelMin + "-" + levelMax + "_" + suffix;
-    }
-
-    @Nonnull
     private static World resolveReturnWorld(@Nonnull World routingWorld, @Nonnull Universe universe) {
         InstanceWorldConfig cfg = InstanceWorldConfig.get(routingWorld.getWorldConfig());
         WorldReturnPoint rp = cfg != null ? cfg.getReturnPoint() : null;
@@ -227,23 +231,43 @@ public final class PortalLeveledInstanceRouter {
         return holder.getComponent(PlayerRef.getComponentType());
     }
 
-    private static int resolvePlayerLevel(@Nonnull UUID uuid) {
-        PlayerSnapshot snapshot = EndlessLevelingAPI.get().getPlayerSnapshot(uuid);
-        return snapshot != null ? Math.max(1, snapshot.level()) : 1;
+    private static LevelRange resolveDynamicInstanceRange(@Nonnull String worldName) {
+        // If a gate was placed for this template, use its announced range (consumed once).
+        String templateName = resolveTemplateNameFromWorldName(worldName);
+        if (templateName != null) {
+            LevelRange pending = PENDING_LEVEL_RANGES.remove(templateName);
+            if (pending != null) {
+                return pending;
+            }
+        }
+
+        // Fallback: deterministic hash so the range is at least stable for the world's lifetime.
+        int minLevel = DYNAMIC_MIN_LEVEL;
+        int maxLevel = Math.max(minLevel, DYNAMIC_MAX_LEVEL);
+        int rangeSize = Math.max(0, DYNAMIC_RANGE_SIZE);
+        int maxStart = Math.max(minLevel, maxLevel - rangeSize);
+        int span = Math.max(1, (maxStart - minLevel) + 1);
+
+        String normalizedWorld = worldName.toLowerCase(Locale.ROOT);
+        int start = minLevel + Math.floorMod(normalizedWorld.hashCode(), span);
+        int end = Math.min(maxLevel, start + rangeSize);
+        return new LevelRange(start, end);
+    }
+
+    @Nonnull
+    private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName) {
+        LevelRange range = resolveDynamicInstanceRange(worldName);
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api != null) {
+            api.registerMobWorldFixedLevelOverride(worldName, worldName, range.min(), range.max());
+            log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d",
+                    worldName, range.min(), range.max());
+        }
+        return range;
     }
 
     @Nullable
     private static String resolveSuffixFromWorldName(@Nonnull String worldName) {
-        if (worldName.startsWith("EL_LVL_")) {
-            int suffixStart = worldName.lastIndexOf('_');
-            if (suffixStart > 0 && suffixStart + 1 < worldName.length()) {
-                String suffix = worldName.substring(suffixStart + 1);
-                if (KNOWN_SUFFIXES.contains(suffix)) {
-                    return suffix;
-                }
-            }
-        }
-
         if (worldName.startsWith("instance-")) {
             for (Map.Entry<String, String> entry : INSTANCE_TEMPLATE_TO_SUFFIX.entrySet()) {
                 if (worldName.contains(entry.getKey())) {
@@ -252,6 +276,21 @@ public final class PortalLeveledInstanceRouter {
             }
         }
 
+        return null;
+    }
+
+    @Nullable
+    private static String resolveTemplateNameFromWorldName(@Nonnull String worldName) {
+        // Check routing/template names first (the worldName may BE the template name for routed path)
+        if (ROUTING_TO_SUFFIX.containsKey(worldName)) {
+            return worldName;
+        }
+        // Check instance world names (e.g. "instance-EL_MJ_Instance_D02-<uuid>")
+        for (String templateName : INSTANCE_TEMPLATE_TO_SUFFIX.keySet()) {
+            if (worldName.contains(templateName)) {
+                return templateName;
+            }
+        }
         return null;
     }
 
@@ -358,5 +397,8 @@ public final class PortalLeveledInstanceRouter {
                 plugin.getLogger().at(level).log(String.format(Locale.ROOT, message, args));
             }
         }
+    }
+
+    private record LevelRange(int min, int max) {
     }
 }

@@ -1,24 +1,33 @@
 package com.airijko.endlessleveling.events;
 
+import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 public final class PortalInstanceDiagnostics {
@@ -45,14 +54,29 @@ public final class PortalInstanceDiagnostics {
     );
 
     private static final Map<String, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
+    private static final Set<String> PENDING_INSTANCE_REMOVALS = ConcurrentHashMap.newKeySet();
+    private static final Map<String, InstanceDebugDefinition> TEMPLATE_NAME_INDEX;
+
+    static {
+        Map<String, InstanceDebugDefinition> normalized = new LinkedHashMap<>();
+        for (Map.Entry<String, InstanceDebugDefinition> entry : INSTANCE_DEFINITIONS.entrySet()) {
+            normalized.put(normalize(entry.getKey()), entry.getValue());
+        }
+        TEMPLATE_NAME_INDEX = Map.copyOf(normalized);
+    }
 
     private static JavaPlugin plugin;
+    private static AddonFilesManager filesManager;
 
     private PortalInstanceDiagnostics() {
     }
 
-    public static void initialize(@Nonnull JavaPlugin owner) {
+    public static void initialize(@Nonnull JavaPlugin owner, @Nullable AddonFilesManager addonFilesManager) {
         plugin = owner;
+        filesManager = addonFilesManager;
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(PortalInstanceDiagnostics::sweepStaleTrackedInstances,
+                1L,
+                TimeUnit.SECONDS);
     }
 
     public static void onAddPlayerToWorld(@Nonnull AddPlayerToWorldEvent event) {
@@ -63,7 +87,7 @@ public final class PortalInstanceDiagnostics {
 
         World world = event.getWorld();
         String worldName = world.getName();
-        InstanceDebugDefinition definition = INSTANCE_DEFINITIONS.get(worldName);
+        InstanceDebugDefinition definition = resolveDefinitionByWorldName(worldName);
         PendingDeath pendingDeath = PENDING_DEATHS.remove(playerRef.getUsername());
         if (definition == null && pendingDeath == null) {
             return;
@@ -104,7 +128,7 @@ public final class PortalInstanceDiagnostics {
 
         String worldName = event.getWorld().getName();
         PendingDeath pendingDeath = PENDING_DEATHS.get(playerRef.getUsername());
-        if (!INSTANCE_DEFINITIONS.containsKey(worldName) && (pendingDeath == null || !pendingDeath.worldName.equals(worldName))) {
+        if (!isTrackedInstanceWorld(worldName) && (pendingDeath == null || !pendingDeath.worldName.equals(worldName))) {
             return;
         }
 
@@ -114,12 +138,29 @@ public final class PortalInstanceDiagnostics {
                 worldName,
                 pendingDeath != null,
                 format(event.getTransform() == null ? null : event.getTransform().getPosition()));
+
+        if (pendingDeath != null && pendingDeath.worldName.equals(worldName) && !allowDungeonReentryAfterDeath()) {
+            scheduleInstanceRemoval(worldName, "player-death");
+            return;
+        }
+
+        if (isDungeonDespawnWhenEmpty()) {
+            scheduleEmptyInstanceRemoval(event.getWorld());
+        }
     }
 
     public static void onWorldRemoved(@Nonnull RemoveWorldEvent event) {
         String worldName = event.getWorld().getName();
-        if (!INSTANCE_DEFINITIONS.containsKey(worldName)) {
+        if (!isTrackedInstanceWorld(worldName)) {
             return;
+        }
+
+        PENDING_INSTANCE_REMOVALS.remove(worldName);
+
+        // Clean up the runtime level override registered at spawn time.
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api != null) {
+            api.removeMobWorldFixedLevelOverride(worldName);
         }
 
         log(Level.INFO,
@@ -136,7 +177,7 @@ public final class PortalInstanceDiagnostics {
         }
 
         String worldName = world.getName();
-        InstanceDebugDefinition definition = INSTANCE_DEFINITIONS.get(worldName);
+        InstanceDebugDefinition definition = resolveDefinitionByWorldName(worldName);
         if (definition == null) {
             return;
         }
@@ -151,6 +192,145 @@ public final class PortalInstanceDiagnostics {
                 format(actualPosition),
                 format(nearestSpawn.expected),
                 nearestSpawn.distance);
+
+        if (!allowDungeonReentryAfterDeath()) {
+            scheduleInstanceRemoval(worldName, "player-death");
+        }
+    }
+
+    private static boolean allowDungeonReentryAfterDeath() {
+        return filesManager != null && filesManager.allowDungeonReentryAfterDeath();
+    }
+
+    private static boolean isDungeonDespawnWhenEmpty() {
+        return filesManager != null && filesManager.isDungeonDespawnWhenEmpty();
+    }
+
+    private static boolean isTrackedInstanceWorld(@Nullable String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return false;
+        }
+        return resolveDefinitionByWorldName(worldName) != null;
+    }
+
+    @Nullable
+    private static InstanceDebugDefinition resolveDefinitionByWorldName(@Nullable String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return null;
+        }
+
+        InstanceDebugDefinition exact = INSTANCE_DEFINITIONS.get(worldName);
+        if (exact != null) {
+            return exact;
+        }
+
+        String normalizedWorldName = normalize(worldName);
+        if (normalizedWorldName.isEmpty()) {
+            return null;
+        }
+
+        for (Map.Entry<String, InstanceDebugDefinition> entry : TEMPLATE_NAME_INDEX.entrySet()) {
+            if (normalizedWorldName.contains(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+
+        return null;
+    }
+
+    @Nonnull
+    private static String normalize(@Nullable String value) {
+        return value == null ? "" : value.trim().toLowerCase();
+    }
+
+    private static void sweepStaleTrackedInstances() {
+        try {
+            Universe universe = Universe.get();
+            if (universe == null) {
+                return;
+            }
+
+            for (String worldName : universe.getWorlds().keySet()) {
+                if (!isTrackedInstanceWorld(worldName)) {
+                    continue;
+                }
+                scheduleInstanceRemoval(worldName, "startup-stale-cleanup");
+            }
+        } catch (Exception ex) {
+            log(Level.WARNING, "startup-stale-cleanup-failed error=%s", ex.getMessage());
+        }
+    }
+
+    private static void scheduleEmptyInstanceRemoval(@Nullable World world) {
+        if (world == null) {
+            return;
+        }
+
+        String worldName = world.getName();
+        if (!isTrackedInstanceWorld(worldName)) {
+            return;
+        }
+
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            try {
+                if (countPlayersInWorld(world) <= 0) {
+                    scheduleInstanceRemoval(worldName, "empty-instance");
+                }
+            } catch (Exception ex) {
+                log(Level.WARNING,
+                        "empty-instance-check-failed world=%s error=%s",
+                        worldName,
+                        ex.getMessage());
+            }
+        }, 250L, TimeUnit.MILLISECONDS);
+    }
+
+    private static int countPlayersInWorld(@Nonnull World world) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return 0;
+        }
+
+        if (world.getWorldConfig() == null || world.getWorldConfig().getUuid() == null) {
+            return 0;
+        }
+
+        var worldUuid = world.getWorldConfig().getUuid();
+
+        int count = 0;
+        for (PlayerRef playerRef : universe.getPlayers()) {
+            if (playerRef == null || !playerRef.isValid()) {
+                continue;
+            }
+
+            if (worldUuid.equals(playerRef.getWorldUuid())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static void scheduleInstanceRemoval(@Nullable String worldName, @Nonnull String reason) {
+        if (worldName == null || worldName.isBlank() || !isTrackedInstanceWorld(worldName)) {
+            return;
+        }
+        if (!PENDING_INSTANCE_REMOVALS.add(worldName)) {
+            return;
+        }
+
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            try {
+                InstancesPlugin.safeRemoveInstance(worldName);
+                log(Level.INFO, "instance-remove-request world=%s reason=%s", worldName, reason);
+            } catch (Exception ex) {
+                PENDING_INSTANCE_REMOVALS.remove(worldName);
+                log(Level.WARNING,
+                        "instance-remove-request-failed world=%s reason=%s error=%s",
+                        worldName,
+                        reason,
+                        ex.getMessage());
+            }
+        }, 100L, TimeUnit.MILLISECONDS);
     }
 
     @Nullable
@@ -190,7 +370,10 @@ public final class PortalInstanceDiagnostics {
         if (plugin == null) {
             return;
         }
-        plugin.getLogger().at(level).log("[ELPortal] " + message, args);
+        String formatted = args == null || args.length == 0
+                ? message
+                : String.format(Locale.ROOT, message, args);
+        plugin.getLogger().at(level).log("[ELPortal] " + formatted);
     }
 
     private record PendingDeath(@Nonnull String worldName) {

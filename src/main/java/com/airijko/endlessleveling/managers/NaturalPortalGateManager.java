@@ -1,5 +1,6 @@
 package com.airijko.endlessleveling.managers;
 
+import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -16,13 +17,11 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 
 import javax.annotation.Nonnull;
-import com.airijko.endlessleveling.api.EndlessLevelingAPI;
-import com.airijko.endlessleveling.api.PlayerSnapshot;
-import javax.annotation.Nullable;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -47,6 +46,9 @@ public final class NaturalPortalGateManager {
     private static final String WORLD_COLOR = "#66d9ff";
     private static final String POSITION_COLOR = "#ffd166";
     private static final String LEVEL_COLOR = "#6cff78";
+    private static final int DYNAMIC_MIN_LEVEL = 1;
+    private static final int DYNAMIC_MAX_LEVEL = 500;
+    private static final int DYNAMIC_RANGE_SIZE = 15;
 
     private static JavaPlugin plugin;
     private static ScheduledFuture<?> periodicTask;
@@ -184,9 +186,10 @@ public final class NaturalPortalGateManager {
                 }
 
                 chunk.setBlock(x, y, z, blockId);
-                int spawnLevel = resolveLevel(playerRef.getUuid());
-                int levelMin = (spawnLevel / 15) * 15;
-                int levelMax = levelMin + 15;
+                int maxStart = Math.max(DYNAMIC_MIN_LEVEL, DYNAMIC_MAX_LEVEL - DYNAMIC_RANGE_SIZE);
+                int levelMin = ThreadLocalRandom.current().nextInt(DYNAMIC_MIN_LEVEL, maxStart + 1);
+                int levelMax = Math.min(DYNAMIC_MAX_LEVEL, levelMin + DYNAMIC_RANGE_SIZE);
+                PortalLeveledInstanceRouter.setPendingLevelRange(blockId, levelMin, levelMax);
                 announceGate(world, x, y, z, levelMin, levelMax);
                 if (plugin != null) {
                     plugin.getLogger().at(Level.INFO).log(
@@ -278,11 +281,6 @@ public final class NaturalPortalGateManager {
             Message.raw(String.format("Level Range: %d-%d", levelMin, levelMax)).color(LEVEL_COLOR)
         );
         universe.sendMessage(message);
-    }
-
-    private static int resolveLevel(@Nonnull UUID uuid) {
-        PlayerSnapshot snapshot = EndlessLevelingAPI.get().getPlayerSnapshot(uuid);
-        return snapshot != null ? Math.max(1, snapshot.level()) : 1;
     }
 
     @Nonnull

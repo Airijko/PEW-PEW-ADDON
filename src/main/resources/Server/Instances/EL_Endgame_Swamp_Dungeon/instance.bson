@@ -2,7 +2,7 @@
   "$Comment": "EL-bridged Endgame instance using original EndgameAndQoL world assets",
   "GameMode": "Adventure",
   "RequiredPlugins": {},
-  "DeleteOnRemove": false,
+  "DeleteOnRemove": true,
   "SpawnProvider": {
     "Id": "Global",
     "SpawnPoint": {
