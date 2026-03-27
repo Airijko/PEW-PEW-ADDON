@@ -4,12 +4,15 @@ import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -19,8 +22,15 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.UUID;
 
 public class PortalBlockAdminCommand extends AbstractCommand {
 
@@ -37,6 +47,12 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static final int WORLD_MAX_Y = 319;
     private static final int MAX_LIST_LINES = 30;
     private static final int AIR_BLOCK_ID = 0;
+    private static final long PENDING_RETRY_INTERVAL_SECONDS = 15L;
+    private static final int PENDING_CHUNKS_PER_WORLD_PER_TICK = 8;
+
+    private static final Map<UUID, Set<Long>> PENDING_CHUNK_SWEEPS = new ConcurrentHashMap<>();
+    private static final AtomicBoolean PENDING_TASK_STARTED = new AtomicBoolean(false);
+    private static ScheduledFuture<?> pendingTask;
 
     public PortalBlockAdminCommand() {
         super("portalblocks", "List and remove placed portal blocks in your current world");
@@ -44,6 +60,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         this.addSubCommand(new ListSubCommand());
         this.addSubCommand(new RemoveNearestSubCommand());
         this.addSubCommand(new RemoveAllSubCommand());
+        ensurePendingRetryTask();
     }
 
     @Nullable
@@ -89,6 +106,18 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         Store<EntityStore> store = ref.getStore();
         TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
         return transform == null ? null : transform.getPosition();
+    }
+
+    @Nullable
+    private static UUID resolvePlayerWorldUuid(@Nonnull Player player) {
+        Ref<EntityStore> ref = player.getReference();
+        if (ref == null || !ref.isValid()) {
+            return null;
+        }
+
+        Store<EntityStore> store = ref.getStore();
+        PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
+        return playerRef == null ? null : playerRef.getWorldUuid();
     }
 
     @Nonnull
@@ -183,6 +212,111 @@ public class PortalBlockAdminCommand extends AbstractCommand {
             return true;
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private static int sweepChunkForPortals(@Nonnull WorldChunk chunk,
+                                            long chunkIndex,
+                                            @Nonnull Set<Integer> portalBlockIntIds) {
+        if (portalBlockIntIds.isEmpty()) {
+            return 0;
+        }
+
+        int removed = 0;
+        int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
+        int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
+        int minX = chunkX << 5;
+        int minZ = chunkZ << 5;
+
+        for (int y = WORLD_MIN_Y; y <= WORLD_MAX_Y; y++) {
+            for (int x = minX; x < minX + 32; x++) {
+                for (int z = minZ; z < minZ + 32; z++) {
+                    int blockIntId = chunk.getBlock(x, y, z);
+                    if (!portalBlockIntIds.contains(blockIntId)) {
+                        continue;
+                    }
+                    chunk.setBlock(x, y, z, AIR_BLOCK_ID);
+                    removed++;
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    private static void addPendingChunk(@Nonnull UUID worldUuid, long chunkIndex) {
+        PENDING_CHUNK_SWEEPS.computeIfAbsent(worldUuid, ignored -> ConcurrentHashMap.newKeySet()).add(chunkIndex);
+    }
+
+    private static int pendingChunkCount(@Nonnull UUID worldUuid) {
+        Set<Long> pending = PENDING_CHUNK_SWEEPS.get(worldUuid);
+        return pending == null ? 0 : pending.size();
+    }
+
+    private static void ensurePendingRetryTask() {
+        if (!PENDING_TASK_STARTED.compareAndSet(false, true)) {
+            return;
+        }
+
+        pendingTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
+                PortalBlockAdminCommand::processPendingSweeps,
+                PENDING_RETRY_INTERVAL_SECONDS,
+                PENDING_RETRY_INTERVAL_SECONDS,
+                TimeUnit.SECONDS
+        );
+    }
+
+    private static void processPendingSweeps() {
+        Universe universe = Universe.get();
+        if (universe == null || PENDING_CHUNK_SWEEPS.isEmpty()) {
+            return;
+        }
+
+        for (Map.Entry<UUID, Set<Long>> entry : PENDING_CHUNK_SWEEPS.entrySet()) {
+            UUID worldUuid = entry.getKey();
+            Set<Long> pending = entry.getValue();
+            if (pending == null || pending.isEmpty()) {
+                continue;
+            }
+
+            World world = universe.getWorld(worldUuid);
+            if (world == null) {
+                continue;
+            }
+
+            Set<Integer> portalBlockIntIds = resolvePortalBlockIntIds();
+            if (portalBlockIntIds.isEmpty()) {
+                continue;
+            }
+
+            world.execute(() -> {
+                int processed = 0;
+                List<Long> toRemove = new ArrayList<>();
+                for (Long chunkIndexObj : new ArrayList<>(pending)) {
+                    if (chunkIndexObj == null) {
+                        continue;
+                    }
+                    long chunkIndex = chunkIndexObj;
+                    WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
+                    if (chunk == null) {
+                        continue;
+                    }
+
+                    sweepChunkForPortals(chunk, chunkIndex, portalBlockIntIds);
+                    toRemove.add(chunkIndex);
+                    processed++;
+                    if (processed >= PENDING_CHUNKS_PER_WORLD_PER_TICK) {
+                        break;
+                    }
+                }
+
+                if (!toRemove.isEmpty()) {
+                    pending.removeAll(toRemove);
+                }
+                if (pending.isEmpty()) {
+                    PENDING_CHUNK_SWEEPS.remove(worldUuid);
+                }
+            });
         }
     }
 
@@ -288,30 +422,81 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-            return runInPlayerWorld(context, (ctx, player, world) -> {
-                List<PortalBlockHit> hits = scanPortalBlocks(world);
-                if (hits.isEmpty()) {
-                    ctx.sendMessage(Message.raw("No portal blocks found to remove.").color("#ffcc66"));
+            if (!(context.sender() instanceof Player player)) {
+                context.sendMessage(Message.raw("This command is player-only.").color("#ff9900"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            World world = player.getWorld();
+            if (world == null) {
+                context.sendMessage(Message.raw("You are not in a world right now.").color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            UUID worldUuid = resolvePlayerWorldUuid(player);
+            if (worldUuid == null) {
+                context.sendMessage(Message.raw("Could not resolve world identity for cleanup.").color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            context.sendMessage(Message.raw("Starting all-chunks portal cleanup (this may take a moment)...")
+                    .color("#ffcc66"));
+
+            return CompletableFuture.runAsync(() -> {
+                Set<Integer> portalBlockIntIds = resolvePortalBlockIntIds();
+                if (portalBlockIntIds.isEmpty()) {
+                    context.sendMessage(Message.raw("No known portal block IDs are currently registered.")
+                            .color("#ff6666"));
                     return;
                 }
 
-                int removed = 0;
-                int failed = 0;
-                for (PortalBlockHit hit : hits) {
-                    if (removePortalBlock(world, hit)) {
-                        removed++;
-                    } else {
-                        failed++;
+                Set<Long> chunkIndexes = new HashSet<>();
+                for (Long chunkIndexObj : world.getChunkStore().getChunkIndexes()) {
+                    if (chunkIndexObj != null) {
+                        chunkIndexes.add(chunkIndexObj);
                     }
                 }
 
-                if (failed == 0) {
-                    ctx.sendMessage(Message.raw("Removed " + removed + " portal block(s) from loaded chunks.")
-                            .color("#6cff78"));
-                } else {
-                    ctx.sendMessage(Message.raw("Removed " + removed + " portal block(s); failed to remove "
-                                    + failed + " block(s).")
+                if (chunkIndexes.isEmpty()) {
+                    context.sendMessage(Message.raw("No chunks known for this world right now.").color("#ffcc66"));
+                    return;
+                }
+
+                AtomicInteger removed = new AtomicInteger();
+                AtomicInteger sweptChunks = new AtomicInteger();
+                AtomicInteger pendingChunks = new AtomicInteger();
+
+                for (long chunkIndex : chunkIndexes) {
+                    int removedInChunk = world.getNonTickingChunkAsync(chunkIndex)
+                            .thenApplyAsync(chunk -> {
+                                if (chunk == null) {
+                                    return Integer.MIN_VALUE;
+                                }
+                                return sweepChunkForPortals(chunk, chunkIndex, portalBlockIntIds);
+                            }, world)
+                            .exceptionally(ex -> Integer.MIN_VALUE)
+                            .join();
+
+                    if (removedInChunk == Integer.MIN_VALUE) {
+                        addPendingChunk(worldUuid, chunkIndex);
+                        pendingChunks.incrementAndGet();
+                        continue;
+                    }
+
+                    sweptChunks.incrementAndGet();
+                    removed.addAndGet(removedInChunk);
+                }
+
+                int pendingTotal = pendingChunkCount(worldUuid);
+                if (pendingTotal > 0) {
+                    context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
+                                    + sweptChunks.get() + " chunk(s). Pending retries for " + pendingTotal
+                                    + " chunk(s) until they are available.")
                             .color("#ffcc66"));
+                } else {
+                    context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
+                                    + sweptChunks.get() + " chunk(s).")
+                            .color("#6cff78"));
                 }
             });
         }

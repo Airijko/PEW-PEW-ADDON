@@ -143,10 +143,6 @@ public final class PortalInstanceDiagnostics {
             scheduleInstanceRemoval(worldName, "player-death");
             return;
         }
-
-        if (isDungeonDespawnWhenEmpty()) {
-            scheduleEmptyInstanceRemoval(event.getWorld());
-        }
     }
 
     public static void onWorldRemoved(@Nonnull RemoveWorldEvent event) {
@@ -203,10 +199,6 @@ public final class PortalInstanceDiagnostics {
         return filesManager != null && filesManager.allowDungeonReentryAfterDeath();
     }
 
-    private static boolean isDungeonDespawnWhenEmpty() {
-        return filesManager != null && filesManager.isDungeonDespawnWhenEmpty();
-    }
-
     private static boolean isTrackedInstanceWorld(@Nullable String worldName) {
         if (worldName == null || worldName.isBlank()) {
             return false;
@@ -260,55 +252,6 @@ public final class PortalInstanceDiagnostics {
         } catch (Exception ex) {
             log(Level.WARNING, "startup-stale-cleanup-failed error=%s", ex.getMessage());
         }
-    }
-
-    private static void scheduleEmptyInstanceRemoval(@Nullable World world) {
-        if (world == null) {
-            return;
-        }
-
-        String worldName = world.getName();
-        if (!isTrackedInstanceWorld(worldName)) {
-            return;
-        }
-
-        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-            try {
-                if (countPlayersInWorld(world) <= 0) {
-                    scheduleInstanceRemoval(worldName, "empty-instance");
-                }
-            } catch (Exception ex) {
-                log(Level.WARNING,
-                        "empty-instance-check-failed world=%s error=%s",
-                        worldName,
-                        ex.getMessage());
-            }
-        }, 250L, TimeUnit.MILLISECONDS);
-    }
-
-    private static int countPlayersInWorld(@Nonnull World world) {
-        Universe universe = Universe.get();
-        if (universe == null) {
-            return 0;
-        }
-
-        if (world.getWorldConfig() == null || world.getWorldConfig().getUuid() == null) {
-            return 0;
-        }
-
-        var worldUuid = world.getWorldConfig().getUuid();
-
-        int count = 0;
-        for (PlayerRef playerRef : universe.getPlayers()) {
-            if (playerRef == null || !playerRef.isValid()) {
-                continue;
-            }
-
-            if (worldUuid.equals(playerRef.getWorldUuid())) {
-                count++;
-            }
-        }
-        return count;
     }
 
     private static void scheduleInstanceRemoval(@Nullable String worldName, @Nonnull String reason) {

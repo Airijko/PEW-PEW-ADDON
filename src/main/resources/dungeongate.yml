@@ -13,7 +13,7 @@ spawn_interval_minutes: 30
 
 # Maximum number of dungeon gate instances that may be active at the same time.
 # Set to -1 for no limit.
-max_concurrent_spawns: 3
+max_concurrent_spawns: 5
 
 # Announce in global chat when a dungeon gate spawns.
 announce_on_spawn: true
@@ -24,10 +24,7 @@ announce_on_spawn: true
 
 # How long (in minutes) an open gate stays active before it closes on its own.
 # Set to -1 to never auto-close.
-gate_duration_minutes: 30
-
-# Close the gate early if all players have left the instance.
-despawn_when_empty: true
+gate_duration_minutes: 45
 
 # -----------------------------------------------------------------------
 # Entry restrictions
