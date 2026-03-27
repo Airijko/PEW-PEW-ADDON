@@ -241,9 +241,21 @@ public final class AddonFilesManager {
         text.append("scope_percent: ").append(options.scopePercent).append("\n\n");
 
         text.append("# Level range offset around the chosen base level.\n");
-        text.append("# Example: base 120 and offset 30 => range 90-150.\n");
+        text.append("# This offset anchors one normal-mob bound from the computed reference level.\n");
+        text.append("# UPPER/ALL scope: anchors the normal mob MAX level (reference + offset).\n");
+        text.append("# LOWER scope: anchors the normal mob MIN level (reference - offset).\n");
         text.append("# Minimum enforced value: 0.\n");
         text.append("level_offset: ").append(options.levelOffset).append("\n\n");
+
+        text.append("# Normal mob level spread size for the gate (inclusive range).\n");
+        text.append("# Example: 20 with max 80 => normal mobs are 60-80.\n");
+        text.append("# Minimum enforced value: 0.\n");
+        text.append("normal_mob_level_range: ").append(options.normalMobLevelRange).append("\n\n");
+
+        text.append("# Boss bonus added on top of the highest normal mob level.\n");
+        text.append("# Example: normal 60-80 with boss bonus 10 => boss is level 90.\n");
+        text.append("# Minimum enforced value: 0.\n");
+        text.append("boss_level_bonus: ").append(options.bossLevelBonus).append("\n\n");
 
         text.append(AddonVersionRegistry.CONFIG_VERSION_KEY).append(": ").append(targetVersion).append("\n");
 
@@ -887,6 +899,18 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.levelOffset;
     }
 
+    public int getDungeonNormalMobLevelRange() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().normalMobLevelRange
+                : dungeonGateOptions.normalMobLevelRange;
+    }
+
+    public int getDungeonBossLevelBonus() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().bossLevelBonus
+                : dungeonGateOptions.bossLevelBonus;
+    }
+
     @Nonnull
     public String getDungeonLevelReferenceScope() {
         return dungeonGateOptions == null
@@ -973,6 +997,16 @@ public final class AddonFilesManager {
                 levelOffset = Math.max(0, n.intValue());
             }
 
+            int normalMobLevelRange = defaults.normalMobLevelRange;
+            if (root.get("normal_mob_level_range") instanceof Number n) {
+                normalMobLevelRange = Math.max(0, n.intValue());
+            }
+
+            int bossLevelBonus = defaults.bossLevelBonus;
+            if (root.get("boss_level_bonus") instanceof Number n) {
+                bossLevelBonus = Math.max(0, n.intValue());
+            }
+
             int scopePercent = defaults.scopePercent;
             if (root.get("scope_percent") instanceof Number n) {
                 scopePercent = clampScopePercent(n.intValue());
@@ -984,7 +1018,8 @@ public final class AddonFilesManager {
 
             return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, despawnWhenEmpty,
                     maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel,
-                    levelReferenceMode, levelReferenceScope, levelOffset, scopePercent);
+                    levelReferenceMode, levelReferenceScope, levelOffset,
+                    normalMobLevelRange, bossLevelBonus, scopePercent);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -1027,6 +1062,8 @@ public final class AddonFilesManager {
         private final String levelReferenceMode;
         private final String levelReferenceScope;
         private final int levelOffset;
+        private final int normalMobLevelRange;
+        private final int bossLevelBonus;
         private final int scopePercent;
 
         private DungeonGateOptions(boolean enabled,
@@ -1041,6 +1078,8 @@ public final class AddonFilesManager {
                 @Nonnull String levelReferenceMode,
                 @Nonnull String levelReferenceScope,
                 int levelOffset,
+                int normalMobLevelRange,
+                int bossLevelBonus,
                 int scopePercent) {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
@@ -1054,12 +1093,14 @@ public final class AddonFilesManager {
             this.levelReferenceMode = levelReferenceMode;
             this.levelReferenceScope = levelReferenceScope;
             this.levelOffset = levelOffset;
+            this.normalMobLevelRange = Math.max(0, normalMobLevelRange);
+            this.bossLevelBonus = Math.max(0, bossLevelBonus);
             this.scopePercent = clampScopePercent(scopePercent);
         }
 
         private static DungeonGateOptions defaults() {
             return new DungeonGateOptions(true, false, true, false, 3, 30, 30, -1, 1,
-                    "AVERAGE", "UPPER", 30, 25);
+                    "AVERAGE", "UPPER", 30, 20, 10, 25);
         }
     }
 

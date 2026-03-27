@@ -69,8 +69,8 @@ public final class PortalLeveledInstanceRouter {
             "EL_EndgamePortal_Golem_Void", "EL_Endgame_Golem_Void"
     );
 
-    /** Routing world template name → level range announced when the portal gate was placed. */
-    private static final Map<String, LevelRange> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
+    /** Routing world template name → level profile announced when the portal gate was placed. */
+    private static final Map<String, PendingLevelProfile> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
 
     /** Instance world name → resolved level range, kept until the world is removed. */
     private static final Map<String, LevelRange> ACTIVE_LEVEL_RANGES = new ConcurrentHashMap<>();
@@ -87,11 +87,16 @@ public final class PortalLeveledInstanceRouter {
      * Called by the gate manager when a portal block is placed so the announced
      * level range is preserved and used when a player enters that instance.
      */
-    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max) {
+    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max, int bossLevel) {
         String routingName = BLOCK_ID_TO_ROUTING_NAME.get(blockId);
         if (routingName != null) {
-            PENDING_LEVEL_RANGES.put(routingName, new LevelRange(min, max));
+            int bossOffset = Math.max(0, bossLevel - Math.max(min, max));
+            PENDING_LEVEL_RANGES.put(routingName, new PendingLevelProfile(min, max, bossOffset));
         }
+    }
+
+    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max) {
+        setPendingLevelRange(blockId, min, max, Math.max(min, max));
     }
 
     public static void onAddPlayerToWorld(@Nonnull AddPlayerToWorldEvent event) {
@@ -234,11 +239,11 @@ public final class PortalLeveledInstanceRouter {
         return holder.getComponent(PlayerRef.getComponentType());
     }
 
-    private static LevelRange resolveDynamicInstanceRange(@Nonnull String worldName) {
+    private static PendingLevelProfile resolveDynamicInstanceRange(@Nonnull String worldName) {
         // If a gate was placed for this template, use its announced range (consumed once).
         String templateName = resolveTemplateNameFromWorldName(worldName);
         if (templateName != null) {
-            LevelRange pending = PENDING_LEVEL_RANGES.remove(templateName);
+            PendingLevelProfile pending = PENDING_LEVEL_RANGES.remove(templateName);
             if (pending != null) {
                 return pending;
             }
@@ -254,18 +259,24 @@ public final class PortalLeveledInstanceRouter {
         String normalizedWorld = worldName.toLowerCase(Locale.ROOT);
         int start = minLevel + Math.floorMod(normalizedWorld.hashCode(), span);
         int end = Math.min(maxLevel, start + rangeSize);
-        return new LevelRange(start, end);
+        return new PendingLevelProfile(start, end, 5);
     }
 
     @Nonnull
     private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName) {
-        LevelRange range = resolveDynamicInstanceRange(worldName);
+        PendingLevelProfile profile = resolveDynamicInstanceRange(worldName);
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
         if (api != null) {
-            api.registerMobWorldFixedLevelOverride(worldName, worldName, range.min(), range.max());
-            log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d",
-                    worldName, range.min(), range.max());
+            api.registerMobWorldFixedLevelOverride(
+                    worldName,
+                    worldName,
+                    profile.min(),
+                    profile.max(),
+                    profile.bossLevelFromRangeMaxOffset());
+            log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d bossOffset=%d",
+                    worldName, profile.min(), profile.max(), profile.bossLevelFromRangeMaxOffset());
         }
+        LevelRange range = new LevelRange(profile.min(), profile.max());
         ACTIVE_LEVEL_RANGES.put(worldName, range);
         return range;
     }
@@ -426,5 +437,8 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private record LevelRange(int min, int max) {
+    }
+
+    private record PendingLevelProfile(int min, int max, int bossLevelFromRangeMaxOffset) {
     }
 }

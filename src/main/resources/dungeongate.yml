@@ -56,13 +56,24 @@ level_reference_mode: AVERAGE
 # Which player slice to evaluate for level_reference_mode.
 # Options: ALL, UPPER, LOWER
 level_reference_scope: UPPER
-
+  
 # When level_reference_scope is UPPER or LOWER, use only N% players by level.
 # Example: 25 means highest 25% (UPPER) or lowest 25% (LOWER).
 # Allowed range: 1-100.
 scope_percent: 40
 
-# Level range offset around the chosen base level.
-# Example: base 120 and offset 50 => range 70-170.
+# This offset anchors one normal-mob bound from the computed reference level.
+# UPPER/ALL scope: anchors the normal mob MAX level (reference + offset).
+# LOWER scope: anchors the normal mob MIN level (reference - offset).
 # Minimum enforced value: 0.
 level_offset: 50
+
+# Normal mob level spread size for the gate (inclusive range).
+# Example: 20 with max 80 => normal mobs are 60-80.
+# Minimum enforced value: 0.
+normal_mob_level_range: 20
+
+# Boss bonus added on top of the highest normal mob level.
+# Example: normal 60-80 with boss bonus 10 => boss is level 90.
+# Minimum enforced value: 0.
+boss_level_bonus: 10

@@ -26,16 +26,15 @@ public class PortalGateTestCommand extends AbstractCommand {
         }
 
         return NaturalPortalGateManager.spawnRandomGateNearPlayer(player, true)
-                .thenAccept(spawned -> {
-                    if (spawned) {
-                        context.sendMessage(Message.raw("Spawned a random gate near your loaded chunks.").color("#6cff78"));
-                        String rankLine = NaturalPortalGateManager.consumeLastSpawnRankLine(player.getUuid());
-                        if (rankLine != null) {
-                            context.sendMessage(Message.raw(rankLine).color("#ff8fab"));
-                        }
-                    } else {
-                        context.sendMessage(Message.raw("Failed to spawn a gate nearby (no suitable loaded chunk found).").color("#ff6666"));
-                    }
-                });
+            .thenAccept(spawned -> {
+                if (spawned) {
+                    context.sendMessage(
+                            Message.raw("Spawned a random gate near your loaded chunks.").color("#6cff78"));
+                } else {
+                    context.sendMessage(
+                            Message.raw("Failed to spawn a gate nearby (no suitable loaded chunk found).")
+                                    .color("#ff6666"));
+                }
+            });
     }
 }

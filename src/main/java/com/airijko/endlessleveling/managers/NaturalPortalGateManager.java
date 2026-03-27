@@ -25,10 +25,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -51,13 +49,14 @@ public final class NaturalPortalGateManager {
     private static final String PREFIX = "[EndlessLeveling] ";
     private static final int DYNAMIC_MIN_LEVEL = 1;
     private static final int DYNAMIC_MAX_LEVEL = 500;
-    private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET = 50;
+    private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET = 30;
+    private static final int DEFAULT_NORMAL_MOB_LEVEL_RANGE = 20;
+    private static final int DEFAULT_BOSS_LEVEL_BONUS = 10;
     private static final int DEFAULT_UPPER_TOP_PERCENT = 25;
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
     private static ScheduledFuture<?> periodicTask;
-    private static final Map<UUID, GateRank> LAST_SPAWN_RANK_BY_PLAYER = new ConcurrentHashMap<>();
 
     private NaturalPortalGateManager() {
     }
@@ -201,21 +200,18 @@ public final class NaturalPortalGateManager {
 
                 chunk.setBlock(x, y, z, blockId);
                 LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef);
-                int levelMin = levelRange.min;
-                int levelMax = levelRange.max;
+                int normalLevelMin = levelRange.normalMin;
+                int normalLevelMax = levelRange.normalMax;
+                int bossLevel = levelRange.bossLevel;
                 int highestPlayerLevel = resolveHighestPlayerLevelForWorld(playerRef);
-                GateRank gateRank = resolveGateRank(levelMin, levelMax, highestPlayerLevel);
-                UUID anchorPlayerUuid = playerRef.getUuid();
-                if (anchorPlayerUuid != null) {
-                    LAST_SPAWN_RANK_BY_PLAYER.put(anchorPlayerUuid, gateRank);
-                }
-                PortalLeveledInstanceRouter.setPendingLevelRange(blockId, levelMin, levelMax);
+                GateRank gateRank = resolveGateRank(normalLevelMin, normalLevelMax, highestPlayerLevel);
+                PortalLeveledInstanceRouter.setPendingLevelRange(blockId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
-                    announceGate(world, x, y, z, gateRank, levelMin, levelMax);
+                        announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
                 if (plugin != null) {
                     plugin.getLogger().at(Level.INFO).log(
-                            "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s ratio=%.2f levelRange=%d-%d",
+                            "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s ratio=%.2f normalRange=%d-%d bossLevel=%d",
                             world.getName(),
                             blockId,
                             isTestSpawn,
@@ -224,8 +220,9 @@ public final class NaturalPortalGateManager {
                             z,
                             gateRank.tier.letter(),
                             gateRank.ratio,
-                            levelMin,
-                            levelMax
+                            normalLevelMin,
+                            normalLevelMax,
+                            bossLevel
                     );
                 }
                 scheduleRemoval(world, blockId, x, y, z);
@@ -294,12 +291,28 @@ public final class NaturalPortalGateManager {
     private static LevelRange resolveLevelRangeForWorld(@Nonnull World world, @Nonnull PlayerRef anchorPlayerRef) {
         int baseLevel = resolveReferenceLevelForWorld(world, anchorPlayerRef);
         int offset = resolveLevelOffset();
-        int levelMin = clampDynamicLevel(baseLevel - offset);
-        int levelMax = clampDynamicLevel(baseLevel + offset);
-        if (levelMax < levelMin) {
-            levelMax = levelMin;
+        int normalRange = resolveNormalMobLevelRange();
+        int bossBonus = resolveBossLevelBonus();
+
+        boolean anchorAtMin = "LOWER".equals(resolveLevelReferenceScope());
+        int normalMin;
+        int normalMax;
+
+        if (anchorAtMin) {
+            normalMin = clampDynamicLevel(baseLevel - offset);
+            normalMax = clampDynamicLevel(normalMin + normalRange);
+        } else {
+            normalMax = clampDynamicLevel(baseLevel + offset);
+            normalMin = clampDynamicLevel(normalMax - normalRange);
         }
-        return new LevelRange(levelMin, levelMax);
+
+        if (normalMax < normalMin) {
+            normalMax = normalMin;
+        }
+
+        int bossLevel = clampDynamicLevel(normalMax + bossBonus);
+
+        return new LevelRange(normalMin, normalMax, bossLevel);
     }
 
     private static int resolveReferenceLevelForWorld(@Nonnull World world, @Nonnull PlayerRef anchorPlayerRef) {
@@ -468,6 +481,20 @@ public final class NaturalPortalGateManager {
         return Math.max(0, filesManager.getDungeonLevelOffset());
     }
 
+    private static int resolveNormalMobLevelRange() {
+        if (filesManager == null) {
+            return DEFAULT_NORMAL_MOB_LEVEL_RANGE;
+        }
+        return Math.max(0, filesManager.getDungeonNormalMobLevelRange());
+    }
+
+    private static int resolveBossLevelBonus() {
+        if (filesManager == null) {
+            return DEFAULT_BOSS_LEVEL_BONUS;
+        }
+        return Math.max(0, filesManager.getDungeonBossLevelBonus());
+    }
+
     private static int resolveScopePercent() {
         if (filesManager == null) {
             return DEFAULT_UPPER_TOP_PERCENT;
@@ -499,12 +526,14 @@ public final class NaturalPortalGateManager {
     }
 
     private static final class LevelRange {
-        private final int min;
-        private final int max;
+        private final int normalMin;
+        private final int normalMax;
+        private final int bossLevel;
 
-        private LevelRange(int min, int max) {
-            this.min = min;
-            this.max = max;
+        private LevelRange(int normalMin, int normalMax, int bossLevel) {
+            this.normalMin = normalMin;
+            this.normalMax = normalMax;
+            this.bossLevel = bossLevel;
         }
     }
 
@@ -518,22 +547,13 @@ public final class NaturalPortalGateManager {
         }
     }
 
-    @Nullable
-    public static String consumeLastSpawnRankLine(@Nonnull UUID playerUuid) {
-        GateRank rank = LAST_SPAWN_RANK_BY_PLAYER.remove(playerUuid);
-        if (rank == null) {
-            return null;
-        }
-        return String.format("Gate Rank: %s (ratio %.2f)", rank.tier.letter(), rank.ratio);
-    }
-
-    private static void announceGate(@Nonnull World world,
-                                     int x,
+    private static void announceGate(int x,
                                      int y,
                                      int z,
                                      @Nonnull GateRank gateRank,
-                                     int levelMin,
-                                     int levelMax) {
+                                     int normalLevelMin,
+                                     int normalLevelMax,
+                                     int bossLevel) {
         Universe universe = Universe.get();
         if (universe == null) {
             return;
@@ -547,7 +567,10 @@ public final class NaturalPortalGateManager {
             Message.raw(String.format("Position: (%d, %d, %d)", x, y, z)).color(PortalGateColor.POSITION.hex()),
             Message.raw("\n"),
             Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-            Message.raw(String.format("Level Range: %d-%d", levelMin, levelMax)).color(PortalGateColor.LEVEL.hex())
+            Message.raw(String.format("Normal Level Range: %d-%d", normalLevelMin, normalLevelMax)).color(PortalGateColor.LEVEL.hex()),
+            Message.raw("\n"),
+            Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
+            Message.raw(String.format("Boss Level: %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
         );
         universe.sendMessage(message);
     }
