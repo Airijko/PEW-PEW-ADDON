@@ -25,8 +25,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -53,10 +56,16 @@ public final class NaturalPortalGateManager {
     private static final int DEFAULT_NORMAL_MOB_LEVEL_RANGE = 20;
     private static final int DEFAULT_BOSS_LEVEL_BONUS = 10;
     private static final int DEFAULT_UPPER_TOP_PERCENT = 25;
+    private static final int AIR_BLOCK_ID = 0;
+    private static final long REMOVAL_RETRY_INTERVAL_SECONDS = 10L;
+    private static final int REMOVAL_RETRY_BATCH_PER_WORLD = 32;
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
     private static ScheduledFuture<?> periodicTask;
+    private static ScheduledFuture<?> pendingRemovalTask;
+    private static final Map<UUID, Set<GateRemovalRequest>> PENDING_GATE_REMOVALS = new ConcurrentHashMap<>();
+    private static final Set<ActiveGate> ACTIVE_GATES = ConcurrentHashMap.newKeySet();
 
     private NaturalPortalGateManager() {
     }
@@ -72,6 +81,12 @@ public final class NaturalPortalGateManager {
             spawnIntervalMinutes,
                 TimeUnit.MINUTES
         );
+        pendingRemovalTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
+            NaturalPortalGateManager::processPendingRemovals,
+            REMOVAL_RETRY_INTERVAL_SECONDS,
+            REMOVAL_RETRY_INTERVAL_SECONDS,
+            TimeUnit.SECONDS
+        );
         plugin.getLogger().at(Level.INFO).log(
                 "[ELPortal] Natural gate spawner enabled: every %d minute(s), lifetime %d minute(s)",
             spawnIntervalMinutes,
@@ -84,6 +99,12 @@ public final class NaturalPortalGateManager {
             periodicTask.cancel(false);
             periodicTask = null;
         }
+        if (pendingRemovalTask != null) {
+            pendingRemovalTask.cancel(false);
+            pendingRemovalTask = null;
+        }
+        PENDING_GATE_REMOVALS.clear();
+        ACTIVE_GATES.clear();
     }
 
     @Nonnull
@@ -151,6 +172,15 @@ public final class NaturalPortalGateManager {
                 return;
             }
 
+            int maxConcurrentSpawns = resolveMaxConcurrentSpawns();
+            if (maxConcurrentSpawns >= 0 && ACTIVE_GATES.size() >= maxConcurrentSpawns) {
+                log(Level.INFO,
+                        "[ELPortal] Spawn skipped: active gates=%d reached max_concurrent_spawns=%d",
+                        ACTIVE_GATES.size(),
+                        maxConcurrentSpawns);
+                return;
+            }
+
             String blockId = pickRandomPortalBlock();
             spawnGateViaWorldDispatch(world, target, blockId, false);
         } catch (Exception ex) {
@@ -206,6 +236,7 @@ public final class NaturalPortalGateManager {
                 GateRank gateRank = resolveGateRank(normalLevelMin, normalLevelMax, highestPlayerLevel);
                 String rankedBlockId = blockId + gateRank.tier.blockIdSuffix();
                 chunk.setBlock(x, y, z, rankedBlockId);
+                trackActiveGate(world, rankedBlockId, x, y, z);
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
                         announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
@@ -258,34 +289,149 @@ public final class NaturalPortalGateManager {
         }
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             world.execute(() -> {
-                WorldChunk chunk = world.getChunkIfLoaded(ChunkUtil.indexChunkFromBlock(x, z));
-                if (chunk == null) {
-                    if (plugin != null) {
-                        plugin.getLogger().at(Level.INFO).log(
-                                "[ELPortal] Gate expiry skipped (chunk unloaded) world=%s block=%s at %d %d %d",
-                                world.getName(),
-                                blockId,
-                                x,
-                                y,
-                                z
-                        );
-                    }
-                    return;
-                }
-
-                chunk.setBlock(x, y, z, "air");
-                if (plugin != null) {
-                    plugin.getLogger().at(Level.INFO).log(
-                            "[ELPortal] Gate expired and removed world=%s block=%s at %d %d %d",
-                            world.getName(),
-                            blockId,
-                            x,
-                            y,
-                            z
-                    );
-                }
+                attemptGateRemoval(world, blockId, x, y, z, true, "timer-expiry");
             });
         }, gateLifetimeMinutes, TimeUnit.MINUTES);
+    }
+
+    private static void attemptGateRemoval(@Nonnull World world,
+                                           @Nonnull String blockId,
+                                           int x,
+                                           int y,
+                                           int z,
+                                           boolean enqueueIfUnavailable,
+                                           @Nonnull String reason) {
+        WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(x, z));
+        if (chunk == null) {
+            if (enqueueIfUnavailable && queuePendingRemoval(world, blockId, x, y, z)) {
+                log(Level.INFO,
+                        "[ELPortal] Gate expiry queued (chunk unavailable) world=%s block=%s at %d %d %d reason=%s",
+                        world.getName(),
+                        blockId,
+                        x,
+                        y,
+                        z,
+                        reason);
+            }
+            return;
+        }
+
+        try {
+            chunk.setBlock(x, y, z, AIR_BLOCK_ID);
+            untrackActiveGate(world, x, y, z);
+            log(Level.INFO,
+                    "[ELPortal] Gate expired and removed world=%s block=%s at %d %d %d reason=%s",
+                    world.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z,
+                    reason);
+        } catch (Exception ex) {
+            if (enqueueIfUnavailable) {
+                queuePendingRemoval(world, blockId, x, y, z);
+            }
+            log(Level.WARNING,
+                    "[ELPortal] Gate expiry removal failed world=%s block=%s at %d %d %d reason=%s error=%s",
+                    world.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z,
+                    reason,
+                    ex.getMessage());
+        }
+    }
+
+    private static boolean queuePendingRemoval(@Nonnull World world,
+                                               @Nonnull String blockId,
+                                               int x,
+                                               int y,
+                                               int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return false;
+        }
+
+        Set<GateRemovalRequest> pending = PENDING_GATE_REMOVALS.computeIfAbsent(
+                worldUuid,
+                ignored -> ConcurrentHashMap.newKeySet());
+        return pending.add(new GateRemovalRequest(blockId, x, y, z));
+    }
+
+    private static void trackActiveGate(@Nonnull World world,
+                                        @Nonnull String blockId,
+                                        int x,
+                                        int y,
+                                        int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return;
+        }
+        ACTIVE_GATES.add(new ActiveGate(worldUuid, blockId, x, y, z));
+    }
+
+    private static void untrackActiveGate(@Nonnull World world, int x, int y, int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return;
+        }
+        ACTIVE_GATES.removeIf(gate -> gate.worldUuid().equals(worldUuid)
+                && gate.x() == x
+                && gate.y() == y
+                && gate.z() == z);
+    }
+
+    private static void processPendingRemovals() {
+        Universe universe = Universe.get();
+        if (universe == null || PENDING_GATE_REMOVALS.isEmpty()) {
+            return;
+        }
+
+        for (Map.Entry<UUID, Set<GateRemovalRequest>> entry : PENDING_GATE_REMOVALS.entrySet()) {
+            UUID worldUuid = entry.getKey();
+            Set<GateRemovalRequest> pending = entry.getValue();
+            if (pending == null || pending.isEmpty()) {
+                continue;
+            }
+
+            World world = universe.getWorld(worldUuid);
+            if (world == null) {
+                continue;
+            }
+
+            world.execute(() -> {
+                int processed = 0;
+                List<GateRemovalRequest> done = new ArrayList<>();
+                for (GateRemovalRequest request : new ArrayList<>(pending)) {
+                    if (processed >= REMOVAL_RETRY_BATCH_PER_WORLD) {
+                        break;
+                    }
+
+                    WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(request.x(), request.z()));
+                    if (chunk == null) {
+                        continue;
+                    }
+
+                    attemptGateRemoval(world,
+                            request.blockId(),
+                            request.x(),
+                            request.y(),
+                            request.z(),
+                            false,
+                            "pending-retry");
+                    done.add(request);
+                    processed++;
+                }
+
+                if (!done.isEmpty()) {
+                    pending.removeAll(done);
+                }
+                if (pending.isEmpty()) {
+                    PENDING_GATE_REMOVALS.remove(worldUuid);
+                }
+            });
+        }
     }
 
     @Nonnull
@@ -518,6 +664,17 @@ public final class NaturalPortalGateManager {
         return filesManager.getDungeonDurationMinutes();
     }
 
+    private static int resolveMaxConcurrentSpawns() {
+        if (filesManager == null) {
+            return -1;
+        }
+        int value = filesManager.getDungeonMaxConcurrentSpawns();
+        if (value < 0) {
+            return -1;
+        }
+        return Math.max(1, value);
+    }
+
     private static boolean isAnnounceOnSpawnEnabled() {
         return filesManager == null || filesManager.isDungeonAnnounceOnSpawn();
     }
@@ -583,5 +740,18 @@ public final class NaturalPortalGateManager {
 
     private static int randomInt(int minInclusive, int maxInclusive) {
         return minInclusive + (int) (Math.random() * (maxInclusive - minInclusive + 1));
+    }
+
+    private static void log(@Nonnull Level level, @Nonnull String format, Object... args) {
+        if (plugin == null) {
+            return;
+        }
+        plugin.getLogger().at(level).log(String.format(Locale.ROOT, format, args));
+    }
+
+    private record GateRemovalRequest(@Nonnull String blockId, int x, int y, int z) {
+    }
+
+    private record ActiveGate(@Nonnull UUID worldUuid, @Nonnull String blockId, int x, int y, int z) {
     }
 }

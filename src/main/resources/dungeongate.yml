@@ -23,7 +23,7 @@ announce_on_spawn: true
 # -----------------------------------------------------------------------
 
 # How long (in minutes) an open gate stays active before it closes on its own.
-# Set to -1 to never auto-close.
+# Minimum enforced value: 1. Set to -1 to never auto-close.
 gate_duration_minutes: 45
 
 # -----------------------------------------------------------------------

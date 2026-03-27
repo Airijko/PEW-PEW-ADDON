@@ -11,7 +11,6 @@ import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
@@ -19,7 +18,9 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,11 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static final int AIR_BLOCK_ID = 0;
     private static final long PENDING_RETRY_INTERVAL_SECONDS = 15L;
     private static final int PENDING_CHUNKS_PER_WORLD_PER_TICK = 8;
+        private static final int[][] NEIGHBOR_OFFSETS = new int[][]{
+            {1, 0, 0}, {-1, 0, 0},
+            {0, 1, 0}, {0, -1, 0},
+            {0, 0, 1}, {0, 0, -1}
+        };
 
     private static final Map<UUID, Set<Long>> PENDING_CHUNK_SWEEPS = new ConcurrentHashMap<>();
     private static final AtomicBoolean PENDING_TASK_STARTED = new AtomicBoolean(false);
@@ -106,18 +112,6 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         Store<EntityStore> store = ref.getStore();
         TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
         return transform == null ? null : transform.getPosition();
-    }
-
-    @Nullable
-    private static UUID resolvePlayerWorldUuid(@Nonnull Player player) {
-        Ref<EntityStore> ref = player.getReference();
-        if (ref == null || !ref.isValid()) {
-            return null;
-        }
-
-        Store<EntityStore> store = ref.getStore();
-        PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
-        return playerRef == null ? null : playerRef.getWorldUuid();
     }
 
     @Nonnull
@@ -200,6 +194,86 @@ public class PortalBlockAdminCommand extends AbstractCommand {
             }
         }
         return false;
+    }
+
+    @Nonnull
+    private static String normalizePortalBaseId(@Nonnull String blockId) {
+        for (String baseBlockId : PORTAL_BASE_BLOCK_IDS) {
+            if (blockId.equals(baseBlockId) || blockId.startsWith(baseBlockId + "_Rank")) {
+                return baseBlockId;
+            }
+        }
+        return blockId;
+    }
+
+    @Nonnull
+    private static List<PortalStructure> scanPortalStructures(@Nonnull World world) {
+        List<PortalBlockHit> hits = scanPortalBlocks(world);
+        if (hits.isEmpty()) {
+            return List.of();
+        }
+
+        Map<BlockPos, PortalBlockHit> byPos = new ConcurrentHashMap<>();
+        for (PortalBlockHit hit : hits) {
+            byPos.put(new BlockPos(hit.x(), hit.y(), hit.z()), hit);
+        }
+
+        Set<BlockPos> visited = new HashSet<>();
+        List<PortalStructure> structures = new ArrayList<>();
+
+        for (PortalBlockHit hit : hits) {
+            BlockPos start = new BlockPos(hit.x(), hit.y(), hit.z());
+            if (!visited.add(start)) {
+                continue;
+            }
+
+            String baseId = normalizePortalBaseId(hit.blockId());
+            Deque<BlockPos> queue = new ArrayDeque<>();
+            queue.add(start);
+
+            List<PortalBlockHit> cluster = new ArrayList<>();
+            cluster.add(hit);
+
+            while (!queue.isEmpty()) {
+                BlockPos current = queue.poll();
+                for (int[] offset : NEIGHBOR_OFFSETS) {
+                    BlockPos neighbor = new BlockPos(
+                            current.x() + offset[0],
+                            current.y() + offset[1],
+                            current.z() + offset[2]);
+                    if (visited.contains(neighbor)) {
+                        continue;
+                    }
+
+                    PortalBlockHit neighborHit = byPos.get(neighbor);
+                    if (neighborHit == null) {
+                        continue;
+                    }
+                    if (!baseId.equals(normalizePortalBaseId(neighborHit.blockId()))) {
+                        continue;
+                    }
+
+                    visited.add(neighbor);
+                    queue.add(neighbor);
+                    cluster.add(neighborHit);
+                }
+            }
+
+            PortalBlockHit anchor = cluster.get(0);
+            for (PortalBlockHit block : cluster) {
+                if (block.y() < anchor.y()) {
+                    anchor = block;
+                } else if (block.y() == anchor.y() && block.x() < anchor.x()) {
+                    anchor = block;
+                } else if (block.y() == anchor.y() && block.x() == anchor.x() && block.z() < anchor.z()) {
+                    anchor = block;
+                }
+            }
+
+            structures.add(new PortalStructure(baseId, anchor.blockId(), anchor, cluster));
+        }
+
+        return structures;
     }
 
     private static boolean removePortalBlock(@Nonnull World world, @Nonnull PortalBlockHit hit) {
@@ -330,28 +404,36 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             return runInPlayerWorld(context, (ctx, player, world) -> {
-                List<PortalBlockHit> hits = scanPortalBlocks(world);
-                if (hits.isEmpty()) {
+                List<PortalStructure> structures = scanPortalStructures(world);
+                if (structures.isEmpty()) {
                     ctx.sendMessage(Message.raw("No portal blocks found in loaded chunks.").color("#ffcc66"));
                     return;
                 }
 
-                ctx.sendMessage(Message.raw("Found " + hits.size() + " portal block(s) in loaded chunks:")
-                        .color("#6cff78"));
-
-                int shown = Math.min(MAX_LIST_LINES, hits.size());
-                for (int i = 0; i < shown; i++) {
-                    PortalBlockHit hit = hits.get(i);
-                    ctx.sendMessage(Message.raw(String.format("[%d] %s @ %d, %d, %d",
-                            i + 1,
-                            hit.blockId(),
-                            hit.x(),
-                            hit.y(),
-                            hit.z())).color("#b8d0ff"));
+                int totalBlocks = 0;
+                for (PortalStructure structure : structures) {
+                    totalBlocks += structure.blocks().size();
                 }
 
-                if (hits.size() > shown) {
-                    ctx.sendMessage(Message.raw("...and " + (hits.size() - shown) + " more (truncated)")
+                ctx.sendMessage(Message.raw("Found " + structures.size() + " portal structure(s) in loaded chunks"
+                                + " (" + totalBlocks + " portal blocks):")
+                        .color("#6cff78"));
+
+                int shown = Math.min(MAX_LIST_LINES, structures.size());
+                for (int i = 0; i < shown; i++) {
+                    PortalStructure structure = structures.get(i);
+                    PortalBlockHit anchor = structure.anchor();
+                    ctx.sendMessage(Message.raw(String.format("[%d] %s @ %d, %d, %d (%d blocks)",
+                            i + 1,
+                            structure.displayBlockId(),
+                            anchor.x(),
+                            anchor.y(),
+                            anchor.z(),
+                            structure.blocks().size())).color("#b8d0ff"));
+                }
+
+                if (structures.size() > shown) {
+                    ctx.sendMessage(Message.raw("...and " + (structures.size() - shown) + " more (truncated)")
                             .color("#ffcc66"));
                 }
             });
@@ -375,22 +457,19 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     return;
                 }
 
-                List<PortalBlockHit> hits = scanPortalBlocks(world);
-                if (hits.isEmpty()) {
+                List<PortalStructure> structures = scanPortalStructures(world);
+                if (structures.isEmpty()) {
                     ctx.sendMessage(Message.raw("No portal blocks found to remove.").color("#ffcc66"));
                     return;
                 }
 
-                PortalBlockHit nearest = null;
+                PortalStructure nearest = null;
                 double nearestDistanceSquared = Double.MAX_VALUE;
-                for (PortalBlockHit hit : hits) {
-                    double dx = playerPos.x - (hit.x() + 0.5D);
-                    double dy = playerPos.y - (hit.y() + 0.5D);
-                    double dz = playerPos.z - (hit.z() + 0.5D);
-                    double distanceSquared = dx * dx + dy * dy + dz * dz;
+                for (PortalStructure structure : structures) {
+                    double distanceSquared = structure.distanceSquaredTo(playerPos);
                     if (distanceSquared < nearestDistanceSquared) {
                         nearestDistanceSquared = distanceSquared;
-                        nearest = hit;
+                        nearest = structure;
                     }
                 }
 
@@ -399,13 +478,22 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     return;
                 }
 
-                if (removePortalBlock(world, nearest)) {
-                    ctx.sendMessage(Message.raw("Removed portal block: " + nearest.blockId()
-                            + " @ " + nearest.x() + ", " + nearest.y() + ", " + nearest.z())
+                int removed = 0;
+                for (PortalBlockHit block : nearest.blocks()) {
+                    if (removePortalBlock(world, block)) {
+                        removed++;
+                    }
+                }
+
+                PortalBlockHit anchor = nearest.anchor();
+                if (removed > 0) {
+                    ctx.sendMessage(Message.raw("Removed portal structure: " + nearest.displayBlockId()
+                            + " @ " + anchor.x() + ", " + anchor.y() + ", " + anchor.z()
+                            + " (" + removed + "/" + nearest.blocks().size() + " blocks)")
                             .color("#6cff78"));
                 } else {
-                    ctx.sendMessage(Message.raw("Failed to remove nearest portal block at "
-                            + nearest.x() + ", " + nearest.y() + ", " + nearest.z())
+                    ctx.sendMessage(Message.raw("Failed to remove nearest portal structure at "
+                            + anchor.x() + ", " + anchor.y() + ", " + anchor.z())
                             .color("#ff6666"));
                 }
             });
@@ -433,20 +521,20 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                 return CompletableFuture.completedFuture(null);
             }
 
-            UUID worldUuid = resolvePlayerWorldUuid(player);
-            if (worldUuid == null) {
-                context.sendMessage(Message.raw("Could not resolve world identity for cleanup.").color("#ff6666"));
-                return CompletableFuture.completedFuture(null);
-            }
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            world.execute(() -> {
+                UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+                if (worldUuid == null) {
+                    context.sendMessage(Message.raw("Could not resolve world identity for cleanup.").color("#ff6666"));
+                    future.complete(null);
+                    return;
+                }
 
-            context.sendMessage(Message.raw("Starting all-chunks portal cleanup (this may take a moment)...")
-                    .color("#ffcc66"));
-
-            return CompletableFuture.runAsync(() -> {
                 Set<Integer> portalBlockIntIds = resolvePortalBlockIntIds();
                 if (portalBlockIntIds.isEmpty()) {
                     context.sendMessage(Message.raw("No known portal block IDs are currently registered.")
                             .color("#ff6666"));
+                    future.complete(null);
                     return;
                 }
 
@@ -459,46 +547,55 @@ public class PortalBlockAdminCommand extends AbstractCommand {
 
                 if (chunkIndexes.isEmpty()) {
                     context.sendMessage(Message.raw("No chunks known for this world right now.").color("#ffcc66"));
+                    future.complete(null);
                     return;
                 }
 
-                AtomicInteger removed = new AtomicInteger();
-                AtomicInteger sweptChunks = new AtomicInteger();
-                AtomicInteger pendingChunks = new AtomicInteger();
+                context.sendMessage(Message.raw("Starting all-chunks portal cleanup (this may take a moment)...")
+                        .color("#ffcc66"));
 
-                for (long chunkIndex : chunkIndexes) {
-                    int removedInChunk = world.getNonTickingChunkAsync(chunkIndex)
-                            .thenApplyAsync(chunk -> {
-                                if (chunk == null) {
-                                    return Integer.MIN_VALUE;
-                                }
-                                return sweepChunkForPortals(chunk, chunkIndex, portalBlockIntIds);
-                            }, world)
-                            .exceptionally(ex -> Integer.MIN_VALUE)
-                            .join();
+                CompletableFuture.runAsync(() -> {
+                    AtomicInteger removed = new AtomicInteger();
+                    AtomicInteger sweptChunks = new AtomicInteger();
 
-                    if (removedInChunk == Integer.MIN_VALUE) {
-                        addPendingChunk(worldUuid, chunkIndex);
-                        pendingChunks.incrementAndGet();
-                        continue;
+                    for (long chunkIndex : chunkIndexes) {
+                        int removedInChunk = world.getNonTickingChunkAsync(chunkIndex)
+                                .thenApplyAsync(chunk -> {
+                                    if (chunk == null) {
+                                        return Integer.MIN_VALUE;
+                                    }
+                                    return sweepChunkForPortals(chunk, chunkIndex, portalBlockIntIds);
+                                }, world)
+                                .exceptionally(ex -> Integer.MIN_VALUE)
+                                .join();
+
+                        if (removedInChunk == Integer.MIN_VALUE) {
+                            addPendingChunk(worldUuid, chunkIndex);
+                            continue;
+                        }
+
+                        sweptChunks.incrementAndGet();
+                        removed.addAndGet(removedInChunk);
                     }
 
-                    sweptChunks.incrementAndGet();
-                    removed.addAndGet(removedInChunk);
-                }
-
-                int pendingTotal = pendingChunkCount(worldUuid);
-                if (pendingTotal > 0) {
-                    context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
-                                    + sweptChunks.get() + " chunk(s). Pending retries for " + pendingTotal
-                                    + " chunk(s) until they are available.")
-                            .color("#ffcc66"));
-                } else {
-                    context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
-                                    + sweptChunks.get() + " chunk(s).")
-                            .color("#6cff78"));
-                }
+                    world.execute(() -> {
+                        int pendingTotal = pendingChunkCount(worldUuid);
+                        if (pendingTotal > 0) {
+                            context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
+                                            + sweptChunks.get() + " chunk(s). Pending retries for " + pendingTotal
+                                            + " chunk(s) until they are available.")
+                                    .color("#ffcc66"));
+                        } else {
+                            context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
+                                            + sweptChunks.get() + " chunk(s).")
+                                    .color("#6cff78"));
+                        }
+                        future.complete(null);
+                    });
+                });
             });
+
+            return future;
         }
     }
 
@@ -507,6 +604,28 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         void run(@Nonnull CommandContext context, @Nonnull Player player, @Nonnull World world);
     }
 
+    private record BlockPos(int x, int y, int z) {
+    }
+
     private record PortalBlockHit(String blockId, int x, int y, int z) {
+    }
+
+    private record PortalStructure(@Nonnull String baseId,
+                                   @Nonnull String displayBlockId,
+                                   @Nonnull PortalBlockHit anchor,
+                                   @Nonnull List<PortalBlockHit> blocks) {
+        private double distanceSquaredTo(@Nonnull Vector3d position) {
+            double best = Double.MAX_VALUE;
+            for (PortalBlockHit block : blocks) {
+                double dx = position.x - (block.x() + 0.5D);
+                double dy = position.y - (block.y() + 0.5D);
+                double dz = position.z - (block.z() + 0.5D);
+                double current = dx * dx + dy * dy + dz * dz;
+                if (current < best) {
+                    best = current;
+                }
+            }
+            return best;
+        }
     }
 }

@@ -917,6 +917,10 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.scopePercent;
     }
 
+    public void refreshContentOptions() {
+        this.contentOptions = loadContentOptions();
+    }
+
     public void refreshDungeonGateOptions() {
         this.dungeonGateOptions = loadDungeonGateOptions();
     }
@@ -952,7 +956,8 @@ public final class AddonFilesManager {
 
             int gateDuration = defaults.gateDurationMinutes;
             if (root.get("gate_duration_minutes") instanceof Number n) {
-                gateDuration = n.intValue();
+                int raw = n.intValue();
+                gateDuration = raw < 0 ? -1 : Math.max(1, raw);
             }
 
             int maxPlayers = defaults.maxPlayersPerInstance;

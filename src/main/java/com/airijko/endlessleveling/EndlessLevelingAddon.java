@@ -25,6 +25,7 @@ package com.airijko.endlessleveling;
 import com.airijko.endlessleveling.commands.PortalGateTestCommand;
 import com.airijko.endlessleveling.commands.PortalGiveCommand;
 import com.airijko.endlessleveling.commands.PortalBlockAdminCommand;
+import com.airijko.endlessleveling.commands.AddonReloadCommand;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -44,10 +45,12 @@ import com.airijko.endlessleveling.registration.races.RaceRegistration;
 import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 
 import javax.annotation.Nonnull;
+import java.util.logging.Level;
 
 public class EndlessLevelingAddon extends JavaPlugin {
 
     private AddonFilesManager filesManager;
+    private final Object reloadLock = new Object();
 
     public EndlessLevelingAddon(@Nonnull JavaPluginInit init) {
         super(init);
@@ -81,6 +84,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new PortalGiveCommand());
         this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
         this.getCommandRegistry().registerCommand(new PortalBlockAdminCommand());
+        this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
         PortalLeveledInstanceRouter.initialize(this);
@@ -102,5 +106,111 @@ public class EndlessLevelingAddon extends JavaPlugin {
         ClassRegistration.unregisterAll();
         AugmentRegistration.unregisterAll();
         PassiveRegistration.unregisterAll();
+    }
+
+    @Nonnull
+    public ReloadSummary reloadAddonRuntime() {
+        synchronized (reloadLock) {
+            if (this.filesManager == null) {
+                this.filesManager = new AddonFilesManager(this);
+            }
+
+            this.filesManager.refreshContentOptions();
+            this.filesManager.refreshDungeonGateOptions();
+
+            int unregisteredRaces = RaceRegistration.unregisterAll();
+            int unregisteredClasses = ClassRegistration.unregisterAll();
+            int unregisteredAugments = AugmentRegistration.unregisterAll();
+            int unregisteredPassives = PassiveRegistration.unregisterAll();
+
+            int registeredRaces = 0;
+            int registeredClasses = 0;
+            int registeredAugments = 0;
+            int registeredPassives = 0;
+
+            if (this.filesManager.shouldMergeRacesWithCore()) {
+                registeredRaces = RaceRegistration.registerAll(this.filesManager.getRacesFolder());
+            }
+            if (this.filesManager.shouldMergeClassesWithCore()) {
+                registeredClasses = ClassRegistration.registerAll(this.filesManager.getClassesFolder());
+            }
+            if (this.filesManager.shouldMergeAugmentsWithCore()) {
+                registeredAugments = AugmentRegistration.registerAll(this.filesManager.getAugmentsFolder());
+            }
+            if (this.filesManager.shouldMergePassivesWithCore()) {
+                registeredPassives = PassiveRegistration.registerAll(this.filesManager.getPassivesFolder());
+            }
+
+            ExampleFeatureManager.get().configure(
+                    this.filesManager.shouldEnableExamples(),
+                    this.filesManager.shouldEnableExampleCommand(),
+                    this.filesManager.shouldEnableExampleEvents());
+
+            NaturalPortalGateManager.shutdown();
+            NaturalPortalGateManager.initialize(this, this.filesManager);
+            PortalInstanceDiagnostics.initialize(this, this.filesManager);
+
+            this.getLogger().at(Level.INFO).log(
+                    "[ELReload] Runtime content reloaded. unregistered(r=%d,c=%d,a=%d,p=%d) registered(r=%d,c=%d,a=%d,p=%d)",
+                    unregisteredRaces,
+                    unregisteredClasses,
+                    unregisteredAugments,
+                    unregisteredPassives,
+                    registeredRaces,
+                    registeredClasses,
+                    registeredAugments,
+                    registeredPassives);
+
+            return new ReloadSummary(
+                    unregisteredRaces,
+                    unregisteredClasses,
+                    unregisteredAugments,
+                    unregisteredPassives,
+                    registeredRaces,
+                    registeredClasses,
+                    registeredAugments,
+                    registeredPassives,
+                    this.filesManager.isDungeonGateEnabled(),
+                    this.filesManager.getDungeonSpawnIntervalMinutes(),
+                    this.filesManager.getDungeonDurationMinutes());
+        }
+    }
+
+    public static final class ReloadSummary {
+        public final int unregisteredRaces;
+        public final int unregisteredClasses;
+        public final int unregisteredAugments;
+        public final int unregisteredPassives;
+        public final int registeredRaces;
+        public final int registeredClasses;
+        public final int registeredAugments;
+        public final int registeredPassives;
+        public final boolean dungeonGateEnabled;
+        public final int spawnIntervalMinutes;
+        public final int gateDurationMinutes;
+
+        public ReloadSummary(int unregisteredRaces,
+                int unregisteredClasses,
+                int unregisteredAugments,
+                int unregisteredPassives,
+                int registeredRaces,
+                int registeredClasses,
+                int registeredAugments,
+                int registeredPassives,
+                boolean dungeonGateEnabled,
+                int spawnIntervalMinutes,
+                int gateDurationMinutes) {
+            this.unregisteredRaces = unregisteredRaces;
+            this.unregisteredClasses = unregisteredClasses;
+            this.unregisteredAugments = unregisteredAugments;
+            this.unregisteredPassives = unregisteredPassives;
+            this.registeredRaces = registeredRaces;
+            this.registeredClasses = registeredClasses;
+            this.registeredAugments = registeredAugments;
+            this.registeredPassives = registeredPassives;
+            this.dungeonGateEnabled = dungeonGateEnabled;
+            this.spawnIntervalMinutes = spawnIntervalMinutes;
+            this.gateDurationMinutes = gateDurationMinutes;
+        }
     }
 }
