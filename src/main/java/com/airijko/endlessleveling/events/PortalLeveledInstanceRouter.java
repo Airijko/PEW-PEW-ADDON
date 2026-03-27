@@ -83,6 +83,12 @@ public final class PortalLeveledInstanceRouter {
         plugin = owner;
     }
 
+    public static void shutdown() {
+        PENDING_LEVEL_RANGES.clear();
+        ACTIVE_LEVEL_RANGES.clear();
+        plugin = null;
+    }
+
     /**
      * Called by the gate manager when a portal block is placed so the announced
      * level range is preserved and used when a player enters that instance.
@@ -97,6 +103,21 @@ public final class PortalLeveledInstanceRouter {
 
     public static void setPendingLevelRange(@Nonnull String blockId, int min, int max) {
         setPendingLevelRange(blockId, min, max, Math.max(min, max));
+    }
+
+    public static boolean enterPortalFromBlockId(@Nonnull PlayerRef playerRef,
+                                                 @Nonnull World sourceWorld,
+                                                 @Nonnull String blockId) {
+        String routingName = resolveRoutingName(blockId);
+        if (routingName == null) {
+            log(Level.WARNING,
+                    "[ELPortal] No routing template found for placed portal block=%s world=%s",
+                    blockId,
+                    sourceWorld.getName());
+            return false;
+        }
+
+        return routePlayerToTemplate(playerRef, sourceWorld, routingName, sourceWorld, playerRef.getTransform());
     }
 
     public static void onAddPlayerToWorld(@Nonnull AddPlayerToWorldEvent event) {
@@ -129,18 +150,6 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        String displayName = ROUTING_TO_DISPLAY.getOrDefault(routingName, routingName);
-
-        log(Level.INFO, "[ELPortal] Routing player=%s from=%s template=%s",
-            playerRef.getUsername(), routingName, routingName);
-
-        InstancesPlugin instances = InstancesPlugin.get();
-        if (instances == null) {
-            log(Level.WARNING, "[ELPortal] InstancesPlugin unavailable — level routing skipped for %s",
-                    playerRef.getUsername());
-            return;
-        }
-
         Universe universe = Universe.get();
         if (universe == null) {
             return;
@@ -148,23 +157,7 @@ public final class PortalLeveledInstanceRouter {
 
         World returnWorld = resolveReturnWorld(routingWorld, universe);
         Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
-        instances.spawnInstance(routingName, null, returnWorld, returnTransform)
-                .thenAccept(spawned -> {
-                    if (teleportToInstanceSpawn(playerRef, spawned, returnTransform)) {
-                        LevelRange range = registerInstanceLevelOverride(spawned.getName());
-                        applyFixedGateSpawn(playerRef, spawned, suffix);
-                        broadcastEntry(playerRef, displayName, range.min(), range.max());
-                        log(Level.INFO, "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
-                                spawned.getName(), routingName, range.min(), range.max());
-                    }
-                })
-                .exceptionally(ex -> {
-                    if (plugin != null) {
-                        plugin.getLogger().at(Level.WARNING).withCause(ex)
-                                .log("[ELPortal] Failed to spawn routed instance from template %s", routingName);
-                    }
-                    return null;
-                });
+        routePlayerToTemplate(playerRef, routingWorld, routingName, returnWorld, returnTransform);
     }
 
     public static void onPlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -232,6 +225,50 @@ public final class PortalLeveledInstanceRouter {
             return rp.getReturnPoint();
         }
         return playerRef.getTransform();
+    }
+
+    private static boolean routePlayerToTemplate(@Nonnull PlayerRef playerRef,
+                                                 @Nonnull World sourceWorld,
+                                                 @Nonnull String routingName,
+                                                 @Nonnull World returnWorld,
+                                                 @Nullable Transform returnTransform) {
+        String displayName = ROUTING_TO_DISPLAY.getOrDefault(routingName, routingName);
+
+        log(Level.INFO,
+                "[ELPortal] Routing player=%s source=%s template=%s",
+                playerRef.getUsername(),
+                sourceWorld.getName(),
+                routingName);
+
+        InstancesPlugin instances = InstancesPlugin.get();
+        if (instances == null) {
+            log(Level.WARNING, "[ELPortal] InstancesPlugin unavailable — level routing skipped for %s",
+                    playerRef.getUsername());
+            return false;
+        }
+
+        Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+        instances.spawnInstance(routingName, null, returnWorld, effectiveReturnTransform)
+                .thenAccept(spawned -> {
+                    if (teleportToInstanceSpawn(playerRef, spawned, effectiveReturnTransform)) {
+                        LevelRange range = registerInstanceLevelOverride(spawned.getName());
+                        String suffix = ROUTING_TO_SUFFIX.get(routingName);
+                        if (suffix != null) {
+                            applyFixedGateSpawn(playerRef, spawned, suffix);
+                        }
+                        broadcastEntry(playerRef, displayName, range.min(), range.max());
+                        log(Level.INFO, "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
+                                spawned.getName(), routingName, range.min(), range.max());
+                    }
+                })
+                .exceptionally(ex -> {
+                    if (plugin != null) {
+                        plugin.getLogger().at(Level.WARNING).withCause(ex)
+                                .log("[ELPortal] Failed to spawn routed instance from template %s", routingName);
+                    }
+                    return null;
+                });
+        return true;
     }
 
     @Nullable
