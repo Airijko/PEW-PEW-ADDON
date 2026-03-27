@@ -24,6 +24,7 @@ package com.airijko.endlessleveling;
 
 import com.airijko.endlessleveling.commands.PortalGateTestCommand;
 import com.airijko.endlessleveling.commands.PortalGiveCommand;
+import com.airijko.endlessleveling.commands.PortalBlockAdminCommand;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -79,6 +80,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
         this.getCommandRegistry().registerCommand(new PortalGiveCommand());
         this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
+        this.getCommandRegistry().registerCommand(new PortalBlockAdminCommand());
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
         PortalLeveledInstanceRouter.initialize(this);
