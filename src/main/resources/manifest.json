@@ -1,7 +1,7 @@
 {
     "Group": "com.airijko",
     "Name": "EndlessLevelingAddon",
-    "Version": "1.1",
+    "Version": "2.0",
     "Description": "Description of your plugin",
     "Authors": [
         {
@@ -11,7 +11,7 @@
     "DisabledByDefault": false,
     "IncludesAssetPack": true,
     "Dependencies": {
-        "com.airijko:EndlessLeveling": ">=6.1",
+        "com.airijko:EndlessLeveling": ">=7.0-BETA",
         "MAJOR76:MajorDungeons": ">=0.4.4",
         "Config:Endgame&QoL": ">=4.1.1"
     },
