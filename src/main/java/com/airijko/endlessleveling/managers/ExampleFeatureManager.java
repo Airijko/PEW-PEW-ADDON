@@ -1,7 +1,7 @@
 package com.airijko.endlessleveling.managers;
 
 import com.airijko.endlessleveling.commands.ExampleCommand;
-import com.airijko.endlessleveling.events.ExampleEvent;
+import com.airijko.endlessleveling.listeners.ExampleEvent;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;

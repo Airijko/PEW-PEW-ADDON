@@ -1,5 +1,6 @@
-package com.airijko.endlessleveling.events;
+package com.airijko.endlessleveling.listeners;
 
+import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.airijko.endlessleveling.util.PlayerChatNotifier;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;

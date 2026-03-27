@@ -44,3 +44,25 @@ max_players_per_instance: -1
 # Minimum player level required to enter a gate.
 # Set to 1 to allow everyone.
 min_level_required: 1
+
+# -----------------------------------------------------------------------
+# Dynamic level targeting
+# -----------------------------------------------------------------------
+
+# How to choose the base level from players currently in the target world.
+# Options: HIGHEST, MEDIAN, AVERAGE
+level_reference_mode: AVERAGE
+
+# Which player slice to evaluate for level_reference_mode.
+# Options: ALL, UPPER, LOWER
+level_reference_scope: UPPER
+
+# When level_reference_scope is UPPER or LOWER, use only N% players by level.
+# Example: 25 means highest 25% (UPPER) or lowest 25% (LOWER).
+# Allowed range: 1-100.
+scope_percent: 40
+
+# Level range offset around the chosen base level.
+# Example: base 120 and offset 50 => range 70-170.
+# Minimum enforced value: 0.
+level_offset: 50

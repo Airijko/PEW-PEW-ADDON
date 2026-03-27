@@ -6,6 +6,8 @@ import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import org.yaml.snakeyaml.Yaml;
 
+import javax.annotation.Nonnull;
+
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -19,6 +21,7 @@ import java.security.CodeSource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
@@ -219,6 +222,28 @@ public final class AddonFilesManager {
         text.append("# Minimum player level required to enter a gate.\n");
         text.append("# Set to 1 to allow everyone.\n");
         text.append("min_level_required: ").append(options.minLevelRequired).append("\n\n");
+
+        text.append("# -----------------------------------------------------------------------\n");
+        text.append("# Dynamic level targeting\n");
+        text.append("# -----------------------------------------------------------------------\n\n");
+
+        text.append("# How to choose the base level from players currently in the target world.\n");
+        text.append("# Options: HIGHEST, MEDIAN, AVERAGE\n");
+        text.append("level_reference_mode: ").append(options.levelReferenceMode).append("\n\n");
+
+        text.append("# Which player slice to evaluate for level_reference_mode.\n");
+        text.append("# Options: ALL, UPPER, LOWER\n");
+        text.append("level_reference_scope: ").append(options.levelReferenceScope).append("\n\n");
+
+        text.append("# When level_reference_scope is UPPER or LOWER, use only N%% players by level.\n");
+        text.append("# Example: 25 means highest 25%% (UPPER) or lowest 25%% (LOWER).\n");
+        text.append("# Allowed range: 1-100.\n");
+        text.append("scope_percent: ").append(options.scopePercent).append("\n\n");
+
+        text.append("# Level range offset around the chosen base level.\n");
+        text.append("# Example: base 120 and offset 30 => range 90-150.\n");
+        text.append("# Minimum enforced value: 0.\n");
+        text.append("level_offset: ").append(options.levelOffset).append("\n\n");
 
         text.append(AddonVersionRegistry.CONFIG_VERSION_KEY).append(": ").append(targetVersion).append("\n");
 
@@ -849,6 +874,36 @@ public final class AddonFilesManager {
         return dungeonGateOptions == null ? DungeonGateOptions.defaults().minLevelRequired : dungeonGateOptions.minLevelRequired;
     }
 
+    @Nonnull
+    public String getDungeonLevelReferenceMode() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().levelReferenceMode
+                : dungeonGateOptions.levelReferenceMode;
+    }
+
+    public int getDungeonLevelOffset() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().levelOffset
+                : dungeonGateOptions.levelOffset;
+    }
+
+    @Nonnull
+    public String getDungeonLevelReferenceScope() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().levelReferenceScope
+                : dungeonGateOptions.levelReferenceScope;
+    }
+
+    public int getDungeonLevelReferenceScopePercent() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().scopePercent
+                : dungeonGateOptions.scopePercent;
+    }
+
+    public void refreshDungeonGateOptions() {
+        this.dungeonGateOptions = loadDungeonGateOptions();
+    }
+
     @SuppressWarnings("unchecked")
     private DungeonGateOptions loadDungeonGateOptions() {
         DungeonGateOptions defaults = DungeonGateOptions.defaults();
@@ -894,11 +949,69 @@ public final class AddonFilesManager {
                 minLevel = Math.max(1, n.intValue());
             }
 
+            String levelReferenceMode = defaults.levelReferenceMode;
+            Object levelReferenceModeRaw = root.get("level_reference_mode");
+            if (levelReferenceModeRaw instanceof String modeRaw && !modeRaw.isBlank()) {
+                levelReferenceMode = normalizeLevelReferenceMode(modeRaw, defaults.levelReferenceMode);
+            }
+
+            String levelReferenceScope = defaults.levelReferenceScope;
+            Object levelReferenceScopeRaw = root.get("level_reference_scope");
+            if (levelReferenceScopeRaw instanceof String scopeRaw && !scopeRaw.isBlank()) {
+                levelReferenceScope = normalizeLevelReferenceScope(scopeRaw, defaults.levelReferenceScope);
+            }
+
+            // Backward compatibility: legacy UPPER_AVERAGE maps to AVERAGE + UPPER scope.
+            if (levelReferenceModeRaw instanceof String modeRaw
+                    && "UPPER_AVERAGE".equalsIgnoreCase(modeRaw.trim())) {
+                levelReferenceMode = "AVERAGE";
+                levelReferenceScope = "UPPER";
+            }
+
+            int levelOffset = defaults.levelOffset;
+            if (root.get("level_offset") instanceof Number n) {
+                levelOffset = Math.max(0, n.intValue());
+            }
+
+            int scopePercent = defaults.scopePercent;
+            if (root.get("scope_percent") instanceof Number n) {
+                scopePercent = clampScopePercent(n.intValue());
+            } else if (root.get("upper_top_percent") instanceof Number n) {
+                scopePercent = clampScopePercent(n.intValue());
+            } else if (root.get("upper_average_top_percent") instanceof Number n) {
+                scopePercent = clampScopePercent(n.intValue());
+            }
+
             return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, despawnWhenEmpty,
-                    maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel);
+                    maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel,
+                    levelReferenceMode, levelReferenceScope, levelOffset, scopePercent);
         } catch (IOException ignored) {
             return defaults;
         }
+    }
+
+    @Nonnull
+    private static String normalizeLevelReferenceMode(@Nonnull String rawMode, @Nonnull String fallback) {
+        String normalized = rawMode.trim().toUpperCase(Locale.ROOT);
+        if ("HIGHEST".equals(normalized)
+                || "MEDIAN".equals(normalized)
+                || "AVERAGE".equals(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    @Nonnull
+    private static String normalizeLevelReferenceScope(@Nonnull String rawScope, @Nonnull String fallback) {
+        String normalized = rawScope.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(normalized) || "UPPER".equals(normalized) || "LOWER".equals(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    private static int clampScopePercent(int value) {
+        return Math.max(1, Math.min(100, value));
     }
 
     private static final class DungeonGateOptions {
@@ -911,6 +1024,10 @@ public final class AddonFilesManager {
         private final int gateDurationMinutes;
         private final int maxPlayersPerInstance;
         private final int minLevelRequired;
+        private final String levelReferenceMode;
+        private final String levelReferenceScope;
+        private final int levelOffset;
+        private final int scopePercent;
 
         private DungeonGateOptions(boolean enabled,
                 boolean allowReentryAfterDeath,
@@ -920,7 +1037,11 @@ public final class AddonFilesManager {
                 int spawnIntervalMinutes,
                 int gateDurationMinutes,
                 int maxPlayersPerInstance,
-                int minLevelRequired) {
+                int minLevelRequired,
+                @Nonnull String levelReferenceMode,
+                @Nonnull String levelReferenceScope,
+                int levelOffset,
+                int scopePercent) {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
             this.announceOnSpawn = announceOnSpawn;
@@ -930,10 +1051,15 @@ public final class AddonFilesManager {
             this.gateDurationMinutes = gateDurationMinutes;
             this.maxPlayersPerInstance = maxPlayersPerInstance;
             this.minLevelRequired = minLevelRequired;
+            this.levelReferenceMode = levelReferenceMode;
+            this.levelReferenceScope = levelReferenceScope;
+            this.levelOffset = levelOffset;
+            this.scopePercent = clampScopePercent(scopePercent);
         }
 
         private static DungeonGateOptions defaults() {
-            return new DungeonGateOptions(true, false, true, false, 3, 30, 30, -1, 1);
+            return new DungeonGateOptions(true, false, true, false, 3, 30, 30, -1, 1,
+                    "AVERAGE", "UPPER", 30, 25);
         }
     }
 

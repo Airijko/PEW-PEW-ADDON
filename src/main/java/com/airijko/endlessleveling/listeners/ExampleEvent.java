@@ -1,4 +1,4 @@
-package com.airijko.endlessleveling.events;
+package com.airijko.endlessleveling.listeners;
 
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.hypixel.hytale.server.core.Message;
