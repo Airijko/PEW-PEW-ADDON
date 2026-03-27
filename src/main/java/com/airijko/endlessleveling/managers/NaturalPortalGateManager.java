@@ -198,14 +198,15 @@ public final class NaturalPortalGateManager {
                     continue;
                 }
 
-                chunk.setBlock(x, y, z, blockId);
                 LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef);
                 int normalLevelMin = levelRange.normalMin;
                 int normalLevelMax = levelRange.normalMax;
                 int bossLevel = levelRange.bossLevel;
                 int highestPlayerLevel = resolveHighestPlayerLevelForWorld(playerRef);
                 GateRank gateRank = resolveGateRank(normalLevelMin, normalLevelMax, highestPlayerLevel);
-                PortalLeveledInstanceRouter.setPendingLevelRange(blockId, normalLevelMin, normalLevelMax, bossLevel);
+                String rankedBlockId = blockId + gateRank.tier.blockIdSuffix();
+                chunk.setBlock(x, y, z, rankedBlockId);
+                PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
                         announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
@@ -213,7 +214,7 @@ public final class NaturalPortalGateManager {
                     plugin.getLogger().at(Level.INFO).log(
                             "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s ratio=%.2f normalRange=%d-%d bossLevel=%d",
                             world.getName(),
-                            blockId,
+                            rankedBlockId,
                             isTestSpawn,
                             x,
                             y,
@@ -225,7 +226,7 @@ public final class NaturalPortalGateManager {
                             bossLevel
                     );
                 }
-                scheduleRemoval(world, blockId, x, y, z);
+                scheduleRemoval(world, rankedBlockId, x, y, z);
                 future.complete(true);
                 return;
             }

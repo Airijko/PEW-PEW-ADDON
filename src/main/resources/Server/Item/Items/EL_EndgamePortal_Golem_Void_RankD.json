@@ -1,0 +1,84 @@
+{
+  "TranslationProperties": {
+    "Name": "endlesslevelingaddon.items.endgame_portal_void.name",
+    "Description": "endlesslevelingaddon.items.endgame_portal_void.description"
+  },
+  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Golem_Void.png",
+  "Categories": [
+    "Blocks.Structural"
+  ],
+  "PlayerAnimationsId": "Block",
+  "MaxStack": 1,
+  "Quality": "Legendary",
+  "InteractionConfig": {
+    "UseDistance": {
+      "Adventure": 4.0,
+      "Creative": 5.0
+    }
+  },
+  "BlockType": {
+    "AmbientSoundEventId": "SFX_Portal_Neutral",
+    "DrawType": "Cube",
+    "Material": "Solid",
+    "Opacity": "Transparent",
+    "RequiresAlphaBlending": true,
+    "VariantRotation": "NESW",
+    "Group": "Stone",
+    "Textures": [
+      {
+        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "Weight": 1
+      }
+    ],
+    "HitboxType": "Portal_3x3",
+    "BlockParticleSetId": "Stone",
+    "BlockSoundSetId": "Stone",
+    "Particles": [
+      {
+        "SystemId": "MagicPortal",
+        "PositionOffset": {
+          "X": 1.0,
+          "Y": 1.5,
+          "Z": 0.0
+        },
+        "Scale": 2.25
+      }
+    ],
+    "InteractionHint": "endlesslevelingaddon.portals.interact",
+    "Flags": {
+      "IsUsable": true
+    },
+    "Interactions": {
+      "CollisionEnter": {
+        "Cooldown": {
+          "Id": "EL_PortalTeleport",
+          "Cooldown": 2
+        },
+        "Interactions": [
+          {
+            "Type": "TeleportInstance",
+            "InstanceName": "EL_Endgame_Golem_Void",
+            "PositionOffset": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Rotation": {
+              "Pitch": 0,
+              "Yaw": 0,
+              "Roll": 0
+            },
+            "PersonalReturnPoint": true,
+            "CloseOnBlockRemove": false,
+            "Next": {
+              "Type": "Simple",
+              "Effects": {
+                "LocalSoundEventId": "SFX_Portal_Neutral_Teleport_Local"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

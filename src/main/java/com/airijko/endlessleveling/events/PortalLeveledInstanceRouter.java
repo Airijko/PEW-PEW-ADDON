@@ -88,7 +88,7 @@ public final class PortalLeveledInstanceRouter {
      * level range is preserved and used when a player enters that instance.
      */
     public static void setPendingLevelRange(@Nonnull String blockId, int min, int max, int bossLevel) {
-        String routingName = BLOCK_ID_TO_ROUTING_NAME.get(blockId);
+        String routingName = resolveRoutingName(blockId);
         if (routingName != null) {
             int bossOffset = Math.max(0, bossLevel - Math.max(min, max));
             PENDING_LEVEL_RANGES.put(routingName, new PendingLevelProfile(min, max, bossOffset));
@@ -301,6 +301,22 @@ public final class PortalLeveledInstanceRouter {
     public static String resolveGateDisplayName(@Nonnull String worldName) {
         String templateName = resolveTemplateNameFromWorldName(worldName);
         return templateName != null ? ROUTING_TO_DISPLAY.get(templateName) : null;
+    }
+
+    /**
+     * Resolves the routing name for a placed block ID, stripping any rank suffix
+     * (e.g. "_RankS", "_RankA", …) before the lookup so ranked portal variants
+     * route to the same instance template as the base block.
+     */
+    @Nullable
+    private static String resolveRoutingName(@Nonnull String blockId) {
+        String direct = BLOCK_ID_TO_ROUTING_NAME.get(blockId);
+        if (direct != null) {
+            return direct;
+        }
+        // Strip _Rank{S,A,B,C,D,E} suffix and retry
+        String stripped = blockId.replaceAll("_Rank[SABCDE]$", "");
+        return BLOCK_ID_TO_ROUTING_NAME.get(stripped);
     }
 
     @Nullable

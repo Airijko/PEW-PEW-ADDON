@@ -28,6 +28,30 @@ public enum GateRankTier {
         return color;
     }
 
+    /**
+     * The MagicPortal particle scale for this rank.
+     * E is the baseline (1.5). Each rank up dramatically enlarges the portal.
+     */
+    public double portalScale() {
+        return switch (this) {
+            case S -> 10.0;
+            case A -> 7.0;
+            case B -> 5.0;
+            case C -> 3.5;
+            case D -> 2.25;
+            case E -> 1.5;
+        };
+    }
+
+    /**
+     * Suffix appended to base block IDs to select the rank-sized portal variant.
+     * E rank uses the base block (no suffix) so existing item stacks stay valid.
+     */
+    @Nonnull
+    public String blockIdSuffix() {
+        return this == E ? "" : "_Rank" + letter;
+    }
+
     @Nonnull
     public static GateRankTier fromRatio(double ratio) {
         if (ratio > 1.00D) {
