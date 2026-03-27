@@ -319,6 +319,9 @@ public final class NaturalPortalGateManager {
         try {
             chunk.setBlock(x, y, z, AIR_BLOCK_ID);
             untrackActiveGate(world, x, y, z);
+            if (isAnnounceOnDespawnEnabled()) {
+                announceGateDespawn(x, y, z, blockId);
+            }
             log(Level.INFO,
                     "[ELPortal] Gate expired and removed world=%s block=%s at %d %d %d reason=%s",
                     world.getName(),
@@ -675,8 +678,28 @@ public final class NaturalPortalGateManager {
         return Math.max(1, value);
     }
 
+    @Nonnull
+    private static GateRankTier resolveGateRankTierFromBlockId(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return GateRankTier.E;
+        }
+
+        for (GateRankTier tier : GateRankTier.values()) {
+            String suffix = tier.blockIdSuffix();
+            if (!suffix.isEmpty() && blockId.endsWith(suffix)) {
+                return tier;
+            }
+        }
+
+        return GateRankTier.E;
+    }
+
     private static boolean isAnnounceOnSpawnEnabled() {
         return filesManager == null || filesManager.isDungeonAnnounceOnSpawn();
+    }
+
+    private static boolean isAnnounceOnDespawnEnabled() {
+        return filesManager == null || filesManager.isDungeonAnnounceOnDespawn();
     }
 
     private static int clampDynamicLevel(int value) {
@@ -729,6 +752,24 @@ public final class NaturalPortalGateManager {
             Message.raw("\n"),
             Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
             Message.raw(String.format("Boss Level: %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
+        );
+        universe.sendMessage(message);
+    }
+
+    private static void announceGateDespawn(int x, int y, int z, @Nonnull String blockId) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        GateRankTier gateRankTier = resolveGateRankTierFromBlockId(blockId);
+
+        Message message = Message.join(
+                Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
+                Message.raw(String.format("%s RANK CLOSE", gateRankTier.letter())).color(gateRankTier.color().hex()),
+                Message.raw("\n"),
+                Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
+                Message.raw(String.format("Position: (%d, %d, %d)", x, y, z)).color(PortalGateColor.POSITION.hex())
         );
         universe.sendMessage(message);
     }

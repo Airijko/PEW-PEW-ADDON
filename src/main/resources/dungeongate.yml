@@ -18,6 +18,9 @@ max_concurrent_spawns: 5
 # Announce in global chat when a dungeon gate spawns.
 announce_on_spawn: true
 
+# Announce in global chat when a dungeon gate despawns.
+announce_on_despawn: true
+
 # -----------------------------------------------------------------------
 # Gate lifetime
 # -----------------------------------------------------------------------

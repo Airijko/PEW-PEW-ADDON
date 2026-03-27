@@ -196,6 +196,9 @@ public final class AddonFilesManager {
         text.append("# Announce in global chat when a dungeon gate spawns.\n");
         text.append("announce_on_spawn: ").append(options.announceOnSpawn).append("\n\n");
 
+        text.append("# Announce in global chat when a dungeon gate despawns.\n");
+        text.append("announce_on_despawn: ").append(options.announceOnDespawn).append("\n\n");
+
         text.append("# -----------------------------------------------------------------------\n");
         text.append("# Gate lifetime\n");
         text.append("# -----------------------------------------------------------------------\n\n");
@@ -871,6 +874,10 @@ public final class AddonFilesManager {
         return dungeonGateOptions == null || dungeonGateOptions.announceOnSpawn;
     }
 
+    public boolean isDungeonAnnounceOnDespawn() {
+        return dungeonGateOptions == null || dungeonGateOptions.announceOnDespawn;
+    }
+
     public int getDungeonMaxPlayersPerInstance() {
         return dungeonGateOptions == null ? DungeonGateOptions.defaults().maxPlayersPerInstance : dungeonGateOptions.maxPlayersPerInstance;
     }
@@ -943,6 +950,7 @@ public final class AddonFilesManager {
             boolean enabled = readBoolean(root.get("enabled"), defaults.enabled);
             boolean allowReentry = readBoolean(root.get("allow_reentry_after_death"), defaults.allowReentryAfterDeath);
             boolean announceOnSpawn = readBoolean(root.get("announce_on_spawn"), defaults.announceOnSpawn);
+            boolean announceOnDespawn = readBoolean(root.get("announce_on_despawn"), defaults.announceOnDespawn);
 
             int maxSpawns = defaults.maxConcurrentSpawns;
             if (root.get("max_concurrent_spawns") instanceof Number n) {
@@ -1013,7 +1021,7 @@ public final class AddonFilesManager {
                 scopePercent = clampScopePercent(n.intValue());
             }
 
-                return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn,
+                return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
                     maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel,
                     levelReferenceMode, levelReferenceScope, levelOffset,
                     normalMobLevelRange, bossLevelBonus, scopePercent);
@@ -1050,6 +1058,7 @@ public final class AddonFilesManager {
         private final boolean enabled;
         private final boolean allowReentryAfterDeath;
         private final boolean announceOnSpawn;
+        private final boolean announceOnDespawn;
         private final int maxConcurrentSpawns;
         private final int spawnIntervalMinutes;
         private final int gateDurationMinutes;
@@ -1065,6 +1074,7 @@ public final class AddonFilesManager {
         private DungeonGateOptions(boolean enabled,
                 boolean allowReentryAfterDeath,
                 boolean announceOnSpawn,
+            boolean announceOnDespawn,
                 int maxConcurrentSpawns,
                 int spawnIntervalMinutes,
                 int gateDurationMinutes,
@@ -1079,6 +1089,7 @@ public final class AddonFilesManager {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
             this.announceOnSpawn = announceOnSpawn;
+            this.announceOnDespawn = announceOnDespawn;
             this.maxConcurrentSpawns = maxConcurrentSpawns;
             this.spawnIntervalMinutes = spawnIntervalMinutes;
             this.gateDurationMinutes = gateDurationMinutes;
@@ -1093,7 +1104,7 @@ public final class AddonFilesManager {
         }
 
         private static DungeonGateOptions defaults() {
-            return new DungeonGateOptions(true, false, true, 3, 30, 30, -1, 1,
+            return new DungeonGateOptions(true, false, true, true, 3, 30, 30, -1, 1,
                     "AVERAGE", "UPPER", 30, 20, 10, 25);
         }
     }

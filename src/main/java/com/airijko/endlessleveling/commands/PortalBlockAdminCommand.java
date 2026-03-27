@@ -197,6 +197,29 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     }
 
     @Nonnull
+    private static List<PortalStructure> sortStructuresForDisplay(@Nonnull List<PortalStructure> source) {
+        List<PortalStructure> sorted = new ArrayList<>(source);
+        sorted.sort((left, right) -> {
+            PortalBlockHit a = left.anchor();
+            PortalBlockHit b = right.anchor();
+            int yCompare = Integer.compare(a.y(), b.y());
+            if (yCompare != 0) {
+                return yCompare;
+            }
+            int xCompare = Integer.compare(a.x(), b.x());
+            if (xCompare != 0) {
+                return xCompare;
+            }
+            int zCompare = Integer.compare(a.z(), b.z());
+            if (zCompare != 0) {
+                return zCompare;
+            }
+            return left.baseId().compareTo(right.baseId());
+        });
+        return sorted;
+    }
+
+    @Nonnull
     private static String normalizePortalBaseId(@Nonnull String blockId) {
         for (String baseBlockId : PORTAL_BASE_BLOCK_IDS) {
             if (blockId.equals(baseBlockId) || blockId.startsWith(baseBlockId + "_Rank")) {
@@ -404,7 +427,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             return runInPlayerWorld(context, (ctx, player, world) -> {
-                List<PortalStructure> structures = scanPortalStructures(world);
+                List<PortalStructure> structures = sortStructuresForDisplay(scanPortalStructures(world));
                 if (structures.isEmpty()) {
                     ctx.sendMessage(Message.raw("No portal blocks found in loaded chunks.").color("#ffcc66"));
                     return;
@@ -415,21 +438,23 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     totalBlocks += structure.blocks().size();
                 }
 
-                ctx.sendMessage(Message.raw("Found " + structures.size() + " portal structure(s) in loaded chunks"
-                                + " (" + totalBlocks + " portal blocks):")
-                        .color("#6cff78"));
+                ctx.sendMessage(Message.raw("Portal Structures (loaded): " + structures.size()
+                                + " structures / " + totalBlocks + " blocks")
+                        .color("#6cff78").bold(true));
 
                 int shown = Math.min(MAX_LIST_LINES, structures.size());
                 for (int i = 0; i < shown; i++) {
                     PortalStructure structure = structures.get(i);
                     PortalBlockHit anchor = structure.anchor();
-                    ctx.sendMessage(Message.raw(String.format("[%d] %s @ %d, %d, %d (%d blocks)",
-                            i + 1,
-                            structure.displayBlockId(),
-                            anchor.x(),
-                            anchor.y(),
-                            anchor.z(),
-                            structure.blocks().size())).color("#b8d0ff"));
+                    ctx.sendMessage(Message.join(
+                            Message.raw(String.format("[%d] %s", i + 1, structure.displayBlockId())).color("#b8d0ff"),
+                            Message.raw("\n"),
+                            Message.raw(String.format("    Pos: %d, %d, %d | Blocks: %d",
+                                    anchor.x(),
+                                    anchor.y(),
+                                    anchor.z(),
+                                    structure.blocks().size())).color("#9eb3d6")
+                    ));
                 }
 
                 if (structures.size() > shown) {
