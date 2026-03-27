@@ -27,6 +27,7 @@ import com.airijko.endlessleveling.commands.MajorDungeonsPortalCommand;
 import com.airijko.endlessleveling.commands.PortalGateTestCommand;
 import com.airijko.endlessleveling.events.ExampleEvent;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
+import com.airijko.endlessleveling.events.PortalGateJoinNotificationListener;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
@@ -87,6 +88,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
         PortalInstanceDiagnostics.initialize(this, this.filesManager);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
+        PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
+        this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
         this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);

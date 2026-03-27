@@ -71,6 +71,9 @@ public final class PortalLeveledInstanceRouter {
 
     /** Routing world template name → level range announced when the portal gate was placed. */
     private static final Map<String, LevelRange> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
+
+    /** Instance world name → resolved level range, kept until the world is removed. */
+    private static final Map<String, LevelRange> ACTIVE_LEVEL_RANGES = new ConcurrentHashMap<>();
     private static JavaPlugin plugin;
 
     private PortalLeveledInstanceRouter() {
@@ -263,7 +266,30 @@ public final class PortalLeveledInstanceRouter {
             log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d",
                     worldName, range.min(), range.max());
         }
+        ACTIVE_LEVEL_RANGES.put(worldName, range);
         return range;
+    }
+
+    /** Returns the resolved [min, max] level range for a gate instance world, or null if unknown. */
+    @Nullable
+    public static int[] getActiveInstanceRange(@Nonnull String worldName) {
+        LevelRange r = ACTIVE_LEVEL_RANGES.get(worldName);
+        return r != null ? new int[]{r.min(), r.max()} : null;
+    }
+
+    /** Removes the stored level range for a world (called on world removal to avoid memory leaks). */
+    public static void clearActiveInstanceRange(@Nonnull String worldName) {
+        ACTIVE_LEVEL_RANGES.remove(worldName);
+    }
+
+    /**
+     * Returns the human-readable display name for a gate instance world (e.g. "Major Dungeon I"),
+     * or null if the world is not a gate instance.
+     */
+    @Nullable
+    public static String resolveGateDisplayName(@Nonnull String worldName) {
+        String templateName = resolveTemplateNameFromWorldName(worldName);
+        return templateName != null ? ROUTING_TO_DISPLAY.get(templateName) : null;
     }
 
     @Nullable

@@ -162,6 +162,7 @@ public final class PortalInstanceDiagnostics {
         if (api != null) {
             api.removeMobWorldFixedLevelOverride(worldName);
         }
+        PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
 
         log(Level.INFO,
                 "world-remove world=%s reason=%s cancelled=%s",
