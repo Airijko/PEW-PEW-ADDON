@@ -6,6 +6,8 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
 import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
 import com.hypixel.hytale.component.Holder;
+import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
@@ -86,19 +88,22 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
+        World returnWorld = resolveReturnWorld(routingWorld, universe);
+        Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
+
         World existing = universe.getWorld(leveledWorldName);
         if (existing != null) {
-            existing.addPlayer(playerRef);
-            broadcastEntry(playerRef, displayName, levelMin, levelMax);
+            if (teleportToInstanceSpawn(playerRef, existing, returnTransform)) {
+                broadcastEntry(playerRef, displayName, levelMin, levelMax);
+            }
         } else {
-            World returnWorld = resolveReturnWorld(routingWorld, universe);
-            Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
             instances.spawnInstance(routingName, leveledWorldName, returnWorld, returnTransform)
                     .thenAccept(leveled -> {
-                        leveled.addPlayer(playerRef);
-                        broadcastEntry(playerRef, displayName, levelMin, levelMax);
-                        log(Level.INFO, "[ELPortal] Created leveled instance %s for bracket %d-%d",
-                                leveledWorldName, levelMin, levelMax);
+                        if (teleportToInstanceSpawn(playerRef, leveled, returnTransform)) {
+                            broadcastEntry(playerRef, displayName, levelMin, levelMax);
+                            log(Level.INFO, "[ELPortal] Created leveled instance %s for bracket %d-%d",
+                                    leveledWorldName, levelMin, levelMax);
+                        }
                     })
                     .exceptionally(ex -> {
                         if (plugin != null) {
@@ -152,6 +157,28 @@ public final class PortalLeveledInstanceRouter {
     private static int resolvePlayerLevel(@Nonnull UUID uuid) {
         PlayerSnapshot snapshot = EndlessLevelingAPI.get().getPlayerSnapshot(uuid);
         return snapshot != null ? Math.max(1, snapshot.level()) : 1;
+    }
+
+    private static boolean teleportToInstanceSpawn(@Nonnull PlayerRef playerRef,
+                                                   @Nonnull World targetWorld,
+                                                   @Nullable Transform overrideReturn) {
+        Ref<EntityStore> entityRef = playerRef.getReference();
+        if (entityRef == null || !entityRef.isValid()) {
+            log(Level.WARNING, "[ELPortal] Missing/invalid player reference for %s", playerRef.getUsername());
+            return false;
+        }
+
+        try {
+            Store<EntityStore> store = entityRef.getStore();
+            InstancesPlugin.teleportPlayerToInstance(entityRef, store, targetWorld, overrideReturn);
+            return true;
+        } catch (Exception ex) {
+            if (plugin != null) {
+                plugin.getLogger().at(Level.WARNING).withCause(ex)
+                        .log("[ELPortal] Failed to teleport %s into %s", playerRef.getUsername(), targetWorld.getName());
+            }
+            return false;
+        }
     }
 
     private static void broadcastEntry(@Nonnull PlayerRef playerRef,
