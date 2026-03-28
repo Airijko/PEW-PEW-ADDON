@@ -109,9 +109,10 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
     @Override
     protected void shutdown() {
-        PortalLeveledInstanceRouter.shutdown();
-        PortalProximityManager.shutdown();
         NaturalPortalGateManager.shutdown();
+        PortalProximityManager.shutdown();
+        PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();
+        PortalLeveledInstanceRouter.shutdown();
         RaceRegistration.unregisterAll();
         ClassRegistration.unregisterAll();
         AugmentRegistration.unregisterAll();

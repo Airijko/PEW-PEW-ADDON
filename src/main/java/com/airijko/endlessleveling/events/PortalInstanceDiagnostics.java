@@ -23,6 +23,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -166,6 +167,43 @@ public final class PortalInstanceDiagnostics {
                 worldName,
                 event.getRemovalReason(),
                 event.isCancelled());
+    }
+
+    public static void purgeTrackedInstancesOnShutdown() {
+        Set<String> targets = new LinkedHashSet<>();
+        Universe universe = Universe.get();
+        if (universe != null) {
+            for (String worldName : universe.getWorlds().keySet()) {
+                if (isTrackedInstanceWorld(worldName)) {
+                    targets.add(worldName);
+                }
+            }
+        }
+
+        // Include template identifiers so persisted EL instances are also purged on shutdown.
+        targets.addAll(INSTANCE_DEFINITIONS.keySet());
+
+        for (String worldName : targets) {
+            if (worldName == null || worldName.isBlank()) {
+                continue;
+            }
+
+            try {
+                EndlessLevelingAPI api = EndlessLevelingAPI.get();
+                if (api != null) {
+                    api.removeMobWorldFixedLevelOverride(worldName);
+                }
+                PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
+                PENDING_INSTANCE_REMOVALS.remove(worldName);
+                InstancesPlugin.safeRemoveInstance(worldName);
+                log(Level.INFO, "shutdown-instance-purge world=%s", worldName);
+            } catch (Exception ex) {
+                log(Level.WARNING,
+                        "shutdown-instance-purge-failed world=%s error=%s",
+                        worldName,
+                        ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+            }
+        }
     }
 
     public static void onPlayerDeath(@Nonnull Player player, @Nullable Vector3d actualPosition) {
