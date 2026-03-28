@@ -103,6 +103,8 @@ public final class PortalLeveledInstanceRouter {
 
     /** Routing world template name → level profile announced when the portal gate was placed. */
     private static final Map<String, PendingLevelProfile> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
+    /** Gate identity -> level profile announced when that specific gate was placed. */
+    private static final Map<String, PendingLevelProfile> PENDING_LEVEL_RANGES_BY_GATE = new ConcurrentHashMap<>();
 
     /** Instance world name → resolved level range, kept until the world is removed. */
     private static final Map<String, LevelRange> ACTIVE_LEVEL_RANGES = new ConcurrentHashMap<>();
@@ -145,6 +147,7 @@ public final class PortalLeveledInstanceRouter {
 
     public static void shutdown() {
         PENDING_LEVEL_RANGES.clear();
+        PENDING_LEVEL_RANGES_BY_GATE.clear();
         ACTIVE_LEVEL_RANGES.clear();
         ACTIVE_BOSS_LEVELS.clear();
         ACTIVE_RANK_LETTERS.clear();
@@ -301,10 +304,12 @@ public final class PortalLeveledInstanceRouter {
         String legacyKey = buildGateKey(world, x, y, z);
         String gateIdentity = stableGateId != null && !stableGateId.isBlank() ? stableGateId : legacyKey;
         String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
+        PENDING_LEVEL_RANGES_BY_GATE.remove(gateIdentity);
         GATE_INSTANCE_EXPECTATIONS.remove(gateIdentity);
         GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
         if (instanceName == null && !legacyKey.equals(gateIdentity)) {
             instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(legacyKey);
+            PENDING_LEVEL_RANGES_BY_GATE.remove(legacyKey);
             GATE_INSTANCE_EXPECTATIONS.remove(legacyKey);
             GATE_SPAWN_IN_FLIGHT.remove(legacyKey);
             gateIdentity = legacyKey;
@@ -331,6 +336,7 @@ public final class PortalLeveledInstanceRouter {
     public static void cleanupGateInstanceByIdentity(@Nonnull String gateIdentity,
                                                      @Nonnull String blockId) {
         String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
+        PENDING_LEVEL_RANGES_BY_GATE.remove(gateIdentity);
         GATE_INSTANCE_EXPECTATIONS.remove(gateIdentity);
         GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
         if (instanceName == null || instanceName.isBlank()) {
@@ -372,14 +378,28 @@ public final class PortalLeveledInstanceRouter {
      * Called by the gate manager when a portal block is placed so the announced
      * level range is preserved and used when a player enters that instance.
      */
-    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max, int bossLevel) {
+    public static void setPendingLevelRange(@Nonnull String blockId,
+                                            @Nullable String gateIdentity,
+                                            int min,
+                                            int max,
+                                            int bossLevel) {
         String routingName = resolveRoutingName(blockId);
         if (routingName != null) {
             int bossOffset = Math.max(0, bossLevel - Math.max(min, max));
-            PENDING_LEVEL_RANGES.put(
-                    routingName,
-                    new PendingLevelProfile(min, max, bossOffset, resolveRankLetterFromBlockId(blockId)));
+            PendingLevelProfile profile = new PendingLevelProfile(
+                    min,
+                    max,
+                    bossOffset,
+                    resolveRankLetterFromBlockId(blockId));
+            PENDING_LEVEL_RANGES.put(routingName, profile);
+            if (gateIdentity != null && !gateIdentity.isBlank()) {
+                PENDING_LEVEL_RANGES_BY_GATE.put(gateIdentity, profile);
+            }
         }
+    }
+
+    public static void setPendingLevelRange(@Nonnull String blockId, int min, int max, int bossLevel) {
+        setPendingLevelRange(blockId, null, min, max, bossLevel);
     }
 
     public static void setPendingLevelRange(@Nonnull String blockId, int min, int max) {
@@ -463,7 +483,7 @@ public final class PortalLeveledInstanceRouter {
             // Register the level range immediately so mobs are leveled correctly
             // before the player sends ClientReady (which fires ~4s later).
             if (!originalTemplate) {
-                registerInstanceLevelOverride(routingName);
+                registerInstanceLevelOverride(routingName, null, directWorldTemplate);
             }
 
             backfillGatePairingFromDirectEntry(playerRef,
@@ -890,7 +910,7 @@ public final class PortalLeveledInstanceRouter {
                             spawned,
                             effectiveReturnTransform,
                             () -> {
-                                LevelRange range = registerInstanceLevelOverride(spawned.getName());
+                                LevelRange range = registerInstanceLevelOverride(spawned.getName(), gateKey, routingName);
                                 String suffix = ROUTING_TO_SUFFIX.get(routingName);
                                 if (suffix != null) {
                                 applyFixedGateSpawn(playerRef, spawned, suffix);
@@ -1164,9 +1184,24 @@ public final class PortalLeveledInstanceRouter {
         return holder.getComponent(PlayerRef.getComponentType());
     }
 
-    private static PendingLevelProfile resolveDynamicInstanceRange(@Nonnull String worldName) {
+    private static PendingLevelProfile resolveDynamicInstanceRange(@Nonnull String worldName,
+                                                                   @Nullable String gateIdentity,
+                                                                   @Nullable String templateHint) {
+        if (gateIdentity != null && !gateIdentity.isBlank()) {
+            PendingLevelProfile gatePending = PENDING_LEVEL_RANGES_BY_GATE.remove(gateIdentity);
+            if (gatePending != null) {
+                return gatePending;
+            }
+        }
+
         // If a gate was placed for this template, use its announced range (consumed once).
-        String templateName = resolveTemplateNameFromWorldName(worldName);
+        String templateName = templateHint;
+        if (templateName == null || templateName.isBlank()) {
+            templateName = resolveTemplateNameFromWorldName(worldName);
+        }
+        if (templateName != null && !templateName.isBlank()) {
+            templateName = canonicalizeRoutingTemplate(templateName);
+        }
         if (templateName != null) {
             PendingLevelProfile pending = PENDING_LEVEL_RANGES.remove(templateName);
             if (pending != null) {
@@ -1188,8 +1223,10 @@ public final class PortalLeveledInstanceRouter {
     }
 
     @Nonnull
-    private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName) {
-        PendingLevelProfile profile = resolveDynamicInstanceRange(worldName);
+    private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName,
+                                                            @Nullable String gateIdentity,
+                                                            @Nullable String templateHint) {
+        PendingLevelProfile profile = resolveDynamicInstanceRange(worldName, gateIdentity, templateHint);
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
         if (api != null) {
             api.registerMobWorldFixedLevelOverride(
