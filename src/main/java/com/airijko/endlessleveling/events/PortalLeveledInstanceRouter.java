@@ -1,6 +1,7 @@
 package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
@@ -92,10 +93,22 @@ public final class PortalLeveledInstanceRouter {
     /** Instance world name → gate rank letter (E/D/C/B/A/S) for notifications. */
     private static final Map<String, String> ACTIVE_RANK_LETTERS = new ConcurrentHashMap<>();
 
+    /** Player UUID -> routing template -> throttle-until millis to suppress duplicate spawn races. */
+    private static final Map<UUID, Map<String, Long>> PLAYER_ROUTING_THROTTLES = new ConcurrentHashMap<>();
+
+    /** Gate key (world+xyz) -> instance world name (e.g., "uuid:120:65:-40" -> "instance-EL_MJ_Instance_D01-abc123") */
+    private static final Map<String, String> GATE_KEY_TO_INSTANCE_NAME = new ConcurrentHashMap<>();
+    /** Gate key -> spawn lock expiry millis to prevent concurrent duplicate spawns per gate. */
+    private static final Map<String, Long> GATE_SPAWN_IN_FLIGHT = new ConcurrentHashMap<>();
+
+    private static final long ROUTING_DEDUPE_WINDOW_MILLIS = 5000L;
+    private static final long GATE_SPAWN_LOCK_MILLIS = 15000L;
+
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
 
     private static JavaPlugin plugin;
+    private static AddonFilesManager filesManager;
 
     private PortalLeveledInstanceRouter() {
     }
@@ -104,13 +117,58 @@ public final class PortalLeveledInstanceRouter {
         plugin = owner;
     }
 
+    public static void setFilesManager(@Nullable AddonFilesManager manager) {
+        filesManager = manager;
+    }
+
     public static void shutdown() {
         PENDING_LEVEL_RANGES.clear();
         ACTIVE_LEVEL_RANGES.clear();
         ACTIVE_BOSS_LEVELS.clear();
         ACTIVE_RANK_LETTERS.clear();
         PLAYER_ENTRY_TARGETS.clear();
+        PLAYER_ROUTING_THROTTLES.clear();
+        GATE_KEY_TO_INSTANCE_NAME.clear();
+        GATE_SPAWN_IN_FLIGHT.clear();
+        filesManager = null;
         plugin = null;
+    }
+
+    /**
+     * Called by gate manager when a portal gate expires. Removes the paired instance if it exists.
+     */
+    public static void cleanupGateInstance(@Nonnull World world,
+                                           int x,
+                                           int y,
+                                           int z,
+                                           @Nonnull String blockId) {
+        String gateKey = buildGateKey(world, x, y, z);
+        String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateKey);
+        GATE_SPAWN_IN_FLIGHT.remove(gateKey);
+        if (instanceName != null) {
+            InstancesPlugin instances = InstancesPlugin.get();
+            if (instances != null) {
+                try {
+                    instances.safeRemoveInstance(instanceName);
+                    log(Level.INFO, "[ELPortal] Cleaned up paired instance %s for expired gate %s key=%s",
+                            instanceName, blockId, gateKey);
+                } catch (Exception ex) {
+                    log(Level.WARNING, "[ELPortal] Failed to remove instance %s for gate %s key=%s: %s",
+                            instanceName, blockId, gateKey, ex.getMessage());
+                }
+            }
+            // Also clear level ranges
+            ACTIVE_LEVEL_RANGES.remove(instanceName);
+            ACTIVE_BOSS_LEVELS.remove(instanceName);
+            ACTIVE_RANK_LETTERS.remove(instanceName);
+        }
+    }
+
+    @Nonnull
+    private static String buildGateKey(@Nonnull World world, int x, int y, int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        String worldPart = worldUuid == null ? world.getName() : worldUuid.toString();
+        return worldPart + ":" + x + ":" + y + ":" + z;
     }
 
     /**
@@ -134,6 +192,19 @@ public final class PortalLeveledInstanceRouter {
     public static boolean enterPortalFromBlockId(@Nonnull PlayerRef playerRef,
                                                  @Nonnull World sourceWorld,
                                                  @Nonnull String blockId) {
+        Transform transform = playerRef.getTransform();
+        int x = transform != null && transform.getPosition() != null ? (int) Math.floor(transform.getPosition().x) : 0;
+        int y = transform != null && transform.getPosition() != null ? (int) Math.floor(transform.getPosition().y) : 0;
+        int z = transform != null && transform.getPosition() != null ? (int) Math.floor(transform.getPosition().z) : 0;
+        return enterPortalFromBlock(playerRef, sourceWorld, blockId, x, y, z);
+    }
+
+    public static boolean enterPortalFromBlock(@Nonnull PlayerRef playerRef,
+                                                @Nonnull World sourceWorld,
+                                                @Nonnull String blockId,
+                                                int x,
+                                                int y,
+                                                int z) {
         String routingName = resolveRoutingName(blockId);
         if (routingName == null) {
             log(Level.WARNING,
@@ -143,7 +214,23 @@ public final class PortalLeveledInstanceRouter {
             return false;
         }
 
-        return routePlayerToTemplate(playerRef, sourceWorld, routingName, sourceWorld, playerRef.getTransform());
+        if (isRoutingThrottled(playerRef, routingName, sourceWorld.getName(), "portal-block")) {
+            return false;
+        }
+
+        String gateKey = buildGateKey(sourceWorld, x, y, z);
+        // Try to route to existing instance for this gate, or create new one
+        boolean started = routePlayerToGateInstance(playerRef,
+                sourceWorld,
+                gateKey,
+                blockId,
+                routingName,
+                sourceWorld,
+                playerRef.getTransform());
+        if (!started) {
+            clearRoutingThrottle(playerRef, routingName);
+        }
+        return started;
     }
 
     public static void onAddPlayerToWorld(@Nonnull AddPlayerToWorldEvent event) {
@@ -189,7 +276,61 @@ public final class PortalLeveledInstanceRouter {
 
         World returnWorld = resolveReturnWorld(routingWorld, universe);
         Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
-        routePlayerToTemplate(playerRef, routingWorld, routingName, returnWorld, returnTransform);
+
+        if (isRoutingThrottled(playerRef, routingName, routingWorld.getName(), "routing-world-add")) {
+            return;
+        }
+
+        boolean started = routePlayerToTemplate(playerRef, routingWorld, null, null, routingName, returnWorld, returnTransform);
+        if (!started) {
+            clearRoutingThrottle(playerRef, routingName);
+        }
+    }
+
+    private static boolean isRoutingThrottled(@Nonnull PlayerRef playerRef,
+                                              @Nonnull String routingName,
+                                              @Nonnull String sourceWorldName,
+                                              @Nonnull String sourceReason) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        Map<String, Long> perTemplate = PLAYER_ROUTING_THROTTLES.computeIfAbsent(playerUuid,
+                ignored -> new ConcurrentHashMap<>());
+        perTemplate.entrySet().removeIf(entry -> entry.getValue() <= now);
+
+        Long until = perTemplate.get(routingName);
+        if (until != null && now < until) {
+            log(Level.INFO,
+                    "[ELPortal] Duplicate routing suppressed player=%s template=%s source=%s reason=%s",
+                    playerRef.getUsername(),
+                    routingName,
+                    sourceWorldName,
+                    sourceReason);
+            return true;
+        }
+
+        perTemplate.put(routingName, now + ROUTING_DEDUPE_WINDOW_MILLIS);
+        return false;
+    }
+
+    private static void clearRoutingThrottle(@Nonnull PlayerRef playerRef, @Nonnull String routingName) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
+
+        Map<String, Long> perTemplate = PLAYER_ROUTING_THROTTLES.get(playerUuid);
+        if (perTemplate == null) {
+            return;
+        }
+
+        perTemplate.remove(routingName);
+        if (perTemplate.isEmpty()) {
+            PLAYER_ROUTING_THROTTLES.remove(playerUuid);
+        }
     }
 
     public static void onPlayerReady(@Nonnull PlayerReadyEvent event) {
@@ -259,8 +400,73 @@ public final class PortalLeveledInstanceRouter {
         return playerRef.getTransform();
     }
 
+    /**
+     * Routes player to a gate's instance. If the gate already has a paired instance running,
+     * reuses it. Otherwise creates a new instance and registers the pairing.
+     */
+    private static boolean routePlayerToGateInstance(@Nonnull PlayerRef playerRef,
+                                                     @Nonnull World sourceWorld,
+                                                     @Nonnull String gateKey,
+                                                     @Nonnull String blockId,
+                                                     @Nonnull String routingName,
+                                                     @Nonnull World returnWorld,
+                                                     @Nullable Transform returnTransform) {
+        // Check if this gate already has a paired instance
+        String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(gateKey);
+        if (existingInstance != null) {
+            Universe universe = Universe.get();
+            if (universe != null) {
+                World targetInstance = null;
+                Object worldObject = universe.getWorlds().get(existingInstance);
+                if (worldObject instanceof World castWorld) {
+                    targetInstance = castWorld;
+                }
+                if (targetInstance != null) {
+                    // Reuse existing instance
+                    if (teleportToInstanceSpawn(playerRef, targetInstance, playerRef.getTransform())) {
+                        rememberEntryTarget(playerRef, returnWorld, playerRef.getTransform());
+                        log(Level.INFO, "[ELPortal] Reused existing gate instance %s for key=%s block=%s player=%s",
+                                existingInstance, gateKey, blockId, playerRef.getUsername());
+                        return true;
+                    }
+                }
+            }
+            // Mapping became stale if world no longer exists.
+            GATE_KEY_TO_INSTANCE_NAME.remove(gateKey, existingInstance);
+        }
+
+        long now = System.currentTimeMillis();
+        Long inflightUntil = GATE_SPAWN_IN_FLIGHT.get(gateKey);
+        if (inflightUntil != null && inflightUntil > now) {
+            log(Level.INFO,
+                    "[ELPortal] Gate spawn already in-flight key=%s block=%s player=%s",
+                    gateKey,
+                    blockId,
+                    playerRef.getUsername());
+            return false;
+        }
+        if (inflightUntil != null) {
+            GATE_SPAWN_IN_FLIGHT.remove(gateKey, inflightUntil);
+        }
+
+        Long claimed = GATE_SPAWN_IN_FLIGHT.putIfAbsent(gateKey, now + GATE_SPAWN_LOCK_MILLIS);
+        if (claimed != null && claimed > now) {
+            log(Level.INFO,
+                    "[ELPortal] Gate spawn claim denied key=%s block=%s player=%s",
+                    gateKey,
+                    blockId,
+                    playerRef.getUsername());
+            return false;
+        }
+
+        // No existing instance, create new one
+        return routePlayerToTemplate(playerRef, sourceWorld, gateKey, blockId, routingName, returnWorld, returnTransform);
+    }
+
     private static boolean routePlayerToTemplate(@Nonnull PlayerRef playerRef,
                                                  @Nonnull World sourceWorld,
+                                                 @Nullable String gateKey,
+                                                 @Nullable String gateBlockId,
                                                  @Nonnull String routingName,
                                                  @Nonnull World returnWorld,
                                                  @Nullable Transform returnTransform) {
@@ -281,9 +487,21 @@ public final class PortalLeveledInstanceRouter {
 
         Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
         rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
-        instances.spawnInstance(routingName, null, returnWorld, effectiveReturnTransform)
+        
+        // Use gate block ID as instance group so InstancesPlugin reuses instances for same gate
+        String instanceGroupId = gateKey != null ? gateKey : routingName;
+        instances.spawnInstance(routingName, instanceGroupId, returnWorld, effectiveReturnTransform)
                 .thenAccept(spawned -> {
-                    if (teleportToInstanceSpawn(playerRef, spawned, effectiveReturnTransform)) {
+                    try {
+                        if (gateKey != null) {
+                            GATE_KEY_TO_INSTANCE_NAME.put(gateKey, spawned.getName());
+                            log(Level.INFO, "[ELPortal] Registered gate->instance pairing key=%s block=%s -> %s",
+                                    gateKey,
+                                    gateBlockId == null ? "unknown" : gateBlockId,
+                                    spawned.getName());
+                        }
+
+                        if (teleportToInstanceSpawn(playerRef, spawned, effectiveReturnTransform)) {
                         LevelRange range = registerInstanceLevelOverride(spawned.getName());
                         String suffix = ROUTING_TO_SUFFIX.get(routingName);
                         if (suffix != null) {
@@ -293,8 +511,16 @@ public final class PortalLeveledInstanceRouter {
                         log(Level.INFO, "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
                                 spawned.getName(), routingName, range.min(), range.max());
                     }
+                    } finally {
+                        if (gateKey != null) {
+                            GATE_SPAWN_IN_FLIGHT.remove(gateKey);
+                        }
+                    }
                 })
                 .exceptionally(ex -> {
+                    if (gateKey != null) {
+                        GATE_SPAWN_IN_FLIGHT.remove(gateKey);
+                    }
                     AddonLoggingManager.log(plugin,
                             Level.WARNING,
                             ex,
@@ -582,6 +808,21 @@ public final class PortalLeveledInstanceRouter {
         // Strip _Rank{S,A,B,C,D,E} suffix and retry
         String stripped = blockId.replaceAll("_Rank[SABCDE]$", "");
         return BLOCK_ID_TO_ROUTING_NAME.get(stripped);
+    }
+
+    @Nonnull
+    private static String canonicalizeRoutingTemplate(@Nonnull String templateName) {
+        String suffix = INSTANCE_TEMPLATE_TO_SUFFIX.get(templateName);
+        if (suffix == null) {
+            return templateName;
+        }
+
+        for (Map.Entry<String, String> entry : ROUTING_TO_SUFFIX.entrySet()) {
+            if (entry.getValue().equals(suffix)) {
+                return entry.getKey();
+            }
+        }
+        return templateName;
     }
 
     @Nonnull

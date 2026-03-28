@@ -140,11 +140,6 @@ public final class PortalInstanceDiagnostics {
                 worldName,
                 pendingDeath != null,
                 format(event.getTransform() == null ? null : event.getTransform().getPosition()));
-
-        if (pendingDeath != null && pendingDeath.worldName.equals(worldName) && !allowDungeonReentryAfterDeath()) {
-            scheduleInstanceRemoval(worldName, "player-death");
-            return;
-        }
     }
 
     public static void onWorldRemoved(@Nonnull RemoveWorldEvent event) {
@@ -169,7 +164,7 @@ public final class PortalInstanceDiagnostics {
                 event.isCancelled());
     }
 
-    public static void purgeTrackedInstancesOnShutdown() {
+    public static int purgeTrackedInstancesOnShutdown() {
         Set<String> targets = new LinkedHashSet<>();
         Universe universe = Universe.get();
         if (universe != null) {
@@ -182,6 +177,8 @@ public final class PortalInstanceDiagnostics {
 
         // Include template identifiers so persisted EL instances are also purged on shutdown.
         targets.addAll(INSTANCE_DEFINITIONS.keySet());
+
+        int purgedCount = 0;
 
         for (String worldName : targets) {
             if (worldName == null || worldName.isBlank()) {
@@ -196,6 +193,7 @@ public final class PortalInstanceDiagnostics {
                 PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
                 PENDING_INSTANCE_REMOVALS.remove(worldName);
                 InstancesPlugin.safeRemoveInstance(worldName);
+                purgedCount++;
                 log(Level.INFO, "shutdown-instance-purge world=%s", worldName);
             } catch (Exception ex) {
                 log(Level.WARNING,
@@ -204,6 +202,8 @@ public final class PortalInstanceDiagnostics {
                         ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
             }
         }
+
+        return purgedCount;
     }
 
     public static void onPlayerDeath(@Nonnull Player player, @Nullable Vector3d actualPosition) {
@@ -229,9 +229,8 @@ public final class PortalInstanceDiagnostics {
                 format(nearestSpawn.expected),
                 nearestSpawn.distance);
 
-        if (!allowDungeonReentryAfterDeath()) {
-            scheduleInstanceRemoval(worldName, "player-death");
-        }
+        // Instance persists for its entire gate duration; not removed on death.
+        // Player will respawn in the same instance when they use a return portal.
     }
 
     private static boolean allowDungeonReentryAfterDeath() {

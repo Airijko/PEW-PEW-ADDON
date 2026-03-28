@@ -36,6 +36,7 @@
     "Particles": [
       {
         "SystemId": "MagicPortal",
+        "Color": "#ff2a2a",
         "PositionOffset": {
           "X": 1.0,
           "Y": 1.5,

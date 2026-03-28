@@ -367,6 +367,8 @@ public final class NaturalPortalGateManager {
             if (isAnnounceOnDespawnEnabled()) {
                 announceGateDespawn(x, y, z, blockId);
             }
+            // Cleanup the paired instance when gate expires
+            PortalLeveledInstanceRouter.cleanupGateInstance(world, x, y, z, blockId);
             log(Level.INFO,
                     "[ELPortal] Gate expired and removed world=%s block=%s at %d %d %d reason=%s",
                     world.getName(),
@@ -417,6 +419,56 @@ public final class NaturalPortalGateManager {
             return;
         }
         ACTIVE_GATES.add(new ActiveGate(worldUuid, blockId, x, y, z));
+    }
+
+    @Nonnull
+    public static GateAnchor resolveTrackedGateAnchor(@Nonnull World world,
+                                                      @Nonnull String blockId,
+                                                      int x,
+                                                      int y,
+                                                      int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null || ACTIVE_GATES.isEmpty()) {
+            return new GateAnchor(x, y, z);
+        }
+
+        String blockBase = stripRankSuffix(blockId);
+        ActiveGate best = null;
+        int bestDistance = Integer.MAX_VALUE;
+
+        for (ActiveGate gate : ACTIVE_GATES) {
+            if (!gate.worldUuid().equals(worldUuid)) {
+                continue;
+            }
+
+            String gateBase = stripRankSuffix(gate.blockId());
+            if (!gate.blockId().equals(blockId) && !gateBase.equals(blockBase)) {
+                continue;
+            }
+
+            int dx = gate.x() - x;
+            int dy = gate.y() - y;
+            int dz = gate.z() - z;
+            int distance = dx * dx + dy * dy + dz * dz;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = gate;
+            }
+        }
+
+        if (best == null) {
+            return new GateAnchor(x, y, z);
+        }
+        return new GateAnchor(best.x(), best.y(), best.z());
+    }
+
+    @Nonnull
+    private static String stripRankSuffix(@Nonnull String blockId) {
+        int rankIndex = blockId.indexOf("_Rank");
+        if (rankIndex <= 0) {
+            return blockId;
+        }
+        return blockId.substring(0, rankIndex);
     }
 
     private static void untrackActiveGate(@Nonnull World world, int x, int y, int z) {
@@ -844,6 +896,9 @@ public final class NaturalPortalGateManager {
     }
 
     private record ActiveGate(@Nonnull UUID worldUuid, @Nonnull String blockId, int x, int y, int z) {
+    }
+
+    public record GateAnchor(int x, int y, int z) {
     }
 
     private record LevelBand(int minLevel, int maxLevel) {

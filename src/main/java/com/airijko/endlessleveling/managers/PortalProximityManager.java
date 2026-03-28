@@ -158,7 +158,19 @@ public final class PortalProximityManager {
                         candidate.z());
             }
         } else {
-            triggered = PortalLeveledInstanceRouter.enterPortalFromBlockId(playerRef, world, candidate.blockId());
+            NaturalPortalGateManager.GateAnchor anchor = NaturalPortalGateManager.resolveTrackedGateAnchor(
+                world,
+                candidate.blockId(),
+                candidate.x(),
+                candidate.y(),
+                candidate.z());
+            triggered = PortalLeveledInstanceRouter.enterPortalFromBlock(
+                    playerRef,
+                    world,
+                    candidate.blockId(),
+                anchor.x(),
+                anchor.y(),
+                anchor.z());
         }
 
         if (triggered) {

@@ -27,6 +27,7 @@ import com.airijko.endlessleveling.commands.PortalGiveCommand;
 import com.airijko.endlessleveling.commands.PortalBlockAdminCommand;
 import com.airijko.endlessleveling.commands.PortalReturnPosCommand;
 import com.airijko.endlessleveling.commands.AddonReloadCommand;
+import com.airijko.endlessleveling.commands.ClearElDungeonsCommand;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -91,10 +92,12 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new PortalBlockAdminCommand());
         this.getCommandRegistry().registerCommand(new PortalReturnPosCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
+        this.getCommandRegistry().registerCommand(new ClearElDungeonsCommand());
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
         PortalProximityManager.initialize(this);
         PortalLeveledInstanceRouter.initialize(this);
+        PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
         PortalInstanceDiagnostics.initialize(this, this.filesManager);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
@@ -128,6 +131,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
             this.filesManager.refreshContentOptions();
             this.filesManager.refreshDungeonGateOptions();
+            PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
 
             int unregisteredRaces = RaceRegistration.unregisterAll();
             int unregisteredClasses = ClassRegistration.unregisterAll();
