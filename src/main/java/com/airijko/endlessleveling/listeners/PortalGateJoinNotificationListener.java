@@ -25,25 +25,17 @@ public class PortalGateJoinNotificationListener {
     private static final long NOTIFICATION_DELAY_MS = 5000L;
 
     public void onPlayerReady(@Nonnull PlayerReadyEvent event) {
-        if (event.getPlayerRef() == null) {
+        if (event.getPlayer() == null) {
             return;
         }
 
-        Ref<EntityStore> entityRef = event.getPlayerRef();
-        Store<EntityStore> store = entityRef.getStore();
         Universe universe = Universe.get();
-        if (store == null || universe == null) {
+        UUID playerUuid = event.getPlayer().getUuid();
+        if (universe == null || playerUuid == null) {
             return;
         }
 
-        PlayerRef playerRef = null;
-        for (PlayerRef candidate : universe.getPlayers()) {
-            Ref<EntityStore> candidateRef = candidate.getReference();
-            if (candidateRef != null && candidateRef.equals(entityRef)) {
-                playerRef = candidate;
-                break;
-            }
-        }
+        PlayerRef playerRef = universe.getPlayer(playerUuid);
         if (playerRef == null) {
             return;
         }

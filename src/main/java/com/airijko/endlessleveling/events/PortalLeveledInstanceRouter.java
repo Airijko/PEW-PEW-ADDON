@@ -87,6 +87,10 @@ public final class PortalLeveledInstanceRouter {
 
     /** Instance world name → resolved level range, kept until the world is removed. */
     private static final Map<String, LevelRange> ACTIVE_LEVEL_RANGES = new ConcurrentHashMap<>();
+    /** Instance world name → resolved boss level for gate notifications. */
+    private static final Map<String, Integer> ACTIVE_BOSS_LEVELS = new ConcurrentHashMap<>();
+    /** Instance world name → gate rank letter (E/D/C/B/A/S) for notifications. */
+    private static final Map<String, String> ACTIVE_RANK_LETTERS = new ConcurrentHashMap<>();
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -103,6 +107,8 @@ public final class PortalLeveledInstanceRouter {
     public static void shutdown() {
         PENDING_LEVEL_RANGES.clear();
         ACTIVE_LEVEL_RANGES.clear();
+        ACTIVE_BOSS_LEVELS.clear();
+        ACTIVE_RANK_LETTERS.clear();
         PLAYER_ENTRY_TARGETS.clear();
         plugin = null;
     }
@@ -115,7 +121,9 @@ public final class PortalLeveledInstanceRouter {
         String routingName = resolveRoutingName(blockId);
         if (routingName != null) {
             int bossOffset = Math.max(0, bossLevel - Math.max(min, max));
-            PENDING_LEVEL_RANGES.put(routingName, new PendingLevelProfile(min, max, bossOffset));
+            PENDING_LEVEL_RANGES.put(
+                    routingName,
+                    new PendingLevelProfile(min, max, bossOffset, resolveRankLetterFromBlockId(blockId)));
         }
     }
 
@@ -502,7 +510,7 @@ public final class PortalLeveledInstanceRouter {
         String normalizedWorld = worldName.toLowerCase(Locale.ROOT);
         int start = minLevel + Math.floorMod(normalizedWorld.hashCode(), span);
         int end = Math.min(maxLevel, start + rangeSize);
-        return new PendingLevelProfile(start, end, 5);
+        return new PendingLevelProfile(start, end, 5, "E");
     }
 
     @Nonnull
@@ -521,6 +529,8 @@ public final class PortalLeveledInstanceRouter {
         }
         LevelRange range = new LevelRange(profile.min(), profile.max());
         ACTIVE_LEVEL_RANGES.put(worldName, range);
+        ACTIVE_BOSS_LEVELS.put(worldName, profile.max() + profile.bossLevelFromRangeMaxOffset());
+        ACTIVE_RANK_LETTERS.put(worldName, profile.rankLetter());
         return range;
     }
 
@@ -531,9 +541,21 @@ public final class PortalLeveledInstanceRouter {
         return r != null ? new int[]{r.min(), r.max()} : null;
     }
 
+    @Nullable
+    public static Integer getActiveInstanceBossLevel(@Nonnull String worldName) {
+        return ACTIVE_BOSS_LEVELS.get(worldName);
+    }
+
+    @Nullable
+    public static String getActiveInstanceRankLetter(@Nonnull String worldName) {
+        return ACTIVE_RANK_LETTERS.get(worldName);
+    }
+
     /** Removes the stored level range for a world (called on world removal to avoid memory leaks). */
     public static void clearActiveInstanceRange(@Nonnull String worldName) {
         ACTIVE_LEVEL_RANGES.remove(worldName);
+        ACTIVE_BOSS_LEVELS.remove(worldName);
+        ACTIVE_RANK_LETTERS.remove(worldName);
     }
 
     /**
@@ -562,14 +584,46 @@ public final class PortalLeveledInstanceRouter {
         return BLOCK_ID_TO_ROUTING_NAME.get(stripped);
     }
 
+    @Nonnull
+    private static String resolveRankLetterFromBlockId(@Nonnull String blockId) {
+        if (blockId.endsWith("_RankS")) {
+            return "S";
+        }
+        if (blockId.endsWith("_RankA")) {
+            return "A";
+        }
+        if (blockId.endsWith("_RankB")) {
+            return "B";
+        }
+        if (blockId.endsWith("_RankC")) {
+            return "C";
+        }
+        if (blockId.endsWith("_RankD")) {
+            return "D";
+        }
+        if (blockId.endsWith("_RankE")) {
+            return "E";
+        }
+        return "E";
+    }
+
     @Nullable
     private static String resolveSuffixFromWorldName(@Nonnull String worldName) {
         if (worldName.startsWith("instance-")) {
+            String bestTemplate = null;
+            String bestSuffix = null;
             for (Map.Entry<String, String> entry : INSTANCE_TEMPLATE_TO_SUFFIX.entrySet()) {
-                if (worldName.contains(entry.getKey())) {
-                    return entry.getValue();
+                String template = entry.getKey();
+                if (!worldName.contains(template)) {
+                    continue;
+                }
+
+                if (bestTemplate == null || template.length() > bestTemplate.length()) {
+                    bestTemplate = template;
+                    bestSuffix = entry.getValue();
                 }
             }
+            return bestSuffix;
         }
 
         return null;
@@ -582,12 +636,17 @@ public final class PortalLeveledInstanceRouter {
             return worldName;
         }
         // Check instance world names (e.g. "instance-EL_MJ_Instance_D02-<uuid>")
+        String bestTemplate = null;
         for (String templateName : INSTANCE_TEMPLATE_TO_SUFFIX.keySet()) {
-            if (worldName.contains(templateName)) {
-                return templateName;
+            if (!worldName.contains(templateName)) {
+                continue;
+            }
+
+            if (bestTemplate == null || templateName.length() > bestTemplate.length()) {
+                bestTemplate = templateName;
             }
         }
-        return null;
+        return bestTemplate;
     }
 
     private static void applyFixedGateSpawn(@Nonnull PlayerRef playerRef,
@@ -747,7 +806,13 @@ public final class PortalLeveledInstanceRouter {
     private record LevelRange(int min, int max) {
     }
 
-    private record PendingLevelProfile(int min, int max, int bossLevelFromRangeMaxOffset) {
+    private record PendingLevelProfile(int min,
+                                       int max,
+                                       int bossLevelFromRangeMaxOffset,
+                                       @Nonnull String rankLetter) {
+        private PendingLevelProfile {
+            Objects.requireNonNull(rankLetter, "rankLetter");
+        }
     }
 
     public record ReturnTargetDiagnostics(@Nonnull String source,
