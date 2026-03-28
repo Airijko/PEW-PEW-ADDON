@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
+import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
 import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
 import com.hypixel.hytale.component.Holder;
@@ -23,6 +24,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -74,6 +76,10 @@ public final class PortalLeveledInstanceRouter {
 
     /** Instance world name → resolved level range, kept until the world is removed. */
     private static final Map<String, LevelRange> ACTIVE_LEVEL_RANGES = new ConcurrentHashMap<>();
+
+    /** Player UUID → latest known entry target used for custom return portal fallback. */
+    private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
+
     private static JavaPlugin plugin;
 
     private PortalLeveledInstanceRouter() {
@@ -86,6 +92,7 @@ public final class PortalLeveledInstanceRouter {
     public static void shutdown() {
         PENDING_LEVEL_RANGES.clear();
         ACTIVE_LEVEL_RANGES.clear();
+        PLAYER_ENTRY_TARGETS.clear();
         plugin = null;
     }
 
@@ -248,6 +255,7 @@ public final class PortalLeveledInstanceRouter {
         }
 
         Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+        rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
         instances.spawnInstance(routingName, null, returnWorld, effectiveReturnTransform)
                 .thenAccept(spawned -> {
                     if (teleportToInstanceSpawn(playerRef, spawned, effectiveReturnTransform)) {
@@ -269,6 +277,167 @@ public final class PortalLeveledInstanceRouter {
                     return null;
                 });
         return true;
+    }
+
+    public static boolean returnPlayerToEntryPortal(@Nonnull PlayerRef playerRef, @Nonnull World sourceWorld) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Custom return portal aborted: missing player UUID source=%s player=%s",
+                    sourceWorld.getName(),
+                    playerRef.getUsername());
+            return false;
+        }
+
+        ReturnTarget saved = PLAYER_ENTRY_TARGETS.get(playerUuid);
+        if (saved != null && teleportToReturnTarget(playerRef, saved)) {
+            PLAYER_ENTRY_TARGETS.remove(playerUuid);
+            log(Level.INFO,
+                    "[ELPortal] Custom return portal used saved entry target player=%s source=%s target=%s transform=%s",
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    saved.worldName(),
+                    formatTransform(saved.returnTransform()));
+            return true;
+        }
+
+        ReturnTarget metadataTarget = resolveReturnTargetFromInstanceMetadata(playerRef, sourceWorld);
+        if (metadataTarget != null && teleportToReturnTarget(playerRef, metadataTarget)) {
+            log(Level.INFO,
+                    "[ELPortal] Custom return portal used instance metadata player=%s source=%s target=%s transform=%s",
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    metadataTarget.worldName(),
+                    formatTransform(metadataTarget.returnTransform()));
+            return true;
+        }
+
+            log(Level.WARNING,
+                "[ELPortal] Custom return portal fallback unavailable player=%s source=%s hasSavedTarget=%s hasMetadataTarget=%s",
+                playerRef.getUsername(),
+                sourceWorld.getName(),
+                saved != null,
+                metadataTarget != null);
+        return false;
+    }
+
+    @Nonnull
+    private static String formatTransform(@Nullable Transform transform) {
+        if (transform == null || transform.getPosition() == null) {
+            return "null";
+        }
+        return String.format(Locale.ROOT,
+                "(%.2f, %.2f, %.2f)",
+                transform.getPosition().x,
+                transform.getPosition().y,
+                transform.getPosition().z);
+    }
+
+    private static void rememberEntryTarget(@Nonnull PlayerRef playerRef,
+                                            @Nonnull World world,
+                                            @Nonnull Transform transform) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
+        PLAYER_ENTRY_TARGETS.put(playerUuid, new ReturnTarget(null, world.getName(), transform));
+    }
+
+    private static boolean teleportToReturnTarget(@Nonnull PlayerRef playerRef, @Nonnull ReturnTarget target) {
+        Universe universe = Universe.get();
+        if (universe == null || target.returnTransform() == null) {
+            return false;
+        }
+
+        World world = target.worldUuid() != null ? universe.getWorld(target.worldUuid()) : null;
+        if (world == null && !target.worldName().isBlank()) {
+            Object worldObject = universe.getWorlds().get(target.worldName());
+            if (worldObject instanceof World byName) {
+                world = byName;
+            }
+        }
+        return world != null && teleportToWorld(playerRef, world, target.returnTransform());
+    }
+
+    @Nullable
+    private static ReturnTarget resolveReturnTargetFromInstanceMetadata(@Nonnull PlayerRef playerRef,
+                                                                        @Nonnull World sourceWorld) {
+        Ref<EntityStore> entityRef = playerRef.getReference();
+        if (entityRef == null || !entityRef.isValid()) {
+            return null;
+        }
+
+        try {
+            Store<EntityStore> store = entityRef.getStore();
+            InstanceEntityConfig entityConfig = store.getComponent(entityRef, InstanceEntityConfig.getComponentType());
+            if (entityConfig != null) {
+                ReturnTarget fromOverride = extractReturnTarget(entityConfig.getReturnPointOverride(), "override");
+                if (fromOverride != null) {
+                    return fromOverride;
+                }
+                ReturnTarget fromReturnPoint = extractReturnTarget(entityConfig.getReturnPoint(), "returnPoint");
+                if (fromReturnPoint != null) {
+                    return fromReturnPoint;
+                }
+            }
+        } catch (Exception ex) {
+            log(Level.FINE,
+                    "[ELPortal] Failed to inspect instance entity config for %s: %s",
+                    playerRef.getUsername(),
+                    ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+        }
+
+        InstanceWorldConfig worldConfig = InstanceWorldConfig.get(sourceWorld.getWorldConfig());
+        WorldReturnPoint worldReturnPoint = worldConfig != null ? worldConfig.getReturnPoint() : null;
+        if (worldReturnPoint == null || worldReturnPoint.getWorld() == null || worldReturnPoint.getReturnPoint() == null) {
+            return null;
+        }
+
+        World world = Universe.get() != null ? Universe.get().getWorld(worldReturnPoint.getWorld()) : null;
+        String worldName = world != null ? world.getName() : "unknown";
+        return new ReturnTarget(worldReturnPoint.getWorld(), worldName, worldReturnPoint.getReturnPoint());
+    }
+
+    @Nullable
+    private static ReturnTarget extractReturnTarget(@Nullable Object source, @Nonnull String sourceName) {
+        if (source == null) {
+            return null;
+        }
+
+        if (source instanceof WorldReturnPoint worldReturnPoint) {
+            UUID worldUuid = worldReturnPoint.getWorld();
+            Transform transform = worldReturnPoint.getReturnPoint();
+            if (worldUuid != null && transform != null) {
+                Universe universe = Universe.get();
+                World world = universe != null ? universe.getWorld(worldUuid) : null;
+                return new ReturnTarget(worldUuid, world != null ? world.getName() : "unknown", transform);
+            }
+            return null;
+        }
+
+        if (source instanceof Transform transform) {
+            return new ReturnTarget(null, "unknown", transform);
+        }
+
+        try {
+            Object worldObj = source.getClass().getMethod("getWorld").invoke(source);
+            Object transformObj = source.getClass().getMethod("getReturnPoint").invoke(source);
+            if (!(worldObj instanceof UUID worldUuid) || !(transformObj instanceof Transform transform)) {
+                return null;
+            }
+            Universe universe = Universe.get();
+            World world = universe != null ? universe.getWorld(worldUuid) : null;
+            return new ReturnTarget(worldUuid, world != null ? world.getName() : "unknown", transform);
+        } catch (ReflectiveOperationException ignored) {
+            // Unknown return-point payload shape; safely skip and continue fallbacks.
+        } catch (Exception ex) {
+            log(Level.FINE,
+                    "[ELPortal] Failed to parse %s payload type=%s: %s",
+                    sourceName,
+                    source.getClass().getName(),
+                    ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+        }
+        return null;
     }
 
     @Nullable
@@ -493,5 +662,13 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private record PendingLevelProfile(int min, int max, int bossLevelFromRangeMaxOffset) {
+    }
+
+    private record ReturnTarget(@Nullable UUID worldUuid,
+                                @Nonnull String worldName,
+                                @Nullable Transform returnTransform) {
+        private ReturnTarget {
+            Objects.requireNonNull(worldName, "worldName");
+        }
     }
 }

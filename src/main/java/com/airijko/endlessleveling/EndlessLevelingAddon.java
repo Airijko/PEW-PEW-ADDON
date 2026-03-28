@@ -25,16 +25,20 @@ package com.airijko.endlessleveling;
 import com.airijko.endlessleveling.commands.PortalGateTestCommand;
 import com.airijko.endlessleveling.commands.PortalGiveCommand;
 import com.airijko.endlessleveling.commands.PortalBlockAdminCommand;
+import com.airijko.endlessleveling.commands.PortalReturnPosCommand;
 import com.airijko.endlessleveling.commands.AddonReloadCommand;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.airijko.endlessleveling.listeners.PortalGateJoinNotificationListener;
+import com.airijko.endlessleveling.listeners.PortalReturnInteractionListener;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
+import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
+import com.hypixel.hytale.server.core.event.events.player.PlayerInteractEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
@@ -84,15 +88,19 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new PortalGiveCommand());
         this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
         this.getCommandRegistry().registerCommand(new PortalBlockAdminCommand());
+        this.getCommandRegistry().registerCommand(new PortalReturnPosCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
+        PortalProximityManager.initialize(this);
         PortalLeveledInstanceRouter.initialize(this);
         PortalInstanceDiagnostics.initialize(this, this.filesManager);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
         PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
+        PortalReturnInteractionListener portalReturnInteractionListener = new PortalReturnInteractionListener();
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
+        this.getEventRegistry().registerGlobal(PlayerInteractEvent.class, portalReturnInteractionListener::onPlayerInteract);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
         this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);
@@ -101,6 +109,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
     @Override
     protected void shutdown() {
         PortalLeveledInstanceRouter.shutdown();
+        PortalProximityManager.shutdown();
         NaturalPortalGateManager.shutdown();
         RaceRegistration.unregisterAll();
         ClassRegistration.unregisterAll();

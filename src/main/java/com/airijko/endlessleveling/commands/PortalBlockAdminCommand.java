@@ -44,6 +44,11 @@ public class PortalBlockAdminCommand extends AbstractCommand {
             "EL_EndgamePortal_Golem_Void"
     );
 
+        private static final List<String> RETURN_PORTAL_BLOCK_IDS = List.of(
+            "Portal_Return",
+            "Return_Portal"
+        );
+
     private static final int WORLD_MIN_Y = 0;
     private static final int WORLD_MAX_Y = 319;
     private static final int MAX_LIST_LINES = 30;
@@ -174,6 +179,9 @@ public class PortalBlockAdminCommand extends AbstractCommand {
             addBlockIntId(blockIds, baseBlockId + "_RankA");
             addBlockIntId(blockIds, baseBlockId + "_RankS");
         }
+        for (String returnBlockId : RETURN_PORTAL_BLOCK_IDS) {
+            addBlockIntId(blockIds, returnBlockId);
+        }
         return blockIds;
     }
 
@@ -190,6 +198,11 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         }
         for (String baseBlockId : PORTAL_BASE_BLOCK_IDS) {
             if (baseBlockId.equals(blockId) || blockId.startsWith(baseBlockId + "_Rank")) {
+                return true;
+            }
+        }
+        for (String returnBlockId : RETURN_PORTAL_BLOCK_IDS) {
+            if (returnBlockId.equals(blockId)) {
                 return true;
             }
         }
@@ -224,6 +237,11 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         for (String baseBlockId : PORTAL_BASE_BLOCK_IDS) {
             if (blockId.equals(baseBlockId) || blockId.startsWith(baseBlockId + "_Rank")) {
                 return baseBlockId;
+            }
+        }
+        for (String returnBlockId : RETURN_PORTAL_BLOCK_IDS) {
+            if (returnBlockId.equals(blockId)) {
+                return returnBlockId;
             }
         }
         return blockId;

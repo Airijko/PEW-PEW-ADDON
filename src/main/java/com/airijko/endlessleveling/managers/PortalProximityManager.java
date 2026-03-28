@@ -33,13 +33,26 @@ public final class PortalProximityManager {
             "EL_EndgamePortal_Golem_Void"
     );
 
+    private static final List<String> RETURN_PORTAL_BLOCK_IDS = List.of(
+            "Portal_Return",
+            "Return_Portal"
+    );
+
     private static final long SCAN_INTERVAL_MILLIS = 250L;
     private static final long TRIGGER_COOLDOWN_MILLIS = 2500L;
     private static final int HORIZONTAL_SCAN_RADIUS = 7;
     private static final int VERTICAL_SCAN_BELOW = 1;
     private static final int VERTICAL_SCAN_ABOVE = 4;
+    private static final long RETURN_DEBUG_COOLDOWN_MILLIS = 5000L;
+    private static final long INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWN_MILLIS = 8000L;
+    private static final int INSTANCE_PORTAL_SCAN_RADIUS = 9;
+    private static final int INSTANCE_PORTAL_SCAN_VERTICAL_BELOW = 3;
+    private static final int INSTANCE_PORTAL_SCAN_VERTICAL_ABOVE = 6;
+    private static final int INSTANCE_PORTAL_SCAN_MAX_RESULTS = 10;
 
     private static final Map<UUID, Long> PLAYER_COOLDOWNS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> RETURN_DEBUG_COOLDOWNS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWNS = new ConcurrentHashMap<>();
 
     private static JavaPlugin plugin;
     private static ScheduledFuture<?> scanTask;
@@ -67,6 +80,8 @@ public final class PortalProximityManager {
             scanTask = null;
         }
         PLAYER_COOLDOWNS.clear();
+        RETURN_DEBUG_COOLDOWNS.clear();
+        INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWNS.clear();
         plugin = null;
     }
 
@@ -120,21 +135,147 @@ public final class PortalProximityManager {
         Vector3d position = playerRef.getTransform().getPosition();
         PortalCandidate candidate = findNearestPortal(world, position);
         if (candidate == null) {
+            debugNearbyPortalLikeBlocks(world, playerRef, position, now);
             return;
         }
 
-        if (PortalLeveledInstanceRouter.enterPortalFromBlockId(playerRef, world, candidate.blockId())) {
+        boolean triggered;
+        if (candidate.returnPortal()) {
+            logReturnPortalProbe(world, playerRef, candidate, now);
+            triggered = PortalLeveledInstanceRouter.returnPlayerToEntryPortal(playerRef, world);
+            if (!triggered) {
+                log(Level.WARNING,
+                        "[ELPortal] Return portal detected but fallback did not trigger player=%s world=%s block=%s at %d %d %d",
+                        playerRef.getUsername(),
+                        world.getName(),
+                        candidate.blockId(),
+                        candidate.x(),
+                        candidate.y(),
+                        candidate.z());
+            }
+        } else {
+            triggered = PortalLeveledInstanceRouter.enterPortalFromBlockId(playerRef, world, candidate.blockId());
+        }
+
+        if (triggered) {
             PLAYER_COOLDOWNS.put(playerId, now + TRIGGER_COOLDOWN_MILLIS);
             log(Level.INFO,
-                    "[ELPortal] Proximity trigger player=%s world=%s block=%s at %d %d %d distance=%.2f",
+                    "[ELPortal] Proximity trigger player=%s world=%s block=%s return=%s at %d %d %d distance=%.2f",
                     playerRef.getUsername(),
                     world.getName(),
                     candidate.blockId(),
+                    candidate.returnPortal(),
                     candidate.x(),
                     candidate.y(),
                     candidate.z(),
                     Math.sqrt(candidate.distanceSquared()));
         }
+    }
+
+    private static void logReturnPortalProbe(@Nonnull World world,
+                                             @Nonnull PlayerRef playerRef,
+                                             @Nonnull PortalCandidate candidate,
+                                             long now) {
+        UUID playerId = playerRef.getUuid();
+        if (playerId == null) {
+            return;
+        }
+
+        long nextAllowed = RETURN_DEBUG_COOLDOWNS.getOrDefault(playerId, 0L);
+        if (now < nextAllowed) {
+            return;
+        }
+        RETURN_DEBUG_COOLDOWNS.put(playerId, now + RETURN_DEBUG_COOLDOWN_MILLIS);
+
+        Vector3d pos = playerRef.getTransform() != null ? playerRef.getTransform().getPosition() : null;
+        String playerPos = pos == null ? "unknown" : String.format(Locale.ROOT, "%.2f %.2f %.2f", pos.x, pos.y, pos.z);
+
+        log(Level.INFO,
+                "[ELPortal] Return portal candidate player=%s world=%s playerPos=%s block=%s at %d %d %d distance=%.2f",
+                playerRef.getUsername(),
+                world.getName(),
+                playerPos,
+                candidate.blockId(),
+                candidate.x(),
+                candidate.y(),
+                candidate.z(),
+                Math.sqrt(candidate.distanceSquared()));
+    }
+
+    private static void debugNearbyPortalLikeBlocks(@Nonnull World world,
+                                                    @Nonnull PlayerRef playerRef,
+                                                    @Nonnull Vector3d position,
+                                                    long now) {
+        String worldName = world.getName();
+        if (worldName == null || !worldName.startsWith("instance-")) {
+            return;
+        }
+
+        UUID playerId = playerRef.getUuid();
+        if (playerId == null) {
+            return;
+        }
+
+        long nextAllowed = INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWNS.getOrDefault(playerId, 0L);
+        if (now < nextAllowed) {
+            return;
+        }
+        INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWNS.put(playerId, now + INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWN_MILLIS);
+
+        int baseX = MathUtil.floor(position.x);
+        int baseY = MathUtil.floor(position.y);
+        int baseZ = MathUtil.floor(position.z);
+
+        StringBuilder found = new StringBuilder();
+        int matches = 0;
+        for (int x = baseX - INSTANCE_PORTAL_SCAN_RADIUS; x <= baseX + INSTANCE_PORTAL_SCAN_RADIUS; x++) {
+            for (int z = baseZ - INSTANCE_PORTAL_SCAN_RADIUS; z <= baseZ + INSTANCE_PORTAL_SCAN_RADIUS; z++) {
+                if (world.getChunkIfLoaded(ChunkUtil.indexChunkFromBlock(x, z)) == null) {
+                    continue;
+                }
+
+                for (int y = baseY - INSTANCE_PORTAL_SCAN_VERTICAL_BELOW; y <= baseY + INSTANCE_PORTAL_SCAN_VERTICAL_ABOVE; y++) {
+                    String blockId = resolveBlockId(world.getBlockType(x, y, z));
+                    if (!isPortalLikeId(blockId)) {
+                        continue;
+                    }
+
+                    if (matches < INSTANCE_PORTAL_SCAN_MAX_RESULTS) {
+                        double distance = Math.sqrt(distanceSquaredToPortal(position, x, y, z));
+                        if (found.length() > 0) {
+                            found.append(" | ");
+                        }
+                        found.append(String.format(Locale.ROOT,
+                                "%s@(%d,%d,%d) d=%.2f",
+                                blockId,
+                                x,
+                                y,
+                                z,
+                                distance));
+                    }
+                    matches++;
+                }
+            }
+        }
+
+        if (matches == 0) {
+            log(Level.WARNING,
+                    "[ELPortal] Instance portal debug: no portal-like blocks near player=%s world=%s at %.2f %.2f %.2f radius=%d",
+                    playerRef.getUsername(),
+                    worldName,
+                    position.x,
+                    position.y,
+                    position.z,
+                    INSTANCE_PORTAL_SCAN_RADIUS);
+            return;
+        }
+
+        log(Level.INFO,
+                "[ELPortal] Instance portal debug: nearby portal-like blocks player=%s world=%s total=%d sample=%s",
+                playerRef.getUsername(),
+                worldName,
+                matches,
+                found.toString());
     }
 
     @Nullable
@@ -152,18 +293,19 @@ public final class PortalProximityManager {
 
                 for (int y = baseY - VERTICAL_SCAN_BELOW; y <= baseY + VERTICAL_SCAN_ABOVE; y++) {
                     String blockId = resolveBlockId(world.getBlockType(x, y, z));
-                    if (!isPortalBlockId(blockId)) {
+                    boolean returnPortal = isReturnPortalBlockId(blockId);
+                    if (!returnPortal && !isRoutablePortalBlockId(blockId)) {
                         continue;
                     }
 
                     double distanceSquared = distanceSquaredToPortal(position, x, y, z);
-                    double triggerRadius = resolveTriggerRadius(blockId);
+                    double triggerRadius = returnPortal ? 2.0D : resolveTriggerRadius(blockId);
                     if (distanceSquared > triggerRadius * triggerRadius) {
                         continue;
                     }
 
                     if (nearest == null || distanceSquared < nearest.distanceSquared()) {
-                        nearest = new PortalCandidate(blockId, x, y, z, distanceSquared);
+                        nearest = new PortalCandidate(blockId, x, y, z, distanceSquared, returnPortal);
                     }
                 }
             }
@@ -178,7 +320,7 @@ public final class PortalProximityManager {
         return dx * dx + dy * dy + dz * dz;
     }
 
-    private static boolean isPortalBlockId(@Nullable String blockId) {
+    private static boolean isRoutablePortalBlockId(@Nullable String blockId) {
         if (blockId == null || blockId.isBlank()) {
             return false;
         }
@@ -188,6 +330,34 @@ public final class PortalProximityManager {
             }
         }
         return false;
+    }
+
+    private static boolean isReturnPortalBlockId(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return false;
+        }
+
+        for (String exactId : RETURN_PORTAL_BLOCK_IDS) {
+            if (exactId.equals(blockId)) {
+                return true;
+            }
+        }
+
+        String normalized = blockId.toLowerCase(Locale.ROOT);
+        return normalized.contains("portal_return") || normalized.contains("return_portal");
+    }
+
+    private static boolean isPortalLikeId(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return false;
+        }
+
+        if (isReturnPortalBlockId(blockId) || isRoutablePortalBlockId(blockId)) {
+            return true;
+        }
+
+        String normalized = blockId.toLowerCase(Locale.ROOT);
+        return normalized.contains("portal") || normalized.contains("return");
     }
 
     private static double resolveTriggerRadius(@Nonnull String blockId) {
@@ -240,6 +410,11 @@ public final class PortalProximityManager {
         }
     }
 
-    private record PortalCandidate(String blockId, int x, int y, int z, double distanceSquared) {
+    private record PortalCandidate(String blockId,
+                                   int x,
+                                   int y,
+                                   int z,
+                                   double distanceSquared,
+                                   boolean returnPortal) {
     }
 }
