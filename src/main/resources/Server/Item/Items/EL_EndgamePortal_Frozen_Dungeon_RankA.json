@@ -44,7 +44,7 @@
         "Scale": 7.0
       }
     ],
-    "InteractionHint": "endlesslevelingaddon.portals.interact",
+    "InteractionHint": "A Rank Gate",
     "Flags": {
       "IsUsable": true
     },
