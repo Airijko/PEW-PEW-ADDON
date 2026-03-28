@@ -101,17 +101,32 @@ public final class PortalInstanceDiagnostics {
             return;
         }
 
+        // If player is returning after death, restore their entry target for consistent return portal teleport
+        if (pendingDeath != null && pendingDeath.returnTargetWorldName != null && pendingDeath.returnTargetTransform != null) {
+            UUID playerUuid = playerRef.getUuid();
+            if (playerUuid != null) {
+                // Restore entry target so it's available when custom return portal is used
+                PortalLeveledInstanceRouter.restorePlayerEntryTarget(playerUuid, pendingDeath.returnTargetWorldName, pendingDeath.returnTargetTransform);
+                log(Level.INFO,
+                        "player-restore-death-target player=%s returnWorld=%s source=%s",
+                        playerRef.getUsername(),
+                        pendingDeath.returnTargetWorldName,
+                        pendingDeath.returnTargetSource);
+            }
+        }
+
         world.execute(() -> {
             Vector3d actualPosition = resolvePosition(playerRef, event.getHolder());
             if (pendingDeath != null) {
                 boolean removedFromDungeon = !INSTANCE_DEFINITIONS.containsKey(worldName) || !pendingDeath.worldName.equals(worldName);
                 log(Level.INFO,
-                        "player-return-after-death player=%s deathWorld=%s currentWorld=%s removedFromDungeon=%s actual=%s",
+                        "player-return-after-death player=%s deathWorld=%s currentWorld=%s removedFromDungeon=%s actual=%s hasReturnTarget=%s",
                         playerRef.getUsername(),
                         pendingDeath.worldName,
                         worldName,
                         removedFromDungeon,
-                        format(actualPosition));
+                        format(actualPosition),
+                        pendingDeath.returnTargetWorldName != null);
             }
 
             if (definition != null) {
@@ -242,18 +257,39 @@ public final class PortalInstanceDiagnostics {
         }
 
         SpawnMatch nearestSpawn = definition.findNearest(actualPosition);
-        PENDING_DEATHS.put(player.getDisplayName(), new PendingDeath(worldName));
+        
+        // Store return target information so player can be returned to portal entrance on respawn
+        PlayerRef playerRef = null;
+        UUID playerUuid = player.getUuid();
+        Universe universe = Universe.get();
+        if (universe != null && playerUuid != null) {
+            playerRef = universe.getPlayer(playerUuid);
+        }
+        PortalLeveledInstanceRouter.ReturnTargetDiagnostics returnDiag = null;
+        if (playerRef != null) {
+            returnDiag = PortalLeveledInstanceRouter.resolveReturnTargetDiagnostics(playerRef, world);
+        }
+        
+        PendingDeath deathInfo = new PendingDeath(
+            worldName,
+            returnDiag != null ? returnDiag.worldName() : null,
+            returnDiag != null ? returnDiag.returnTransform() : null,
+            returnDiag != null ? returnDiag.source() : "unknown"
+        );
+        PENDING_DEATHS.put(player.getDisplayName(), deathInfo);
+        
         log(Level.INFO,
-                "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f awaitingDrain=true",
+                "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f returnTarget=%s awaitingDrain=true",
                 player.getDisplayName(),
                 worldName,
                 definition.label,
                 format(actualPosition),
                 format(nearestSpawn.expected),
-                nearestSpawn.distance);
+                nearestSpawn.distance,
+                deathInfo.returnTargetSource);
 
         // Instance persists for its entire gate duration; not removed on death.
-        // Player will respawn in the same instance when they use a return portal.
+        // Player will respawn in the same instance and can return to entry point consistently.
     }
 
     private static boolean allowDungeonReentryAfterDeath() {
@@ -441,7 +477,12 @@ public final class PortalInstanceDiagnostics {
         AddonLoggingManager.log(plugin, level, "[ELPortal] " + formatted);
     }
 
-    private record PendingDeath(@Nonnull String worldName) {
+    private record PendingDeath(
+        @Nonnull String worldName,
+        @Nullable String returnTargetWorldName,
+        @Nullable com.hypixel.hytale.math.vector.Transform returnTargetTransform,
+        @Nonnull String returnTargetSource
+    ) {
     }
 
     private record InstanceDebugDefinition(@Nonnull String label, @Nonnull List<Vector3d> expectedSpawns) {

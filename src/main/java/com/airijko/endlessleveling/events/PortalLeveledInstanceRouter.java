@@ -930,7 +930,8 @@ public final class PortalLeveledInstanceRouter {
                     "[ELPortal] Custom return portal aborted: missing player UUID source=%s player=%s",
                     sourceWorld.getName(),
                     playerRef.getUsername());
-            return false;
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return true;
         }
 
         ReturnTarget saved = PLAYER_ENTRY_TARGETS.get(playerUuid);
@@ -956,13 +957,68 @@ public final class PortalLeveledInstanceRouter {
             return true;
         }
 
-            log(Level.WARNING,
-                "[ELPortal] Custom return portal fallback unavailable player=%s source=%s hasSavedTarget=%s hasMetadataTarget=%s",
-                playerRef.getUsername(),
-                sourceWorld.getName(),
-                saved != null,
-                metadataTarget != null);
-        return false;
+        // Fallback to world spawn with warning when normal targets unavailable
+        log(Level.WARNING,
+            "[ELPortal] Custom return portal targets unavailable, using world spawn fallback player=%s source=%s hasSavedTarget=%s hasMetadataTarget=%s",
+            playerRef.getUsername(),
+            sourceWorld.getName(),
+            saved != null,
+            metadataTarget != null);
+        fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+        return true;
+    }
+
+    /**
+     * Fallback teleportation: Returns player to the default world spawn when
+     * normal return targets are unavailable after death. Logs a warning.
+     */
+    private static void fallbackReturnPlayerToWorldSpawn(@Nonnull PlayerRef playerRef, @Nonnull World sourceWorld) {
+        try {
+            Universe universe = Universe.get();
+            if (universe == null) {
+                log(Level.WARNING, "[ELPortal] Cannot fallback: Universe unavailable player=%s", playerRef.getUsername());
+                return;
+            }
+
+            World defaultWorld = universe.getDefaultWorld();
+            if (defaultWorld == null) {
+                log(Level.WARNING, "[ELPortal] Cannot fallback: No default world available player=%s", playerRef.getUsername());
+                return;
+            }
+
+            // Use spawn provider to get default spawn point
+            Transform spawnTransform = null;
+            if (defaultWorld.getWorldConfig() != null && defaultWorld.getWorldConfig().getSpawnProvider() != null) {
+                spawnTransform = defaultWorld.getWorldConfig().getSpawnProvider().getSpawnPoint(defaultWorld, playerRef.getUuid());
+            }
+
+            if (spawnTransform == null) {
+                // Fallback spawn location (0, 64, 0)
+                spawnTransform = new Transform(0.0, 64.0, 0.0);
+            }
+
+            if (teleportToReturnTarget(playerRef, new ReturnTarget(null, defaultWorld.getName(), spawnTransform))) {
+                log(Level.WARNING,
+                    "[ELPortal] Fallback return to world spawn successful player=%s world=%s spawn=%s",
+                    playerRef.getUsername(),
+                    defaultWorld.getName(),
+                    formatTransform(spawnTransform));
+            } else {
+                log(Level.WARNING, "[ELPortal] Fallback teleport failed player=%s world=%s", playerRef.getUsername(), defaultWorld.getName());
+            }
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Fallback teleport exception player=%s error=%s", playerRef.getUsername(), ex.getMessage());
+        }
+    }
+
+    /**
+     * Restores player entry target when they respawn after death.
+     * Called from PortalInstanceDiagnostics when player returns to instance post-death.
+     */
+    public static void restorePlayerEntryTarget(@Nonnull UUID playerUuid,
+                                                 @Nonnull String returnWorldName,
+                                                 @Nonnull Transform returnTransform) {
+        PLAYER_ENTRY_TARGETS.put(playerUuid, new ReturnTarget(null, returnWorldName, returnTransform));
     }
 
     @Nullable
