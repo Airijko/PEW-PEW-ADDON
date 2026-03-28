@@ -41,6 +41,7 @@ public final class PortalProximityManager {
 
     private static final long SCAN_INTERVAL_MILLIS = 250L;
     private static final long TRIGGER_COOLDOWN_MILLIS = 2500L;
+    private static final long ENTRY_GRACE_MILLIS = 8000L;
     private static final int HORIZONTAL_SCAN_RADIUS = 7;
     private static final int VERTICAL_SCAN_BELOW = 1;
     private static final int VERTICAL_SCAN_ABOVE = 4;
@@ -84,6 +85,10 @@ public final class PortalProximityManager {
         RETURN_DEBUG_COOLDOWNS.clear();
         INSTANCE_PORTAL_SCAN_DEBUG_COOLDOWNS.clear();
         plugin = null;
+    }
+
+    public static void markPlayerEnterInstance(@Nonnull UUID playerUuid) {
+        PLAYER_COOLDOWNS.put(playerUuid, System.currentTimeMillis() + ENTRY_GRACE_MILLIS);
     }
 
     private static void scanTick() {

@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
+import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
@@ -9,16 +10,19 @@ import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
+import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
@@ -323,6 +327,25 @@ public final class PortalLeveledInstanceRouter {
         return false;
     }
 
+    @Nullable
+    public static ReturnTargetDiagnostics resolveReturnTargetDiagnostics(@Nonnull PlayerRef playerRef,
+                                                                         @Nonnull World sourceWorld) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid != null) {
+            ReturnTarget saved = PLAYER_ENTRY_TARGETS.get(playerUuid);
+            if (saved != null) {
+                return new ReturnTargetDiagnostics("saved-entry-target", saved.worldName(), saved.returnTransform());
+            }
+        }
+
+        ReturnTarget metadata = resolveReturnTargetFromInstanceMetadata(playerRef, sourceWorld);
+        if (metadata != null) {
+            return new ReturnTargetDiagnostics("instance-metadata", metadata.worldName(), metadata.returnTransform());
+        }
+
+        return null;
+    }
+
     @Nonnull
     private static String formatTransform(@Nullable Transform transform) {
         if (transform == null || transform.getPosition() == null) {
@@ -577,6 +600,13 @@ public final class PortalLeveledInstanceRouter {
                 spawnTransform.getPosition().y,
                 spawnTransform.getPosition().z);
         teleportToWorld(playerRef, targetWorld, spawnTransform);
+        if (suffix.startsWith("EG_")) {
+            UUID playerUuid = playerRef.getUuid();
+            if (playerUuid != null) {
+                PortalProximityManager.markPlayerEnterInstance(playerUuid);
+            }
+            targetWorld.execute(() -> placeReturnPortalAtSpawnIfAbsent(targetWorld, spawnTransform));
+        }
     }
 
     @Nullable
@@ -585,6 +615,38 @@ public final class PortalLeveledInstanceRouter {
             return null;
         }
         return world.getWorldConfig().getSpawnProvider().getSpawnPoint(world, playerUuid);
+    }
+
+    private static void placeReturnPortalAtSpawnIfAbsent(@Nonnull World world, @Nonnull Transform spawnTransform) {
+        if (spawnTransform.getPosition() == null) {
+            return;
+        }
+
+        int x = (int) Math.floor(spawnTransform.getPosition().x);
+        int y = (int) Math.floor(spawnTransform.getPosition().y);
+        int z = (int) Math.floor(spawnTransform.getPosition().z);
+
+        int returnBlockIntId = BlockType.getAssetMap().getIndex("Portal_Return");
+        if (returnBlockIntId == Integer.MIN_VALUE) {
+            returnBlockIntId = BlockType.getAssetMap().getIndex("Return_Portal");
+        }
+        if (returnBlockIntId == Integer.MIN_VALUE) {
+            log(Level.WARNING, "[ELPortal] Portal_Return not in asset map — cannot place return portal at (%d %d %d) world=%s", x, y, z, world.getName());
+            return;
+        }
+
+        WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(x, z));
+        if (chunk == null) {
+            log(Level.WARNING, "[ELPortal] Chunk not in memory at (%d, %d) \u2014 cannot place return portal world=%s", x, z, world.getName());
+            return;
+        }
+
+        if (chunk.getBlock(x, y, z) == returnBlockIntId) {
+            return;
+        }
+
+        chunk.setBlock(x, y, z, returnBlockIntId);
+        log(Level.INFO, "[ELPortal] Placed Portal_Return at (%d, %d, %d) world=%s", x, y, z, world.getName());
     }
 
     private static boolean teleportToWorld(@Nonnull PlayerRef playerRef,
@@ -662,6 +724,15 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private record PendingLevelProfile(int min, int max, int bossLevelFromRangeMaxOffset) {
+    }
+
+    public record ReturnTargetDiagnostics(@Nonnull String source,
+                                          @Nonnull String worldName,
+                                          @Nullable Transform returnTransform) {
+        public ReturnTargetDiagnostics {
+            Objects.requireNonNull(source, "source");
+            Objects.requireNonNull(worldName, "worldName");
+        }
     }
 
     private record ReturnTarget(@Nullable UUID worldUuid,

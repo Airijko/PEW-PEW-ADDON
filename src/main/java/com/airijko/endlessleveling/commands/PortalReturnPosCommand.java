@@ -1,8 +1,10 @@
 package com.airijko.endlessleveling.commands;
 
+import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
+import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
@@ -10,6 +12,7 @@ import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -58,7 +61,7 @@ public class PortalReturnPosCommand extends AbstractCommand {
                 Vector3d playerPos = resolvePlayerPosition(player);
                 List<Hit> hits = scanReturnPortals(world);
                 if (hits.isEmpty()) {
-                    context.sendMessage(Message.raw("No return portals found in loaded chunks.").color("#ffcc66"));
+                    context.sendMessage(Message.raw("No return portal blocks found in loaded chunks.").color("#ffcc66"));
                     future.complete(null);
                     return;
                 }
@@ -118,6 +121,17 @@ public class PortalReturnPosCommand extends AbstractCommand {
         Store<EntityStore> store = ref.getStore();
         TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
         return transform == null ? null : transform.getPosition();
+    }
+
+    @Nullable
+    private static PlayerRef resolvePlayerRef(@Nonnull Player player) {
+        Ref<EntityStore> ref = player.getReference();
+        if (ref == null || !ref.isValid()) {
+            return null;
+        }
+
+        Store<EntityStore> store = ref.getStore();
+        return store.getComponent(ref, PlayerRef.getComponentType());
     }
 
     @Nonnull
