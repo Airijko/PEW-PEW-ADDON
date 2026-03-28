@@ -5,6 +5,7 @@ import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
+import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
@@ -16,6 +17,7 @@ import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
@@ -154,6 +156,99 @@ public final class PortalLeveledInstanceRouter {
         PAIRED_INSTANCE_RELOADS_IN_FLIGHT.clear();
         filesManager = null;
         plugin = null;
+    }
+
+    /**
+     * Saves current gate-to-instance mappings and level profiles to persistent storage.
+     * Called during server shutdown to preserve dungeons across restarts.
+     */
+    public static void saveGateInstances() {
+        try {
+            GateInstancePersistenceManager.saveGateInstances(GATE_KEY_TO_INSTANCE_NAME, ACTIVE_LEVEL_RANGES);
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Failed to save gate instances: %s", ex.getMessage());
+        }
+    }
+
+    /**
+     * Restores saved gate-to-instance mappings and level profiles from persistent storage.
+     * Called during server startup to recover dungeons from before shutdown.
+     */
+    public static void restoreSavedGateInstances() {
+        try {
+            var savedInstances = GateInstancePersistenceManager.getSavedInstances();
+            if (savedInstances.isEmpty()) {
+                return;
+            }
+
+            Universe universe = Universe.get();
+            if (universe == null) {
+                return;
+            }
+
+            int restored = 0;
+            for (GateInstancePersistenceManager.StoredGateInstance stored : savedInstances.values()) {
+                try {
+                    // Check if the saved instance world still exists
+                    World savedWorld = universe.getWorld(stored.instanceWorldName);
+                    if (savedWorld != null) {
+                        // Restore the gate-to-instance pairing
+                        GATE_KEY_TO_INSTANCE_NAME.put(stored.gateKey, stored.instanceWorldName);
+                        
+                        // Restore the level range as a LevelRange record
+                        ACTIVE_LEVEL_RANGES.put(
+                            stored.instanceWorldName,
+                            new LevelRange(stored.minLevel, stored.maxLevel)
+                        );
+                        restored++;
+                        
+                        log(Level.INFO,
+                            "[ELPortal] Restored gate %s → instance %s (levels %d-%d)",
+                            stored.gateKey, stored.instanceWorldName, stored.minLevel, stored.maxLevel);
+                    }
+                } catch (Exception ex) {
+                    log(Level.WARNING, "[ELPortal] Failed to restore gate instance %s: %s",
+                        stored.gateKey, ex.getMessage());
+                }
+            }
+
+            if (restored > 0) {
+                log(Level.INFO, "[ELPortal] Startup: restored %d gate instance mappings", restored);
+            }
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Failed to restore saved gate instances: %s", ex.getMessage());
+        }
+    }
+
+    /**
+     * Teleports a player to their return/home world during shutdown or emergencies.
+     * Used by NaturalPortalGateManager to kick players out of instances.
+     */
+    public static void teleportPlayerToReturnWorld(@Nonnull PlayerRef playerRef, @Nonnull World targetWorld) {
+        try {
+            Ref<EntityStore> entityRef = playerRef.getReference();
+            if (entityRef == null || !entityRef.isValid()) {
+                return;
+            }
+
+            Store<EntityStore> store = entityRef.getStore();
+            
+            // Try to get spawn point from world config, fallback to hardcoded coords
+            Transform spawnTransform = null;
+            if (targetWorld.getWorldConfig() != null && targetWorld.getWorldConfig().getSpawnProvider() != null) {
+                spawnTransform = targetWorld.getWorldConfig().getSpawnProvider().getSpawnPoint(targetWorld, playerRef.getUuid());
+            }
+            
+            if (spawnTransform == null) {
+                // Fallback spawn location (0, 64, 0) - using Transform(double,double,double) constructor
+                spawnTransform = new Transform(0.0, 64.0, 0.0);
+            }
+
+            store.addComponent(entityRef, Teleport.getComponentType(), Teleport.createForPlayer(targetWorld, spawnTransform));
+            log(Level.INFO, "[ELPortal] Teleported player %s to return world %s", playerRef.getUsername(), targetWorld.getName());
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Failed to teleport player %s: %s", playerRef.getUsername(), ex.getMessage());
+        }
     }
 
     public static void registerGateExpectedInstance(@Nonnull String gateIdentity,

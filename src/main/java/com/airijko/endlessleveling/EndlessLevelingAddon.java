@@ -37,6 +37,7 @@ import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
+import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
@@ -98,6 +99,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
         PortalProximityManager.initialize(this);
         PortalLeveledInstanceRouter.initialize(this);
         PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
+        GateInstancePersistenceManager.initialize();
+        PortalLeveledInstanceRouter.restoreSavedGateInstances();
         PortalInstanceDiagnostics.initialize(this, this.filesManager);
         this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
@@ -112,6 +115,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        PortalLeveledInstanceRouter.saveGateInstances();
         NaturalPortalGateManager.shutdown();
         PortalProximityManager.shutdown();
         PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();

@@ -98,6 +98,9 @@ public final class NaturalPortalGateManager {
     }
 
     public static void shutdown() {
+        // Kick out all players from gate instances before shutdown
+        kickOutPlayersFromGateInstances();
+        
         if (periodicTask != null) {
             periodicTask.cancel(false);
             periodicTask = null;
@@ -108,6 +111,59 @@ public final class NaturalPortalGateManager {
         }
         PENDING_GATE_REMOVALS.clear();
         ACTIVE_GATES.clear();
+    }
+
+    /**
+     * Kicks out all players from active gate instances to their spawn/home worlds.
+     * Called during shutdown to ensure safe player transitions before instance cleanup.
+     */
+    private static void kickOutPlayersFromGateInstances() {
+        try {
+            Universe universe = Universe.get();
+            if (universe == null) {
+                return;
+            }
+
+            int totalPlayersKicked = 0;
+            for (ActiveGate gate : new ArrayList<>(ACTIVE_GATES)) {
+                World instanceWorld = universe.getWorld(gate.worldUuid());
+                if (instanceWorld == null) {
+                    continue;
+                }
+
+                // Get all players in this instance and kick them to spawn world
+                List<Player> playersInInstance = instanceWorld.getPlayers();
+                for (Player player : playersInInstance) {
+                    try {
+                        Ref<EntityStore> entityRef = player.getReference();
+                        if (entityRef == null || !entityRef.isValid()) {
+                            continue;
+                        }
+
+                        Store<EntityStore> store = entityRef.getStore();
+                        PlayerRef playerRef = store.getComponent(entityRef, PlayerRef.getComponentType());
+                        if (playerRef != null) {
+                            // Teleport to player's home/spawn world
+                            World spawnWorld = universe.getDefaultWorld();
+                            if (spawnWorld != null) {
+                                PortalLeveledInstanceRouter.teleportPlayerToReturnWorld(playerRef, spawnWorld);
+                                totalPlayersKicked++;
+                            }
+                        }
+                    } catch (Exception ex) {
+                        log(Level.WARNING,
+                                "[ELPortal] Failed to kick player from instance %s: %s",
+                                gate.gateId(), ex.getMessage());
+                    }
+                }
+            }
+
+            if (totalPlayersKicked > 0) {
+                log(Level.INFO, "[ELPortal] Shut down: kicked %d players from gate instances", totalPlayersKicked);
+            }
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Failed to kick out players during shutdown: %s", ex.getMessage());
+        }
     }
 
     @Nonnull
