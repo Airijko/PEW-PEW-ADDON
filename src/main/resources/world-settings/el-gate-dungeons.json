@@ -1,6 +1,6 @@
 {
   "World_Overrides": {
-    "*mj_instance_d01*": {
+    "*el_mj_instance_d01*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0
@@ -48,7 +48,7 @@
         }
       }
     },
-    "*mj_instance_d02*": {
+    "*el_mj_instance_d02*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0
@@ -115,7 +115,7 @@
         }
       }
     },
-    "*mj_instance_d03*": {
+    "*el_mj_instance_d03*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0
@@ -182,7 +182,7 @@
         }
       }
     },
-    "*endgame_frozen_dungeon*": {
+    "*el_endgame_frozen_dungeon*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0
@@ -230,7 +230,7 @@
         }
       }
     },
-    "*endgame_swamp_dungeon*": {
+    "*el_endgame_swamp_dungeon*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0
@@ -278,7 +278,7 @@
         }
       }
     },
-    "*endgame_golem_void*": {
+    "*el_endgame_golem_void*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0

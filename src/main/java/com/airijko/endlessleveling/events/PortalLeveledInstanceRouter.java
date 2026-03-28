@@ -45,13 +45,19 @@ public final class PortalLeveledInstanceRouter {
             "EL_Endgame_Swamp_Dungeon", "EG_Swamp"
     );
 
-    private static final Map<String, String> INSTANCE_TEMPLATE_TO_SUFFIX = Map.of(
-        "EL_MJ_Instance_D01", "MJ_D01",
-        "EL_MJ_Instance_D02", "MJ_D02",
-        "EL_MJ_Instance_D03", "MJ_D03",
-        "EL_Endgame_Frozen_Dungeon", "EG_Frozen",
-        "EL_Endgame_Golem_Void", "EG_Golem",
-        "EL_Endgame_Swamp_Dungeon", "EG_Swamp"
+    private static final Map<String, String> INSTANCE_TEMPLATE_TO_SUFFIX = Map.ofEntries(
+            Map.entry("EL_MJ_Instance_D01", "MJ_D01"),
+            Map.entry("EL_MJ_Instance_D02", "MJ_D02"),
+            Map.entry("EL_MJ_Instance_D03", "MJ_D03"),
+            Map.entry("MJ_Instance_D01", "MJ_D01"),
+            Map.entry("MJ_Instance_D02", "MJ_D02"),
+            Map.entry("MJ_Instance_D03", "MJ_D03"),
+            Map.entry("EL_Endgame_Frozen_Dungeon", "EG_Frozen"),
+            Map.entry("EL_Endgame_Golem_Void", "EG_Golem"),
+            Map.entry("EL_Endgame_Swamp_Dungeon", "EG_Swamp"),
+            Map.entry("Endgame_Frozen_Dungeon", "EG_Frozen"),
+            Map.entry("Endgame_Golem_Void", "EG_Golem"),
+            Map.entry("Endgame_Swamp_Dungeon", "EG_Swamp")
     );
 
     private static final Map<String, String> ROUTING_TO_DISPLAY = Map.of(
@@ -145,15 +151,21 @@ public final class PortalLeveledInstanceRouter {
         // "instance-EL_MJ_Instance_D03-<uuid>", bypassing the routing aliases.
         String directWorldSuffix = resolveSuffixFromWorldName(routingName);
         if (directWorldSuffix != null) {
+            String directWorldTemplate = resolveTemplateNameFromWorldName(routingName);
+            boolean originalTemplate = isOriginalTemplateName(directWorldTemplate);
+
             // Register the level range immediately so mobs are leveled correctly
             // before the player sends ClientReady (which fires ~4s later).
+            if (!originalTemplate) {
             registerInstanceLevelOverride(routingName);
+            }
             applyFixedGateSpawn(playerRef, routingWorld, directWorldSuffix);
             log(Level.INFO,
-                    "[ELPortal] Applied direct instance spawn correction player=%s world=%s suffix=%s",
+                "[ELPortal] Applied direct instance spawn correction player=%s world=%s suffix=%s template=%s",
                     playerRef.getUsername(),
                     routingName,
-                    directWorldSuffix);
+                directWorldSuffix,
+                directWorldTemplate == null ? "unknown" : directWorldTemplate);
             return;
         }
 
@@ -600,13 +612,25 @@ public final class PortalLeveledInstanceRouter {
                 spawnTransform.getPosition().y,
                 spawnTransform.getPosition().z);
         teleportToWorld(playerRef, targetWorld, spawnTransform);
-        if (suffix.startsWith("EG_")) {
+        if (suffix.startsWith("EG_") || suffix.startsWith("MJ_")) {
             UUID playerUuid = playerRef.getUuid();
             if (playerUuid != null) {
                 PortalProximityManager.markPlayerEnterInstance(playerUuid);
             }
-            targetWorld.execute(() -> placeReturnPortalAtSpawnIfAbsent(targetWorld, spawnTransform));
         }
+
+        if (suffix.startsWith("EG_")) {
+            // Original Endgame templates already spawn their own return portal; avoid duplicates.
+            String templateName = resolveTemplateNameFromWorldName(targetWorld.getName());
+            if (!isOriginalTemplateName(templateName)) {
+                targetWorld.execute(() -> placeReturnPortalAtSpawnIfAbsent(targetWorld, spawnTransform));
+            }
+        }
+    }
+
+    private static boolean isOriginalTemplateName(@Nullable String templateName) {
+        return templateName != null
+                && (templateName.startsWith("Endgame_") || templateName.startsWith("MJ_Instance_"));
     }
 
     @Nullable
