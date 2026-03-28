@@ -62,6 +62,7 @@ public final class PortalInstanceDiagnostics {
     private static final Map<String, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<String> PENDING_INSTANCE_REMOVALS = ConcurrentHashMap.newKeySet();
     private static final Set<String> EXPLICIT_DEATH_WIPE_REMOVALS = ConcurrentHashMap.newKeySet();
+    private static final boolean DEATH_WIPE_ON_EMPTY_ENABLED = false;
     private static final Map<String, InstanceDebugDefinition> TEMPLATE_NAME_INDEX;
 
     static {
@@ -146,7 +147,7 @@ public final class PortalInstanceDiagnostics {
                 pendingDeath != null,
                 format(event.getTransform() == null ? null : event.getTransform().getPosition()));
 
-        if (pendingDeath != null && pendingDeath.worldName.equals(worldName)) {
+        if (DEATH_WIPE_ON_EMPTY_ENABLED && pendingDeath != null && pendingDeath.worldName.equals(worldName)) {
             attemptDeathWipeWhenWorldEmpties(worldName, playerRef.getUsername());
         }
     }

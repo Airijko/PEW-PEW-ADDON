@@ -361,6 +361,7 @@ public final class PortalLeveledInstanceRouter {
         // "instance-EL_MJ_Instance_D03-<uuid>", bypassing the routing aliases.
         String directWorldSuffix = resolveSuffixFromWorldName(routingName);
         if (directWorldSuffix != null) {
+            enforcePersistentInstanceLifecycle(routingWorld, "direct-entry");
             String directWorldTemplate = resolveTemplateNameFromWorldName(routingName);
             boolean originalTemplate = isOriginalTemplateName(directWorldTemplate);
 
@@ -563,6 +564,7 @@ public final class PortalLeveledInstanceRouter {
                             return;
                         }
 
+                        enforcePersistentInstanceLifecycle(loadedWorld, "paired-instance-load");
                         restoreActiveInstanceOverride(existingInstance);
 
                         Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
@@ -671,6 +673,7 @@ public final class PortalLeveledInstanceRouter {
 
         Object loaded = universe.getWorlds().get(expectedWorldId);
         if (loaded instanceof World loadedWorld) {
+            enforcePersistentInstanceLifecycle(loadedWorld, "expected-world-loaded");
             Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
             if (teleportToInstanceSpawn(playerRef, loadedWorld, effectiveReturnTransform)) {
                 GATE_KEY_TO_INSTANCE_NAME.put(gateKey, expectedWorldId);
@@ -705,6 +708,7 @@ public final class PortalLeveledInstanceRouter {
                         return;
                     }
 
+                    enforcePersistentInstanceLifecycle(reloadedWorld, "expected-world-reload");
                     restoreActiveInstanceOverride(expectedWorldId);
                     Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
                     queueTeleportToInstanceSpawn(playerRef,
@@ -773,6 +777,7 @@ public final class PortalLeveledInstanceRouter {
         instances.spawnInstance(routingName, instanceGroupId, returnWorld, effectiveReturnTransform)
                 .thenAccept(spawned -> {
                     try {
+                        enforcePersistentInstanceLifecycle(spawned, "spawn-instance");
                         if (gateKey != null) {
                             GATE_KEY_TO_INSTANCE_NAME.put(gateKey, spawned.getName());
                             cacheResolvedInstanceWorld(gateKey,
@@ -1140,6 +1145,7 @@ public final class PortalLeveledInstanceRouter {
                             return;
                         }
 
+                        enforcePersistentInstanceLifecycle(reloaded, "paired-reload");
                         restoreActiveInstanceOverride(worldName);
                         log(Level.INFO,
                                 "[ELPortal] Reloaded paired instance world=%s reason=%s",
@@ -1175,6 +1181,30 @@ public final class PortalLeveledInstanceRouter {
 
         int bossOffset = Math.max(0, bossLevel - range.max());
         api.registerMobWorldFixedLevelOverride(worldName, worldName, range.min(), range.max(), bossOffset);
+    }
+
+    private static void enforcePersistentInstanceLifecycle(@Nonnull World world,
+                                                           @Nonnull String source) {
+        try {
+            InstanceWorldConfig instanceConfig = InstanceWorldConfig.get(world.getWorldConfig());
+            if (instanceConfig == null) {
+                return;
+            }
+
+            instanceConfig.setRemovalConditions();
+            world.getWorldConfig().markChanged();
+            log(Level.INFO,
+                    "[ELPortal] Enforced persistent instance lifecycle world=%s source=%s",
+                    world.getName(),
+                    source);
+        } catch (Exception ex) {
+            AddonLoggingManager.log(plugin,
+                    Level.WARNING,
+                    ex,
+                    "[ELPortal] Failed to enforce persistent lifecycle world=%s source=%s",
+                    world.getName(),
+                    source);
+        }
     }
 
     /**
