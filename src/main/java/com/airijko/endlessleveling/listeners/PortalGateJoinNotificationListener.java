@@ -65,16 +65,25 @@ public class PortalGateJoinNotificationListener {
             }
 
             int[] range = PortalLeveledInstanceRouter.getActiveInstanceRange(finalWorldName);
+            Integer bossLevel = PortalLeveledInstanceRouter.getActiveInstanceBossLevel(finalWorldName);
+            String rankLetter = PortalLeveledInstanceRouter.getActiveInstanceRankLetter(finalWorldName);
+            if (rankLetter == null || rankLetter.isBlank()) {
+                rankLetter = "E";
+            }
+
             Message chat;
             if (range != null) {
+                int resolvedBossLevel = bossLevel != null ? bossLevel : range[1];
                 chat = Message.join(
-                        Message.raw("Portal gate dungeon").color("#ffc300"),
+                        Message.raw(rankLetter + " Rank Dungeon").color("#ffc300"),
                         Message.raw("\n" + finalDisplayName).color("#66d9ff"),
                         Message.raw("\nMob Lv ").color("#ffc300"),
-                        Message.raw(range[0] + "-" + range[1]).color("#6cff78"));
+                        Message.raw(range[0] + "-" + range[1]).color("#6cff78"),
+                        Message.raw("\nBoss Lv ").color("#ffc300"),
+                        Message.raw(String.valueOf(resolvedBossLevel)).color("#6cff78"));
             } else {
                 chat = Message.join(
-                        Message.raw("Portal gate dungeon").color("#ffc300"),
+                        Message.raw(rankLetter + " Rank Dungeon").color("#ffc300"),
                         Message.raw("\n" + finalDisplayName).color("#66d9ff"));
             }
             PlayerChatNotifier.send(finalPlayerRef, chat);
