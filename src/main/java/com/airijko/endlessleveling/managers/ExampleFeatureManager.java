@@ -7,6 +7,7 @@ import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 
 import java.util.Locale;
+import java.util.logging.Level;
 
 /**
  * Centralized runtime toggles for all addon example features.
@@ -67,16 +68,16 @@ public final class ExampleFeatureManager {
     public void registerExamples(JavaPlugin plugin) {
         if (isExampleCommandEnabled()) {
             plugin.getCommandRegistry().registerCommand(new ExampleCommand("example", "An example command"));
-            LOGGER.atInfo().log("Example command enabled.");
+            AddonLoggingManager.log(LOGGER, Level.INFO, "Example command enabled.");
         } else {
-            LOGGER.atInfo().log("Example command disabled by config.");
+            AddonLoggingManager.log(LOGGER, Level.INFO, "Example command disabled by config.");
         }
 
         if (isExampleEventsEnabled()) {
             plugin.getEventRegistry().registerGlobal(PlayerReadyEvent.class, ExampleEvent::onPlayerReady);
-            LOGGER.atInfo().log("Example events enabled.");
+            AddonLoggingManager.log(LOGGER, Level.INFO, "Example events enabled.");
         } else {
-            LOGGER.atInfo().log("Example events disabled by config.");
+            AddonLoggingManager.log(LOGGER, Level.INFO, "Example events disabled by config.");
         }
     }
 }

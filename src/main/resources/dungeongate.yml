@@ -9,11 +9,18 @@ enabled: true
 
 # How frequently (in minutes) a new dungeon gate can naturally spawn.
 # Minimum enforced value: 1.
-spawn_interval_minutes: 30
+spawn_interval_minutes: 20
 
 # Maximum number of dungeon gate instances that may be active at the same time.
 # Set to -1 for no limit.
 max_concurrent_spawns: 5
+
+# World names allowed to summon/spawn dungeon portals.
+# Natural spawning and manual gate summon commands both respect this list.
+portal_world_whitelist:
+  - world
+  - default
+  - endless
 
 # Announce in global chat when a dungeon gate spawns.
 announce_on_spawn: true
@@ -49,27 +56,18 @@ min_level_required: 1
 # Dynamic level targeting
 # -----------------------------------------------------------------------
 
-# How to choose the base level from players currently in the target world.
-# Options: HIGHEST, MEDIAN, AVERAGE
-level_reference_mode: AVERAGE
+# Gate rank and level are linked to the global online player range.
+# Lowest and highest online player levels define the scaling span.
+# Rolled rank chooses a point in that span (E near low end, S near high end).
 
-# Which player slice to evaluate for level_reference_mode.
-# Options: ALL, UPPER, LOWER
-level_reference_scope: UPPER
-  
-# When level_reference_scope is UPPER or LOWER, use only N% players by level.
-# Example: 25 means highest 25% (UPPER) or lowest 25% (LOWER).
-# Allowed range: 1-100.
-scope_percent: 40
-
-# This offset anchors one normal-mob bound from the computed reference level.
-# UPPER/ALL scope: anchors the normal mob MAX level (reference + offset).
-# LOWER scope: anchors the normal mob MIN level (reference - offset).
+# S-rank random offset range added above the highest player level.
+# Example: highest=100 and rolled offset=17 => normal mob minimum starts at 117.
 # Minimum enforced value: 0.
-level_offset: 50
+level_offset_min: 10
+level_offset_max: 30
 
 # Normal mob level spread size for the gate (inclusive range).
-# Example: 20 with max 80 => normal mobs are 60-80.
+# Example: 20 with anchor 80 => normal mobs are 60-80.
 # Minimum enforced value: 0.
 normal_mob_level_range: 20
 
@@ -77,3 +75,19 @@ normal_mob_level_range: 20
 # Example: normal 60-80 with boss bonus 10 => boss is level 90.
 # Minimum enforced value: 0.
 boss_level_bonus: 10
+
+# -----------------------------------------------------------------------
+# Rank weighting
+# -----------------------------------------------------------------------
+
+# Weighted chance used when rolling a gate rank.
+# Values are relative weights (not required to sum to 100).
+# Example with defaults: S=1, A=6, B=13, C=30, D=25, E=25.
+# Effective chance = tier_weight / total_weight.
+rank_weights:
+  S: 1
+  A: 6
+  B: 13
+  C: 30
+  D: 25
+  E: 25

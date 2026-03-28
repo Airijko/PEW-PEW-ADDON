@@ -33,6 +33,7 @@ import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.airijko.endlessleveling.listeners.PortalGateJoinNotificationListener;
 import com.airijko.endlessleveling.listeners.PortalReturnInteractionListener;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
@@ -159,7 +160,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
             NaturalPortalGateManager.initialize(this, this.filesManager);
             PortalInstanceDiagnostics.initialize(this, this.filesManager);
 
-            this.getLogger().at(Level.INFO).log(
+                AddonLoggingManager.log(this,
+                    Level.INFO,
                     "[ELReload] Runtime content reloaded. unregistered(r=%d,c=%d,a=%d,p=%d) registered(r=%d,c=%d,a=%d,p=%d)",
                     unregisteredRaces,
                     unregisteredClasses,

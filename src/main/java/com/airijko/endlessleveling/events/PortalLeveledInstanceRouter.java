@@ -1,6 +1,7 @@
 package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
@@ -270,10 +271,11 @@ public final class PortalLeveledInstanceRouter {
                     }
                 })
                 .exceptionally(ex -> {
-                    if (plugin != null) {
-                        plugin.getLogger().at(Level.WARNING).withCause(ex)
-                                .log("[ELPortal] Failed to spawn routed instance from template %s", routingName);
-                    }
+                    AddonLoggingManager.log(plugin,
+                            Level.WARNING,
+                            ex,
+                            "[ELPortal] Failed to spawn routed instance from template %s",
+                            routingName);
                     return null;
                 });
         return true;
@@ -598,10 +600,12 @@ public final class PortalLeveledInstanceRouter {
             store.addComponent(entityRef, Teleport.getComponentType(), Teleport.createForPlayer(targetWorld, targetTransform));
             return true;
         } catch (Exception ex) {
-            if (plugin != null) {
-                plugin.getLogger().at(Level.WARNING).withCause(ex)
-                        .log("[ELPortal] Failed to snap %s to fixed spawn in %s", playerRef.getUsername(), targetWorld.getName());
-            }
+            AddonLoggingManager.log(plugin,
+                    Level.WARNING,
+                    ex,
+                    "[ELPortal] Failed to snap %s to fixed spawn in %s",
+                    playerRef.getUsername(),
+                    targetWorld.getName());
             return false;
         }
     }
@@ -626,10 +630,12 @@ public final class PortalLeveledInstanceRouter {
             InstancesPlugin.teleportPlayerToInstance(entityRef, store, targetWorld, overrideReturn);
             return true;
         } catch (Exception ex) {
-            if (plugin != null) {
-                plugin.getLogger().at(Level.WARNING).withCause(ex)
-                        .log("[ELPortal] Failed to teleport %s into %s", playerRef.getUsername(), targetWorld.getName());
-            }
+            AddonLoggingManager.log(plugin,
+                    Level.WARNING,
+                    ex,
+                    "[ELPortal] Failed to teleport %s into %s",
+                    playerRef.getUsername(),
+                    targetWorld.getName());
             return false;
         }
     }
@@ -649,13 +655,7 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private static void log(@Nonnull Level level, @Nonnull String message, Object... args) {
-        if (plugin != null) {
-            if (args == null || args.length == 0) {
-                plugin.getLogger().at(level).log(message);
-            } else {
-                plugin.getLogger().at(level).log(String.format(Locale.ROOT, message, args));
-            }
-        }
+        AddonLoggingManager.log(plugin, level, message, args);
     }
 
     private record LevelRange(int min, int max) {

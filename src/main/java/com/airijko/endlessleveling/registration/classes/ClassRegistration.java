@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.registration.classes;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.classes.CharacterClassDefinition;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.parsing.ClassParser;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -14,6 +15,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+import java.util.logging.Level;
 
 /**
  * Scans the classes directory and registers all enabled classes into Endless Leveling via API.
@@ -34,7 +36,7 @@ public final class ClassRegistration {
      */
     public static int registerAll(File classesFolder) {
         if (classesFolder == null || !classesFolder.isDirectory()) {
-            LOGGER.atWarning().log("Classes folder is null or not a directory");
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Classes folder is null or not a directory");
             return 0;
         }
 
@@ -56,10 +58,10 @@ public final class ClassRegistration {
                 }
             }
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to scan classes folder: %s", e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to scan classes folder: %s", e.getMessage());
         }
 
-        LOGGER.atInfo().log("Registered %d addon class(es)", count);
+        AddonLoggingManager.log(LOGGER, Level.INFO, "Registered %d addon class(es)", count);
         return count;
     }
 
@@ -71,28 +73,28 @@ public final class ClassRegistration {
             }
 
             if (!definition.isEnabled()) {
-                LOGGER.atFine().log("Skipping disabled class: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping disabled class: %s", definition.getId());
                 return false;
             }
 
             if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
-                LOGGER.atFine().log("Skipping example class due to config: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping example class due to config: %s", definition.getId());
                 return false;
             }
 
             boolean success = EndlessLevelingAPI.get().registerClass(definition, false);
             if (success) {
                 registeredClassIds.add(definition.getId());
-                LOGGER.atInfo().log("Registered addon class: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.INFO, "Registered addon class: %s", definition.getId());
             } else {
-                LOGGER.atWarning().log("Failed to register class: %s (may already exist)", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to register class: %s (may already exist)", definition.getId());
             }
             return success;
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to parse class file %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to parse class file %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         } catch (Exception e) {
-            LOGGER.atWarning().log("Error registering class from %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Error registering class from %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         }
     }
@@ -108,10 +110,10 @@ public final class ClassRegistration {
             try {
                 if (EndlessLevelingAPI.get().unregisterClass(classId)) {
                     count++;
-                    LOGGER.atInfo().log("Unregistered addon class: %s", classId);
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Unregistered addon class: %s", classId);
                 }
             } catch (Exception e) {
-                LOGGER.atWarning().log("Failed to unregister class %s: %s", classId, e.getMessage());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to unregister class %s: %s", classId, e.getMessage());
             }
         }
         registeredClassIds.clear();

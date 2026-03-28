@@ -20,7 +20,10 @@ import java.nio.file.StandardOpenOption;
 import java.security.CodeSource;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.jar.JarEntry;
@@ -30,6 +33,7 @@ import java.util.regex.Pattern;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
+import java.util.logging.Level;
 
 /**
  * Minimal file bootstrap matching Endless Leveling's resource-first startup flow.
@@ -92,6 +96,7 @@ public final class AddonFilesManager {
         initYamlFile("dungeongate.yml");
         syncCoreWorldSettingsBundle();
         this.contentOptions = loadContentOptions();
+        AddonLoggingManager.configure(plugin, this.contentOptions.enableLogging, this.contentOptions.loggingBaseLevel);
         this.dungeonGateOptions = loadDungeonGateOptions();
         syncConfigIfNeeded();
         syncDungeonGateIfNeeded();
@@ -141,12 +146,12 @@ public final class AddonFilesManager {
         archiveFileIfExists(configFile, "config.yml", "config_version:" + storedVersion);
         writeNormalizedConfig(migratedOptions, targetVersion);
 
-        LOGGER.atInfo().log("Migrated config.yml to version %d and normalized schema", targetVersion);
+        log(Level.INFO, "Migrated config.yml to version %d and normalized schema", targetVersion);
 
         try {
             ensureConfigVersionMarkerOnCreate("config.yml", configFile);
         } catch (IOException exception) {
-            LOGGER.atWarning().log("Failed to append config version marker: %s", exception.getMessage());
+            log(Level.WARNING, "Failed to append config version marker: %s", exception.getMessage());
         }
 
         this.contentOptions = loadContentOptions();
@@ -164,12 +169,12 @@ public final class AddonFilesManager {
         archiveFileIfExists(dungeonGateFile, "dungeongate.yml", "config_version:" + storedVersion);
         writeDungeonGateConfig(migratedOptions, targetVersion);
 
-        LOGGER.atInfo().log("Migrated dungeongate.yml to version %d and normalized schema", targetVersion);
+        log(Level.INFO, "Migrated dungeongate.yml to version %d and normalized schema", targetVersion);
 
         try {
             ensureConfigVersionMarkerOnCreate("dungeongate.yml", dungeonGateFile);
         } catch (IOException exception) {
-            LOGGER.atWarning().log("Failed to append dungeongate config version marker: %s", exception.getMessage());
+            log(Level.WARNING, "Failed to append dungeongate config version marker: %s", exception.getMessage());
         }
 
         this.dungeonGateOptions = loadDungeonGateOptions();
@@ -192,6 +197,14 @@ public final class AddonFilesManager {
         text.append("# Maximum number of dungeon gate instances that may be active at the same time.\n");
         text.append("# Set to -1 for no limit.\n");
         text.append("max_concurrent_spawns: ").append(options.maxConcurrentSpawns).append("\n\n");
+
+        text.append("# World names allowed to summon/spawn dungeon portals.\n");
+        text.append("# Natural spawning and manual gate summon commands both respect this list.\n");
+        text.append("portal_world_whitelist:\n");
+        for (String worldName : options.portalWorldWhitelist) {
+            text.append("  - ").append(worldName).append("\n");
+        }
+        text.append("\n");
 
         text.append("# Announce in global chat when a dungeon gate spawns.\n");
         text.append("announce_on_spawn: ").append(options.announceOnSpawn).append("\n\n");
@@ -227,28 +240,18 @@ public final class AddonFilesManager {
         text.append("# Dynamic level targeting\n");
         text.append("# -----------------------------------------------------------------------\n\n");
 
-        text.append("# How to choose the base level from players currently in the target world.\n");
-        text.append("# Options: HIGHEST, MEDIAN, AVERAGE\n");
-        text.append("level_reference_mode: ").append(options.levelReferenceMode).append("\n\n");
+        text.append("# Gate rank and level are linked to the global online player range.\n");
+        text.append("# Lowest and highest online player levels define the scaling span.\n");
+        text.append("# Rolled rank chooses a point in that span (E near low end, S near high end).\n\n");
 
-        text.append("# Which player slice to evaluate for level_reference_mode.\n");
-        text.append("# Options: ALL, UPPER, LOWER\n");
-        text.append("level_reference_scope: ").append(options.levelReferenceScope).append("\n\n");
-
-        text.append("# When level_reference_scope is UPPER or LOWER, use only N%% players by level.\n");
-        text.append("# Example: 25 means highest 25%% (UPPER) or lowest 25%% (LOWER).\n");
-        text.append("# Allowed range: 1-100.\n");
-        text.append("scope_percent: ").append(options.scopePercent).append("\n\n");
-
-        text.append("# Level range offset around the chosen base level.\n");
-        text.append("# This offset anchors one normal-mob bound from the computed reference level.\n");
-        text.append("# UPPER/ALL scope: anchors the normal mob MAX level (reference + offset).\n");
-        text.append("# LOWER scope: anchors the normal mob MIN level (reference - offset).\n");
+        text.append("# S-rank random offset range added above the highest player level.\n");
+        text.append("# Example: highest=100 and rolled offset=17 => normal mob minimum starts at 117.\n");
         text.append("# Minimum enforced value: 0.\n");
-        text.append("level_offset: ").append(options.levelOffset).append("\n\n");
+        text.append("level_offset_min: ").append(options.levelOffsetMin).append("\n");
+        text.append("level_offset_max: ").append(options.levelOffsetMax).append("\n\n");
 
         text.append("# Normal mob level spread size for the gate (inclusive range).\n");
-        text.append("# Example: 20 with max 80 => normal mobs are 60-80.\n");
+        text.append("# Example: 20 with anchor 80 => normal mobs are 60-80.\n");
         text.append("# Minimum enforced value: 0.\n");
         text.append("normal_mob_level_range: ").append(options.normalMobLevelRange).append("\n\n");
 
@@ -256,6 +259,21 @@ public final class AddonFilesManager {
         text.append("# Example: normal 60-80 with boss bonus 10 => boss is level 90.\n");
         text.append("# Minimum enforced value: 0.\n");
         text.append("boss_level_bonus: ").append(options.bossLevelBonus).append("\n\n");
+
+        text.append("# -----------------------------------------------------------------------\n");
+        text.append("# Rank weighting\n");
+        text.append("# -----------------------------------------------------------------------\n\n");
+
+        text.append("# Weighted chance used when rolling a gate rank.\n");
+        text.append("# Values are relative weights (not required to sum to 100).\n");
+        text.append("# Effective chance = tier_weight / total_weight.\n");
+        text.append("rank_weights:\n");
+        text.append("  S: ").append(options.rankWeightS).append("\n");
+        text.append("  A: ").append(options.rankWeightA).append("\n");
+        text.append("  B: ").append(options.rankWeightB).append("\n");
+        text.append("  C: ").append(options.rankWeightC).append("\n");
+        text.append("  D: ").append(options.rankWeightD).append("\n");
+        text.append("  E: ").append(options.rankWeightE).append("\n\n");
 
         text.append(AddonVersionRegistry.CONFIG_VERSION_KEY).append(": ").append(targetVersion).append("\n");
 
@@ -281,7 +299,7 @@ public final class AddonFilesManager {
         if (storedVersion >= 0 && storedVersion < targetVersion) {
             exportResourceDirectory(resourceRoot, destination, false);
             writeDirectoryVersion(destination, versionFileName, targetVersion);
-            LOGGER.atInfo().log("Migrated %s from version %d to %d (non-destructive)",
+                log(Level.INFO, "Migrated %s from version %d to %d (non-destructive)",
                     resourceRoot,
                     storedVersion,
                     targetVersion);
@@ -341,6 +359,10 @@ public final class AddonFilesManager {
                     examples.get("events"),
                     readBoolean(root.get("enable_example_events"), true));
 
+                boolean enableLogging = readBoolean(root.get("enable_logging"), false);
+                Map<String, Object> logging = asMap(root.get("logging"));
+                Level loggingBaseLevel = parseLogLevel(logging.get("base_level"), Level.WARNING);
+
             return new AddonContentOptions(
                     mergeRaces,
                     mergeClasses,
@@ -348,7 +370,9 @@ public final class AddonFilesManager {
                     mergePassives,
                     enableExamples,
                     enableExampleCommand,
-                    enableExampleEvents);
+                    enableExampleEvents,
+                    enableLogging,
+                    loggingBaseLevel);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -402,7 +426,7 @@ public final class AddonFilesManager {
                 }
             }
             ensureConfigVersionMarkerOnCreate(resourceName, yamlFile);
-            LOGGER.atInfo().log("YAML file %s created at %s", resourceName, yamlFile.getAbsolutePath());
+            log(Level.INFO, "YAML file %s created at %s", resourceName, yamlFile.getAbsolutePath());
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to create YAML file: " + resourceName, exception);
         }
@@ -464,6 +488,15 @@ public final class AddonFilesManager {
 
         text.append("# Addon updates are always migration-only and never force overwrite your files.\n\n");
 
+        text.append("# Master logging toggle: true enables addon INFO/FINE logging.\n");
+        text.append("enable_logging: ").append(options.enableLogging).append("\n\n");
+
+        text.append("logging:\n");
+        text.append("  # Base level used when enable_logging is true.\n");
+        text.append("  # Supported: SEVERE, WARNING, INFO, FINE\n");
+        text.append("  # When enable_logging is false, this is clamped to WARNING/SEVERE.\n");
+        text.append("  base_level: ").append(options.loggingBaseLevel.getName()).append("\n\n");
+
         text.append("examples:\n");
         text.append("  # Master switch for all Java example features in this addon.\n");
         text.append("  enabled: ").append(options.examplesEnabled).append("\n\n");
@@ -487,7 +520,7 @@ public final class AddonFilesManager {
     private void copyResourceToFile(String resourcePath, File targetFile, boolean overwriteExisting) {
         try (InputStream resourceStream = plugin.getClassLoader().getResourceAsStream(resourcePath)) {
             if (resourceStream == null) {
-                LOGGER.atWarning().log("Resource %s not found in addon JAR", resourcePath);
+                log(Level.WARNING, "Resource %s not found in addon JAR", resourcePath);
                 return;
             }
             File parent = targetFile.getParentFile();
@@ -514,7 +547,7 @@ public final class AddonFilesManager {
                 .toFile();
 
         if (!coreWorldSettingsFolder.exists() && !coreWorldSettingsFolder.mkdirs()) {
-            LOGGER.atWarning().log("Unable to create core world-settings folder at %s",
+                log(Level.WARNING, "Unable to create core world-settings folder at %s",
                     coreWorldSettingsFolder.getAbsolutePath());
             return;
         }
@@ -524,7 +557,7 @@ public final class AddonFilesManager {
             try {
                 Files.deleteIfExists(legacyTargetFile.toPath());
             } catch (IOException exception) {
-                LOGGER.atWarning().log("Unable to remove legacy gate world-settings bundle at %s: %s",
+                log(Level.WARNING, "Unable to remove legacy gate world-settings bundle at %s: %s",
                         legacyTargetFile.getAbsolutePath(),
                         exception.getMessage());
             }
@@ -532,12 +565,12 @@ public final class AddonFilesManager {
 
         File targetFile = new File(coreWorldSettingsFolder, GATE_WORLD_SETTINGS_FILE_NAME);
         copyResourceToFile(GATE_WORLD_SETTINGS_RESOURCE, targetFile, true);
-        LOGGER.atInfo().log("Synced addon gate world-settings bundle to %s", targetFile.getAbsolutePath());
+        log(Level.INFO, "Synced addon gate world-settings bundle to %s", targetFile.getAbsolutePath());
 
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
         if (api != null) {
             api.reloadWorldSettings();
-            LOGGER.atInfo().log("Triggered core world-settings reload after sync");
+            log(Level.INFO, "Triggered core world-settings reload after sync");
         }
     }
 
@@ -560,10 +593,10 @@ public final class AddonFilesManager {
             try {
                 copyRecursively(sourcePath, targetPath);
                 appendArchiveIndexLine(archiveRoot, sourcePath, targetPath, priorVersionTag);
-                LOGGER.atInfo().log("Archived %s to %s", sourcePath, targetPath);
+                log(Level.INFO, "Archived %s to %s", sourcePath, targetPath);
                 return targetPath;
             } catch (IOException e) {
-                LOGGER.atWarning().log("Failed to archive %s: %s", sourcePath, e.getMessage());
+                log(Level.WARNING, "Failed to archive %s: %s", sourcePath, e.getMessage());
                 return null;
             }
         }
@@ -662,7 +695,7 @@ public final class AddonFilesManager {
             Files.createDirectories(destination.toPath());
             CodeSource codeSource = plugin.getClass().getProtectionDomain().getCodeSource();
             if (codeSource == null) {
-                LOGGER.atWarning().log("Unable to locate code source while exporting %s", resourceRoot);
+                log(Level.WARNING, "Unable to locate code source while exporting %s", resourceRoot);
                 return;
             }
 
@@ -670,7 +703,7 @@ public final class AddonFilesManager {
             if (Files.isDirectory(sourcePath)) {
                 Path resourcePath = sourcePath.resolve(resourceRoot);
                 if (!Files.exists(resourcePath)) {
-                    LOGGER.atWarning().log("Resource directory %s not found under %s", resourceRoot, sourcePath);
+                    log(Level.WARNING, "Resource directory %s not found under %s", resourceRoot, sourcePath);
                     return;
                 }
                 copyDirectory(resourcePath, destination.toPath(), overwriteExisting);
@@ -708,7 +741,7 @@ public final class AddonFilesManager {
                 }
             }
         } catch (Exception e) {
-            LOGGER.atWarning().log("Failed to export resource directory %s: %s", resourceRoot, e.getMessage());
+            log(Level.WARNING, "Failed to export resource directory %s: %s", resourceRoot, e.getMessage());
         }
     }
 
@@ -729,14 +762,14 @@ public final class AddonFilesManager {
                     .map(path -> path.toString().toLowerCase())
                     .anyMatch(path -> path.endsWith(".yml") || path.endsWith(".yaml"));
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to inspect %s for YAML files: %s", folder, e.getMessage());
+            log(Level.WARNING, "Failed to inspect %s for YAML files: %s", folder, e.getMessage());
             return false;
         }
     }
 
     private void copyDirectory(Path source, Path destination, boolean overwriteExisting) throws IOException {
         if (!Files.exists(source)) {
-            LOGGER.atWarning().log("Source directory %s does not exist when exporting resources.", source);
+            log(Level.WARNING, "Source directory %s does not exist when exporting resources.", source);
             return;
         }
         try (Stream<Path> stream = Files.walk(source)) {
@@ -757,7 +790,7 @@ public final class AddonFilesManager {
             }
             Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to copy resource %s: %s", relative, e.getMessage());
+            log(Level.WARNING, "Failed to copy resource %s: %s", relative, e.getMessage());
         }
     }
 
@@ -778,7 +811,7 @@ public final class AddonFilesManager {
         try {
             Files.writeString(versionPath, Integer.toString(version));
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to write %s: %s", versionFileName, e.getMessage());
+            log(Level.WARNING, "Failed to write %s: %s", versionFileName, e.getMessage());
         }
     }
 
@@ -862,6 +895,13 @@ public final class AddonFilesManager {
         return dungeonGateOptions == null ? DungeonGateOptions.defaults().maxConcurrentSpawns : dungeonGateOptions.maxConcurrentSpawns;
     }
 
+    @Nonnull
+    public List<String> getDungeonPortalWorldWhitelist() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().portalWorldWhitelist
+                : dungeonGateOptions.portalWorldWhitelist;
+    }
+
     public int getDungeonSpawnIntervalMinutes() {
         return dungeonGateOptions == null ? DungeonGateOptions.defaults().spawnIntervalMinutes : dungeonGateOptions.spawnIntervalMinutes;
     }
@@ -894,9 +934,19 @@ public final class AddonFilesManager {
     }
 
     public int getDungeonLevelOffset() {
+        return getDungeonLevelOffsetMax();
+    }
+
+    public int getDungeonLevelOffsetMin() {
         return dungeonGateOptions == null
-                ? DungeonGateOptions.defaults().levelOffset
-                : dungeonGateOptions.levelOffset;
+                ? DungeonGateOptions.defaults().levelOffsetMin
+                : dungeonGateOptions.levelOffsetMin;
+    }
+
+    public int getDungeonLevelOffsetMax() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().levelOffsetMax
+                : dungeonGateOptions.levelOffsetMax;
     }
 
     public int getDungeonNormalMobLevelRange() {
@@ -924,8 +974,33 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.scopePercent;
     }
 
+    public int getDungeonRankWeightS() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightS : dungeonGateOptions.rankWeightS;
+    }
+
+    public int getDungeonRankWeightA() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightA : dungeonGateOptions.rankWeightA;
+    }
+
+    public int getDungeonRankWeightB() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightB : dungeonGateOptions.rankWeightB;
+    }
+
+    public int getDungeonRankWeightC() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightC : dungeonGateOptions.rankWeightC;
+    }
+
+    public int getDungeonRankWeightD() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightD : dungeonGateOptions.rankWeightD;
+    }
+
+    public int getDungeonRankWeightE() {
+        return dungeonGateOptions == null ? DungeonGateOptions.defaults().rankWeightE : dungeonGateOptions.rankWeightE;
+    }
+
     public void refreshContentOptions() {
         this.contentOptions = loadContentOptions();
+        AddonLoggingManager.configure(plugin, this.contentOptions.enableLogging, this.contentOptions.loggingBaseLevel);
     }
 
     public void refreshDungeonGateOptions() {
@@ -956,6 +1031,9 @@ public final class AddonFilesManager {
             if (root.get("max_concurrent_spawns") instanceof Number n) {
                 maxSpawns = n.intValue();
             }
+
+            List<String> portalWorldWhitelist = normalizeWorldWhitelist(root.get("portal_world_whitelist"),
+                    defaults.portalWorldWhitelist);
 
             int spawnInterval = defaults.spawnIntervalMinutes;
             if (root.get("spawn_interval_minutes") instanceof Number n) {
@@ -997,9 +1075,28 @@ public final class AddonFilesManager {
                 levelReferenceScope = "UPPER";
             }
 
-            int levelOffset = defaults.levelOffset;
+            int levelOffsetMin = defaults.levelOffsetMin;
+            int levelOffsetMax = defaults.levelOffsetMax;
+            if (root.get("level_offset_min") instanceof Number n) {
+                levelOffsetMin = Math.max(0, n.intValue());
+            }
+            if (root.get("level_offset_max") instanceof Number n) {
+                levelOffsetMax = Math.max(0, n.intValue());
+            }
+
+            // Backward compatibility for legacy single offset key.
             if (root.get("level_offset") instanceof Number n) {
-                levelOffset = Math.max(0, n.intValue());
+                int legacyOffset = Math.max(0, n.intValue());
+                if (!(root.get("level_offset_min") instanceof Number)) {
+                    levelOffsetMin = legacyOffset;
+                }
+                if (!(root.get("level_offset_max") instanceof Number)) {
+                    levelOffsetMax = legacyOffset;
+                }
+            }
+
+            if (levelOffsetMax < levelOffsetMin) {
+                levelOffsetMax = levelOffsetMin;
             }
 
             int normalMobLevelRange = defaults.normalMobLevelRange;
@@ -1021,10 +1118,40 @@ public final class AddonFilesManager {
                 scopePercent = clampScopePercent(n.intValue());
             }
 
-                return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
+            Map<String, Object> rankWeights = asMap(root.get("rank_weights"));
+            int rankWeightS = readRankWeight(rankWeights.get("S"), defaults.rankWeightS);
+            int rankWeightA = readRankWeight(rankWeights.get("A"), defaults.rankWeightA);
+            int rankWeightB = readRankWeight(rankWeights.get("B"), defaults.rankWeightB);
+            int rankWeightC = readRankWeight(rankWeights.get("C"), defaults.rankWeightC);
+            int rankWeightD = readRankWeight(rankWeights.get("D"), defaults.rankWeightD);
+            int rankWeightE = readRankWeight(rankWeights.get("E"), defaults.rankWeightE);
+
+            // Backward compatibility for flat keys.
+            if (root.containsKey("rank_weight_s")) {
+                rankWeightS = readRankWeight(root.get("rank_weight_s"), rankWeightS);
+            }
+            if (root.containsKey("rank_weight_a")) {
+                rankWeightA = readRankWeight(root.get("rank_weight_a"), rankWeightA);
+            }
+            if (root.containsKey("rank_weight_b")) {
+                rankWeightB = readRankWeight(root.get("rank_weight_b"), rankWeightB);
+            }
+            if (root.containsKey("rank_weight_c")) {
+                rankWeightC = readRankWeight(root.get("rank_weight_c"), rankWeightC);
+            }
+            if (root.containsKey("rank_weight_d")) {
+                rankWeightD = readRankWeight(root.get("rank_weight_d"), rankWeightD);
+            }
+            if (root.containsKey("rank_weight_e")) {
+                rankWeightE = readRankWeight(root.get("rank_weight_e"), rankWeightE);
+            }
+
+            return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
                     maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel,
-                    levelReferenceMode, levelReferenceScope, levelOffset,
-                    normalMobLevelRange, bossLevelBonus, scopePercent);
+                    portalWorldWhitelist,
+                    levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
+                    normalMobLevelRange, bossLevelBonus, scopePercent,
+                    rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -1054,6 +1181,63 @@ public final class AddonFilesManager {
         return Math.max(1, Math.min(100, value));
     }
 
+    @Nonnull
+    private static List<String> normalizeWorldWhitelist(Object rawValue, @Nonnull List<String> fallback) {
+        if (!(rawValue instanceof List<?> rawList)) {
+            return fallback;
+        }
+
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (Object entry : rawList) {
+            if (entry == null) {
+                continue;
+            }
+            String text = String.valueOf(entry).trim();
+            if (!text.isEmpty()) {
+                normalized.add(text);
+            }
+        }
+
+        if (normalized.isEmpty()) {
+            return fallback;
+        }
+        return List.copyOf(normalized);
+    }
+
+    private static int readRankWeight(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return Math.max(0, number.intValue());
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Math.max(0, Integer.parseInt(text.trim()));
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
+    @Nonnull
+    private static Level parseLogLevel(Object raw, @Nonnull Level fallback) {
+        if (raw == null) {
+            return fallback;
+        }
+
+        String text = String.valueOf(raw).trim().toUpperCase(Locale.ROOT);
+        return switch (text) {
+            case "SEVERE", "ERROR" -> Level.SEVERE;
+            case "WARNING", "WARN" -> Level.WARNING;
+            case "INFO" -> Level.INFO;
+            case "FINE", "DEBUG" -> Level.FINE;
+            default -> fallback;
+        };
+    }
+
+    private static void log(@Nonnull Level level, @Nonnull String message, Object... args) {
+        AddonLoggingManager.log(LOGGER, level, message, args);
+    }
+
     private static final class DungeonGateOptions {
         private final boolean enabled;
         private final boolean allowReentryAfterDeath;
@@ -1064,12 +1248,20 @@ public final class AddonFilesManager {
         private final int gateDurationMinutes;
         private final int maxPlayersPerInstance;
         private final int minLevelRequired;
+        private final List<String> portalWorldWhitelist;
         private final String levelReferenceMode;
         private final String levelReferenceScope;
-        private final int levelOffset;
+        private final int levelOffsetMin;
+        private final int levelOffsetMax;
         private final int normalMobLevelRange;
         private final int bossLevelBonus;
         private final int scopePercent;
+        private final int rankWeightS;
+        private final int rankWeightA;
+        private final int rankWeightB;
+        private final int rankWeightC;
+        private final int rankWeightD;
+        private final int rankWeightE;
 
         private DungeonGateOptions(boolean enabled,
                 boolean allowReentryAfterDeath,
@@ -1080,12 +1272,20 @@ public final class AddonFilesManager {
                 int gateDurationMinutes,
                 int maxPlayersPerInstance,
                 int minLevelRequired,
+                @Nonnull List<String> portalWorldWhitelist,
                 @Nonnull String levelReferenceMode,
                 @Nonnull String levelReferenceScope,
-                int levelOffset,
+                int levelOffsetMin,
+                int levelOffsetMax,
                 int normalMobLevelRange,
                 int bossLevelBonus,
-                int scopePercent) {
+                int scopePercent,
+                int rankWeightS,
+                int rankWeightA,
+                int rankWeightB,
+                int rankWeightC,
+                int rankWeightD,
+                int rankWeightE) {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
             this.announceOnSpawn = announceOnSpawn;
@@ -1095,17 +1295,27 @@ public final class AddonFilesManager {
             this.gateDurationMinutes = gateDurationMinutes;
             this.maxPlayersPerInstance = maxPlayersPerInstance;
             this.minLevelRequired = minLevelRequired;
+            this.portalWorldWhitelist = List.copyOf(portalWorldWhitelist);
             this.levelReferenceMode = levelReferenceMode;
             this.levelReferenceScope = levelReferenceScope;
-            this.levelOffset = levelOffset;
+            this.levelOffsetMin = Math.max(0, levelOffsetMin);
+            this.levelOffsetMax = Math.max(this.levelOffsetMin, levelOffsetMax);
             this.normalMobLevelRange = Math.max(0, normalMobLevelRange);
             this.bossLevelBonus = Math.max(0, bossLevelBonus);
             this.scopePercent = clampScopePercent(scopePercent);
+            this.rankWeightS = Math.max(0, rankWeightS);
+            this.rankWeightA = Math.max(0, rankWeightA);
+            this.rankWeightB = Math.max(0, rankWeightB);
+            this.rankWeightC = Math.max(0, rankWeightC);
+            this.rankWeightD = Math.max(0, rankWeightD);
+            this.rankWeightE = Math.max(0, rankWeightE);
         }
 
         private static DungeonGateOptions defaults() {
             return new DungeonGateOptions(true, false, true, true, 3, 30, 30, -1, 1,
-                    "AVERAGE", "UPPER", 30, 20, 10, 25);
+                    List.of("world", "default"),
+                    "AVERAGE", "UPPER", 0, 30, 20, 10, 25,
+                    1, 6, 13, 30, 25, 25);
         }
     }
 
@@ -1117,6 +1327,8 @@ public final class AddonFilesManager {
         private final boolean examplesEnabled;
         private final boolean exampleCommandEnabled;
         private final boolean exampleEventsEnabled;
+        private final boolean enableLogging;
+        private final Level loggingBaseLevel;
 
         private AddonContentOptions(boolean mergeRacesWithCore,
                 boolean mergeClassesWithCore,
@@ -1124,7 +1336,9 @@ public final class AddonFilesManager {
                 boolean mergePassivesWithCore,
                 boolean examplesEnabled,
                 boolean exampleCommandEnabled,
-                boolean exampleEventsEnabled) {
+                boolean exampleEventsEnabled,
+                boolean enableLogging,
+                @Nonnull Level loggingBaseLevel) {
             this.mergeRacesWithCore = mergeRacesWithCore;
             this.mergeClassesWithCore = mergeClassesWithCore;
             this.mergeAugmentsWithCore = mergeAugmentsWithCore;
@@ -1132,10 +1346,12 @@ public final class AddonFilesManager {
             this.examplesEnabled = examplesEnabled;
             this.exampleCommandEnabled = exampleCommandEnabled;
             this.exampleEventsEnabled = exampleEventsEnabled;
+            this.enableLogging = enableLogging;
+            this.loggingBaseLevel = loggingBaseLevel;
         }
 
         private static AddonContentOptions defaults() {
-            return new AddonContentOptions(true, true, true, true, true, true, true);
+            return new AddonContentOptions(true, true, true, true, true, true, true, false, Level.WARNING);
         }
     }
 }

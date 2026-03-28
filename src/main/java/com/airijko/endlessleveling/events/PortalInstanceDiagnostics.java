@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
@@ -311,13 +312,10 @@ public final class PortalInstanceDiagnostics {
     }
 
     private static void log(@Nonnull Level level, @Nonnull String message, Object... args) {
-        if (plugin == null) {
-            return;
-        }
         String formatted = args == null || args.length == 0
                 ? message
                 : String.format(Locale.ROOT, message, args);
-        plugin.getLogger().at(level).log("[ELPortal] " + formatted);
+        AddonLoggingManager.log(plugin, level, "[ELPortal] " + formatted);
     }
 
     private record PendingDeath(@Nonnull String worldName) {

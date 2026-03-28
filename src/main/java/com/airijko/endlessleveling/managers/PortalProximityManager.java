@@ -6,6 +6,7 @@ import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
+import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
@@ -116,9 +117,7 @@ public final class PortalProximityManager {
                 world.execute(() -> scanPlayer(world, playerRef, now));
             }
         } catch (Exception ex) {
-            if (plugin != null) {
-                plugin.getLogger().at(Level.WARNING).withCause(ex).log("[ELPortal] Proximity scan tick failed");
-            }
+            AddonLoggingManager.log(plugin, Level.WARNING, ex, "[ELPortal] Proximity scan tick failed");
         }
     }
 
@@ -384,30 +383,15 @@ public final class PortalProximityManager {
     }
 
     @Nullable
-    private static String resolveBlockId(@Nullable Object blockType) {
+    private static String resolveBlockId(@Nullable BlockType blockType) {
         if (blockType == null) {
             return null;
         }
-        try {
-            Object id = blockType.getClass().getMethod("getId").invoke(blockType);
-            return id instanceof String stringId ? stringId : null;
-        } catch (ReflectiveOperationException ex) {
-            log(Level.WARNING,
-                    "[ELPortal] Failed to resolve block id from %s: %s",
-                    blockType.getClass().getName(),
-                    ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
-            return null;
-        }
+        return blockType.getId();
     }
 
     private static void log(@Nonnull Level level, @Nonnull String message, Object... args) {
-        if (plugin != null) {
-            if (args == null || args.length == 0) {
-                plugin.getLogger().at(level).log(message);
-            } else {
-                plugin.getLogger().at(level).log(String.format(Locale.ROOT, message, args));
-            }
-        }
+        AddonLoggingManager.log(plugin, level, message, args);
     }
 
     private record PortalCandidate(String blockId,

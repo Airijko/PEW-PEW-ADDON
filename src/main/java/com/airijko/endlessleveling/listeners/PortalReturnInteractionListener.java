@@ -4,6 +4,7 @@ import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.vector.Vector3i;
+import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.event.events.player.PlayerInteractEvent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -61,16 +62,12 @@ public final class PortalReturnInteractionListener {
 
     @Nonnull
     private static String resolveBlockId(@Nonnull World world, @Nonnull Vector3i position) {
-        Object blockType = world.getBlockType(position.x, position.y, position.z);
+        BlockType blockType = world.getBlockType(position.x, position.y, position.z);
         if (blockType == null) {
             return "";
         }
-        try {
-            Object id = blockType.getClass().getMethod("getId").invoke(blockType);
-            return id instanceof String value ? value : String.valueOf(id);
-        } catch (Exception ignored) {
-            return String.valueOf(blockType);
-        }
+        String blockId = blockType.getId();
+        return blockId == null ? "" : blockId;
     }
 
     private static boolean isReturnPortalBlockId(@Nonnull String blockId) {

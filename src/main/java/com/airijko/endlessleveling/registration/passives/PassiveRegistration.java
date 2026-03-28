@@ -6,6 +6,7 @@ import com.airijko.endlessleveling.enums.DamageLayer;
 import com.airijko.endlessleveling.enums.PassiveStackingStyle;
 import com.airijko.endlessleveling.enums.PassiveTier;
 import com.airijko.endlessleveling.enums.SkillAttributeType;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.hypixel.hytale.logger.HytaleLogger;
 import org.yaml.snakeyaml.Yaml;
@@ -21,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import java.util.logging.Level;
 
 /**
  * Scans the passives directory and registers all enabled passives into Endless Leveling via API.
@@ -41,7 +43,7 @@ public final class PassiveRegistration {
      */
     public static int registerAll(File passivesFolder) {
         if (passivesFolder == null || !passivesFolder.isDirectory()) {
-            LOGGER.atWarning().log("Passives folder is null or not a directory");
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Passives folder is null or not a directory");
             return 0;
         }
 
@@ -63,10 +65,10 @@ public final class PassiveRegistration {
                 }
             }
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to scan passives folder: %s", e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to scan passives folder: %s", e.getMessage());
         }
 
-        LOGGER.atInfo().log("Registered %d addon passive(s)", count);
+        AddonLoggingManager.log(LOGGER, Level.INFO, "Registered %d addon passive(s)", count);
         return count;
     }
 
@@ -78,17 +80,17 @@ public final class PassiveRegistration {
             }
 
             if (!config.enabled) {
-                LOGGER.atFine().log("Skipping disabled passive: %s", config.id);
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping disabled passive: %s", config.id);
                 return false;
             }
 
             if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), config.id)) {
-                LOGGER.atFine().log("Skipping example passive due to config: %s", config.id);
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping example passive due to config: %s", config.id);
                 return false;
             }
 
             if (config.type == null) {
-                LOGGER.atWarning().log("Passive %s has invalid or missing type", config.id);
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Passive %s has invalid or missing type", config.id);
                 return false;
             }
 
@@ -105,13 +107,13 @@ public final class PassiveRegistration {
             boolean success = EndlessLevelingAPI.get().registerArchetypePassiveSource(source);
             if (success) {
                 registeredSources.add(source);
-                LOGGER.atInfo().log("Registered addon passive: %s (%s)", config.id, config.type);
+                AddonLoggingManager.log(LOGGER, Level.INFO, "Registered addon passive: %s (%s)", config.id, config.type);
             } else {
-                LOGGER.atWarning().log("Failed to register passive: %s", config.id);
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to register passive: %s", config.id);
             }
             return success;
         } catch (Exception e) {
-            LOGGER.atWarning().log("Error registering passive from %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Error registering passive from %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         }
     }
@@ -190,10 +192,10 @@ public final class PassiveRegistration {
             try {
                 if (EndlessLevelingAPI.get().unregisterArchetypePassiveSource(source)) {
                     count++;
-                    LOGGER.atInfo().log("Unregistered addon passive: %s", source.getId());
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Unregistered addon passive: %s", source.getId());
                 }
             } catch (Exception e) {
-                LOGGER.atWarning().log("Failed to unregister passive %s: %s", source.getId(), e.getMessage());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to unregister passive %s: %s", source.getId(), e.getMessage());
             }
         }
         registeredSources.clear();

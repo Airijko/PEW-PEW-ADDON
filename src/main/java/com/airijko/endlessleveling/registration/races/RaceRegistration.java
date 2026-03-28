@@ -1,6 +1,7 @@
 package com.airijko.endlessleveling.registration.races;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.parsing.RaceParser;
 import com.airijko.endlessleveling.races.RaceDefinition;
@@ -14,6 +15,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+import java.util.logging.Level;
 
 /**
  * Scans the races directory and registers all enabled races into Endless Leveling via API.
@@ -34,7 +36,7 @@ public final class RaceRegistration {
      */
     public static int registerAll(File racesFolder) {
         if (racesFolder == null || !racesFolder.isDirectory()) {
-            LOGGER.atWarning().log("Races folder is null or not a directory");
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Races folder is null or not a directory");
             return 0;
         }
 
@@ -56,10 +58,10 @@ public final class RaceRegistration {
                 }
             }
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to scan races folder: %s", e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to scan races folder: %s", e.getMessage());
         }
 
-        LOGGER.atInfo().log("Registered %d addon race(s)", count);
+        AddonLoggingManager.log(LOGGER, Level.INFO, "Registered %d addon race(s)", count);
         return count;
     }
 
@@ -71,28 +73,28 @@ public final class RaceRegistration {
             }
 
             if (!definition.isEnabled()) {
-                LOGGER.atFine().log("Skipping disabled race: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping disabled race: %s", definition.getId());
                 return false;
             }
 
             if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
-                LOGGER.atFine().log("Skipping example race due to config: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping example race due to config: %s", definition.getId());
                 return false;
             }
 
             boolean success = EndlessLevelingAPI.get().registerRace(definition, false);
             if (success) {
                 registeredRaceIds.add(definition.getId());
-                LOGGER.atInfo().log("Registered addon race: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.INFO, "Registered addon race: %s", definition.getId());
             } else {
-                LOGGER.atWarning().log("Failed to register race: %s (may already exist)", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to register race: %s (may already exist)", definition.getId());
             }
             return success;
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to parse race file %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to parse race file %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         } catch (Exception e) {
-            LOGGER.atWarning().log("Error registering race from %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Error registering race from %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         }
     }
@@ -108,10 +110,10 @@ public final class RaceRegistration {
             try {
                 if (EndlessLevelingAPI.get().unregisterRace(raceId)) {
                     count++;
-                    LOGGER.atInfo().log("Unregistered addon race: %s", raceId);
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Unregistered addon race: %s", raceId);
                 }
             } catch (Exception e) {
-                LOGGER.atWarning().log("Failed to unregister race %s: %s", raceId, e.getMessage());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to unregister race %s: %s", raceId, e.getMessage());
             }
         }
         registeredRaceIds.clear();

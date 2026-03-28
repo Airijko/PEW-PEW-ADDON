@@ -52,10 +52,16 @@ public final class NaturalPortalGateManager {
     private static final String PREFIX = "[EndlessLeveling] ";
     private static final int DYNAMIC_MIN_LEVEL = 1;
     private static final int DYNAMIC_MAX_LEVEL = 500;
-    private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET = 30;
+    private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET_MIN = 0;
+    private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET_MAX = 30;
     private static final int DEFAULT_NORMAL_MOB_LEVEL_RANGE = 20;
     private static final int DEFAULT_BOSS_LEVEL_BONUS = 10;
-    private static final int DEFAULT_UPPER_TOP_PERCENT = 25;
+    private static final int DEFAULT_WEIGHT_S = 1;
+    private static final int DEFAULT_WEIGHT_A = 6;
+    private static final int DEFAULT_WEIGHT_B = 13;
+    private static final int DEFAULT_WEIGHT_C = 30;
+    private static final int DEFAULT_WEIGHT_D = 25;
+    private static final int DEFAULT_WEIGHT_E = 25;
     private static final int AIR_BLOCK_ID = 0;
     private static final long REMOVAL_RETRY_INTERVAL_SECONDS = 10L;
     private static final int REMOVAL_RETRY_BATCH_PER_WORLD = 32;
@@ -87,11 +93,10 @@ public final class NaturalPortalGateManager {
             REMOVAL_RETRY_INTERVAL_SECONDS,
             TimeUnit.SECONDS
         );
-        plugin.getLogger().at(Level.INFO).log(
-                "[ELPortal] Natural gate spawner enabled: every %d minute(s), lifetime %d minute(s)",
+        log(Level.INFO,
+            "[ELPortal] Natural gate spawner enabled: every %d minute(s), lifetime %d minute(s)",
             spawnIntervalMinutes,
-            gateLifetimeMinutes
-        );
+            gateLifetimeMinutes);
     }
 
     public static void shutdown() {
@@ -112,6 +117,12 @@ public final class NaturalPortalGateManager {
         refreshConfigSnapshot();
         World world = player.getWorld();
         if (world == null) {
+            return CompletableFuture.completedFuture(false);
+        }
+        if (!isPortalWorldAllowed(world)) {
+            log(Level.INFO,
+                    "[ELPortal] Spawn blocked: world %s is not in portal_world_whitelist",
+                    world.getName());
             return CompletableFuture.completedFuture(false);
         }
 
@@ -156,8 +167,9 @@ public final class NaturalPortalGateManager {
                 return;
             }
 
-            List<PlayerRef> players = universe.getPlayers();
+            List<PlayerRef> players = resolveEligiblePlayers(universe);
             if (players.isEmpty()) {
+                log(Level.INFO, "[ELPortal] Spawn skipped: no online players in whitelisted worlds");
                 return;
             }
 
@@ -169,6 +181,9 @@ public final class NaturalPortalGateManager {
 
             World world = universe.getWorld(worldUuid);
             if (world == null) {
+                return;
+            }
+            if (!isPortalWorldAllowed(world)) {
                 return;
             }
 
@@ -184,9 +199,7 @@ public final class NaturalPortalGateManager {
             String blockId = pickRandomPortalBlock();
             spawnGateViaWorldDispatch(world, target, blockId, false);
         } catch (Exception ex) {
-            if (plugin != null) {
-                plugin.getLogger().at(Level.WARNING).withCause(ex).log("[ELPortal] Natural gate tick failed");
-            }
+            AddonLoggingManager.log(plugin, Level.WARNING, ex, "[ELPortal] Natural gate tick failed");
         }
     }
 
@@ -198,6 +211,45 @@ public final class NaturalPortalGateManager {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         world.execute(() -> spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, isTestSpawn, future));
         return future;
+    }
+
+    @Nonnull
+    private static List<PlayerRef> resolveEligiblePlayers(@Nonnull Universe universe) {
+        List<PlayerRef> eligiblePlayers = new ArrayList<>();
+        for (PlayerRef player : universe.getPlayers()) {
+            if (player == null) {
+                continue;
+            }
+
+            UUID worldUuid = player.getWorldUuid();
+            if (worldUuid == null) {
+                continue;
+            }
+
+            World world = universe.getWorld(worldUuid);
+            if (world != null && isPortalWorldAllowed(world)) {
+                eligiblePlayers.add(player);
+            }
+        }
+        return eligiblePlayers;
+    }
+
+    private static boolean isPortalWorldAllowed(@Nonnull World world) {
+        if (filesManager == null) {
+            return true;
+        }
+
+        String worldName = world.getName();
+        if (worldName == null || worldName.isBlank()) {
+            return false;
+        }
+
+        for (String allowedName : filesManager.getDungeonPortalWorldWhitelist()) {
+            if (worldName.equalsIgnoreCase(allowedName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void spawnInWorldNearPlayerRefOnThread(@Nonnull World world,
@@ -228,12 +280,11 @@ public final class NaturalPortalGateManager {
                     continue;
                 }
 
-                LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef);
+                GateRank gateRank = resolveGateRank();
+                LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef, gateRank.tier);
                 int normalLevelMin = levelRange.normalMin;
                 int normalLevelMax = levelRange.normalMax;
                 int bossLevel = levelRange.bossLevel;
-                int highestPlayerLevel = resolveHighestPlayerLevelForWorld(playerRef);
-                GateRank gateRank = resolveGateRank(normalLevelMin, normalLevelMax, highestPlayerLevel);
                 String rankedBlockId = blockId + gateRank.tier.blockIdSuffix();
                 chunk.setBlock(x, y, z, rankedBlockId);
                 trackActiveGate(world, rankedBlockId, x, y, z);
@@ -241,34 +292,28 @@ public final class NaturalPortalGateManager {
                 if (isAnnounceOnSpawnEnabled()) {
                         announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
-                if (plugin != null) {
-                    plugin.getLogger().at(Level.INFO).log(
-                            "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s ratio=%.2f normalRange=%d-%d bossLevel=%d",
-                            world.getName(),
-                            rankedBlockId,
-                            isTestSpawn,
-                            x,
-                            y,
-                            z,
-                            gateRank.tier.letter(),
-                            gateRank.ratio,
-                            normalLevelMin,
-                            normalLevelMax,
-                            bossLevel
-                    );
-                }
+                log(Level.INFO,
+                    "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                    world.getName(),
+                    rankedBlockId,
+                    isTestSpawn,
+                    x,
+                    y,
+                    z,
+                    gateRank.tier.letter(),
+                    gateRank.roll,
+                    normalLevelMin,
+                    normalLevelMax,
+                    bossLevel);
                 scheduleRemoval(world, rankedBlockId, x, y, z);
                 future.complete(true);
                 return;
             }
 
-            if (plugin != null) {
-                plugin.getLogger().at(Level.INFO).log(
-                        "[ELPortal] No loaded chunk found near %s in world %s for gate placement",
-                        playerRef.getUsername(),
-                        world.getName()
-                );
-            }
+                log(Level.INFO,
+                    "[ELPortal] No loaded chunk found near %s in world %s for gate placement",
+                    playerRef.getUsername(),
+                    world.getName());
             future.complete(false);
     }
 
@@ -438,21 +483,23 @@ public final class NaturalPortalGateManager {
     }
 
     @Nonnull
-    private static LevelRange resolveLevelRangeForWorld(@Nonnull World world, @Nonnull PlayerRef anchorPlayerRef) {
-        int baseLevel = resolveReferenceLevelForWorld(world, anchorPlayerRef);
-        int offset = resolveLevelOffset();
+    private static LevelRange resolveLevelRangeForWorld(@Nonnull World world,
+                                                         @Nonnull PlayerRef anchorPlayerRef,
+                                                         @Nonnull GateRankTier rankTier) {
+        LevelBand worldBand = resolveGlobalLevelBand(anchorPlayerRef);
         int normalRange = resolveNormalMobLevelRange();
         int bossBonus = resolveBossLevelBonus();
 
-        boolean anchorAtMin = "LOWER".equals(resolveLevelReferenceScope());
         int normalMin;
         int normalMax;
 
-        if (anchorAtMin) {
-            normalMin = clampDynamicLevel(baseLevel - offset);
+        if (rankTier == GateRankTier.S) {
+            int sOffset = resolveSOffset();
+            normalMin = clampDynamicLevel(worldBand.maxLevel() + sOffset);
             normalMax = clampDynamicLevel(normalMin + normalRange);
         } else {
-            normalMax = clampDynamicLevel(baseLevel + offset);
+            int baseLevel = resolveRankAnchorLevel(worldBand.minLevel(), worldBand.maxLevel(), rankTier);
+            normalMax = clampDynamicLevel(baseLevel);
             normalMin = clampDynamicLevel(normalMax - normalRange);
         }
 
@@ -465,17 +512,19 @@ public final class NaturalPortalGateManager {
         return new LevelRange(normalMin, normalMax, bossLevel);
     }
 
-    private static int resolveReferenceLevelForWorld(@Nonnull World world, @Nonnull PlayerRef anchorPlayerRef) {
-        UUID worldUuid = anchorPlayerRef.getWorldUuid();
+    @Nonnull
+    private static LevelBand resolveGlobalLevelBand(@Nonnull PlayerRef anchorPlayerRef) {
         Universe universe = Universe.get();
-        if (universe == null || worldUuid == null) {
-            return resolveFallbackLevel(anchorPlayerRef);
+        if (universe == null) {
+            int fallbackLevel = resolveFallbackLevel(anchorPlayerRef);
+            return new LevelBand(fallbackLevel, fallbackLevel);
         }
 
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
-        List<Integer> worldLevels = new ArrayList<>();
+        int minLevel = Integer.MAX_VALUE;
+        int maxLevel = Integer.MIN_VALUE;
         for (PlayerRef player : universe.getPlayers()) {
-            if (player == null || !worldUuid.equals(player.getWorldUuid())) {
+            if (player == null) {
                 continue;
             }
 
@@ -486,59 +535,17 @@ public final class NaturalPortalGateManager {
 
             int level = api != null ? api.getPlayerLevel(playerUuid) : 0;
             if (level > 0) {
-                worldLevels.add(level);
+                minLevel = Math.min(minLevel, level);
+                maxLevel = Math.max(maxLevel, level);
             }
         }
 
-        if (worldLevels.isEmpty()) {
-            return resolveFallbackLevel(anchorPlayerRef);
+        if (minLevel == Integer.MAX_VALUE || maxLevel == Integer.MIN_VALUE) {
+            int fallbackLevel = resolveFallbackLevel(anchorPlayerRef);
+            return new LevelBand(fallbackLevel, fallbackLevel);
         }
 
-        List<Integer> scopedLevels = applyLevelReferenceScope(worldLevels);
-        String mode = resolveLevelReferenceMode();
-        return switch (mode) {
-            case "HIGHEST" -> scopedLevels.stream().max(Integer::compareTo).orElse(DYNAMIC_MIN_LEVEL);
-            case "AVERAGE" -> {
-                long sum = 0L;
-                for (int level : scopedLevels) {
-                    sum += level;
-                }
-                yield (int) Math.round(sum / (double) scopedLevels.size());
-            }
-            case "MEDIAN" -> {
-                Collections.sort(scopedLevels);
-                int size = scopedLevels.size();
-                int mid = size / 2;
-                if ((size % 2) == 1) {
-                    yield scopedLevels.get(mid);
-                }
-                int lower = scopedLevels.get(mid - 1);
-                int upper = scopedLevels.get(mid);
-                yield (int) Math.round((lower + upper) / 2.0D);
-            }
-            default -> resolveFallbackLevel(anchorPlayerRef);
-        };
-    }
-
-    @Nonnull
-    private static List<Integer> applyLevelReferenceScope(@Nonnull List<Integer> sourceLevels) {
-        String scope = resolveLevelReferenceScope();
-        if ("ALL".equals(scope)) {
-            return new ArrayList<>(sourceLevels);
-        }
-
-        List<Integer> sorted = new ArrayList<>(sourceLevels);
-        Collections.sort(sorted);
-        int scopePercent = resolveScopePercent();
-        int bucketCount = Math.max(1, (int) Math.ceil(sorted.size() * (scopePercent / 100.0D)));
-
-        if ("LOWER".equals(scope)) {
-            int endIndex = Math.min(sorted.size(), bucketCount);
-            return new ArrayList<>(sorted.subList(0, endIndex));
-        }
-
-        int startIndex = Math.max(0, sorted.size() - bucketCount);
-        return new ArrayList<>(sorted.subList(startIndex, sorted.size()));
+        return new LevelBand(clampDynamicLevel(minLevel), clampDynamicLevel(maxLevel));
     }
 
     private static int resolveFallbackLevel(@Nonnull PlayerRef playerRef) {
@@ -551,84 +558,138 @@ public final class NaturalPortalGateManager {
         return level > 0 ? level : DYNAMIC_MIN_LEVEL;
     }
 
-    private static int resolveHighestPlayerLevelForWorld(@Nonnull PlayerRef anchorPlayerRef) {
-        UUID worldUuid = anchorPlayerRef.getWorldUuid();
-        Universe universe = Universe.get();
-        if (universe == null || worldUuid == null) {
-            return resolveFallbackLevel(anchorPlayerRef);
+    private static int resolveRankAnchorLevel(int minLevel, int maxLevel, @Nonnull GateRankTier tier) {
+        if (maxLevel <= minLevel) {
+            return clampDynamicLevel(minLevel);
         }
 
-        EndlessLevelingAPI api = EndlessLevelingAPI.get();
-        int highest = 0;
-        for (PlayerRef player : universe.getPlayers()) {
-            if (player == null || !worldUuid.equals(player.getWorldUuid())) {
-                continue;
-            }
+        RankWeights weights = resolveRankWeights();
+        WeightRange weightRange = resolveWeightRangeForTier(weights, tier);
+        int total = Math.max(1, weights.total());
+        int span = Math.max(1, maxLevel - minLevel);
 
-            UUID playerUuid = player.getUuid();
-            if (playerUuid == null) {
-                continue;
-            }
+        int bandMin = minLevel + (int) Math.round(span * (weightRange.startInclusive() / (double) total));
+        int bandMax = minLevel + (int) Math.round(span * (weightRange.endExclusive() / (double) total));
+        bandMin = clampDynamicLevel(Math.min(bandMin, maxLevel));
+        bandMax = clampDynamicLevel(Math.min(Math.max(bandMax, bandMin), maxLevel));
 
-            int level = api != null ? api.getPlayerLevel(playerUuid) : 0;
-            if (level > highest) {
-                highest = level;
-            }
+        if (bandMax <= bandMin) {
+            return bandMin;
         }
-
-        if (highest <= 0) {
-            return resolveFallbackLevel(anchorPlayerRef);
-        }
-        return highest;
+        return randomInt(bandMin, bandMax);
     }
 
     @Nonnull
-    private static GateRank resolveGateRank(int levelMin, int levelMax, int highestPlayerLevel) {
-        int dungeonLevel = Math.max(levelMin, levelMax);
-        int safeHighestLevel = Math.max(1, highestPlayerLevel);
-        double ratio = dungeonLevel / (double) safeHighestLevel;
-        return new GateRank(GateRankTier.fromRatio(ratio), ratio);
+    private static WeightRange resolveWeightRangeForTier(@Nonnull RankWeights weights, @Nonnull GateRankTier tier) {
+        int start;
+        int end;
+
+        switch (tier) {
+            case E -> {
+                start = 0;
+                end = weights.e();
+            }
+            case D -> {
+                start = weights.e();
+                end = start + weights.d();
+            }
+            case C -> {
+                start = weights.e() + weights.d();
+                end = start + weights.c();
+            }
+            case B -> {
+                start = weights.e() + weights.d() + weights.c();
+                end = start + weights.b();
+            }
+            case A -> {
+                start = weights.e() + weights.d() + weights.c() + weights.b();
+                end = start + weights.a();
+            }
+            case S -> {
+                start = weights.e() + weights.d() + weights.c() + weights.b() + weights.a();
+                end = start + weights.s();
+            }
+            default -> {
+                start = 0;
+                end = Math.max(1, weights.total());
+            }
+        }
+        if (end <= start) {
+            end = start + 1;
+        }
+        return new WeightRange(start, end);
+    }
+
+    private static int resolveSOffset() {
+        int minOffset = resolveLevelOffsetMin();
+        int maxOffset = resolveLevelOffsetMax();
+        if (maxOffset <= minOffset) {
+            return minOffset;
+        }
+        return randomInt(minOffset, maxOffset);
+    }
+
+    private static int resolveLevelOffsetMin() {
+        if (filesManager == null) {
+            return DEFAULT_DYNAMIC_LEVEL_OFFSET_MIN;
+        }
+        return Math.max(0, filesManager.getDungeonLevelOffsetMin());
+    }
+
+    private static int resolveLevelOffsetMax() {
+        if (filesManager == null) {
+            return DEFAULT_DYNAMIC_LEVEL_OFFSET_MAX;
+        }
+        return Math.max(resolveLevelOffsetMin(), filesManager.getDungeonLevelOffsetMax());
     }
 
     @Nonnull
-    private static String resolveLevelReferenceMode() {
-        if (filesManager == null) {
-            return "AVERAGE";
+    private static GateRank resolveGateRank() {
+        RankWeights weights = resolveRankWeights();
+        int roll = randomInt(1, weights.total());
+        int threshold = weights.s();
+        if (roll <= threshold) {
+            return new GateRank(GateRankTier.S, roll);
         }
-        String mode = filesManager.getDungeonLevelReferenceMode();
-        if (mode == null || mode.isBlank()) {
-            return "AVERAGE";
+
+        threshold += weights.a();
+        if (roll <= threshold) {
+            return new GateRank(GateRankTier.A, roll);
         }
-        String normalized = mode.trim().toUpperCase(Locale.ROOT);
-        if ("HIGHEST".equals(normalized)
-                || "MEDIAN".equals(normalized)
-                || "AVERAGE".equals(normalized)) {
-            return normalized;
+
+        threshold += weights.b();
+        if (roll <= threshold) {
+            return new GateRank(GateRankTier.B, roll);
         }
-        return "AVERAGE";
+
+        threshold += weights.c();
+        if (roll <= threshold) {
+            return new GateRank(GateRankTier.C, roll);
+        }
+
+        threshold += weights.d();
+        if (roll <= threshold) {
+            return new GateRank(GateRankTier.D, roll);
+        }
+
+        return new GateRank(GateRankTier.E, roll);
     }
 
     @Nonnull
-    private static String resolveLevelReferenceScope() {
+    private static RankWeights resolveRankWeights() {
         if (filesManager == null) {
-            return "UPPER";
+            return RankWeights.defaults();
         }
-        String scope = filesManager.getDungeonLevelReferenceScope();
-        if (scope == null || scope.isBlank()) {
-            return "UPPER";
-        }
-        String normalized = scope.trim().toUpperCase(Locale.ROOT);
-        if ("ALL".equals(normalized) || "UPPER".equals(normalized) || "LOWER".equals(normalized)) {
-            return normalized;
-        }
-        return "UPPER";
-    }
 
-    private static int resolveLevelOffset() {
-        if (filesManager == null) {
-            return DEFAULT_DYNAMIC_LEVEL_OFFSET;
-        }
-        return Math.max(0, filesManager.getDungeonLevelOffset());
+        int s = Math.max(0, filesManager.getDungeonRankWeightS());
+        int a = Math.max(0, filesManager.getDungeonRankWeightA());
+        int b = Math.max(0, filesManager.getDungeonRankWeightB());
+        int c = Math.max(0, filesManager.getDungeonRankWeightC());
+        int d = Math.max(0, filesManager.getDungeonRankWeightD());
+        int e = Math.max(0, filesManager.getDungeonRankWeightE());
+
+        RankWeights weights = new RankWeights(s, a, b, c, d, e);
+        return weights.total() > 0 ? weights : RankWeights.defaults();
     }
 
     private static int resolveNormalMobLevelRange() {
@@ -643,14 +704,6 @@ public final class NaturalPortalGateManager {
             return DEFAULT_BOSS_LEVEL_BONUS;
         }
         return Math.max(0, filesManager.getDungeonBossLevelBonus());
-    }
-
-    private static int resolveScopePercent() {
-        if (filesManager == null) {
-            return DEFAULT_UPPER_TOP_PERCENT;
-        }
-        int value = filesManager.getDungeonLevelReferenceScopePercent();
-        return Math.max(1, Math.min(100, value));
     }
 
     private static long resolveSpawnIntervalMinutes() {
@@ -720,11 +773,11 @@ public final class NaturalPortalGateManager {
 
     private static final class GateRank {
         private final GateRankTier tier;
-        private final double ratio;
+        private final int roll;
 
-        private GateRank(@Nonnull GateRankTier tier, double ratio) {
+        private GateRank(@Nonnull GateRankTier tier, int roll) {
             this.tier = tier;
-            this.ratio = ratio;
+            this.roll = roll;
         }
     }
 
@@ -784,15 +837,35 @@ public final class NaturalPortalGateManager {
     }
 
     private static void log(@Nonnull Level level, @Nonnull String format, Object... args) {
-        if (plugin == null) {
-            return;
-        }
-        plugin.getLogger().at(level).log(String.format(Locale.ROOT, format, args));
+        AddonLoggingManager.log(plugin, level, String.format(Locale.ROOT, format, args));
     }
 
     private record GateRemovalRequest(@Nonnull String blockId, int x, int y, int z) {
     }
 
     private record ActiveGate(@Nonnull UUID worldUuid, @Nonnull String blockId, int x, int y, int z) {
+    }
+
+    private record LevelBand(int minLevel, int maxLevel) {
+    }
+
+    private record WeightRange(int startInclusive, int endExclusive) {
+    }
+
+    private record RankWeights(int s, int a, int b, int c, int d, int e) {
+        private int total() {
+            return s + a + b + c + d + e;
+        }
+
+        @Nonnull
+        private static RankWeights defaults() {
+            return new RankWeights(
+                    DEFAULT_WEIGHT_S,
+                    DEFAULT_WEIGHT_A,
+                    DEFAULT_WEIGHT_B,
+                    DEFAULT_WEIGHT_C,
+                    DEFAULT_WEIGHT_D,
+                    DEFAULT_WEIGHT_E);
+        }
     }
 }

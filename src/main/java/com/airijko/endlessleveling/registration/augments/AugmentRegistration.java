@@ -5,6 +5,7 @@ import com.airijko.endlessleveling.augments.Augment;
 import com.airijko.endlessleveling.augments.AugmentDefinition;
 import com.airijko.endlessleveling.enums.PassiveCategory;
 import com.airijko.endlessleveling.enums.PassiveTier;
+import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.registration.augments.examples.ConquerorExampleAugment;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -22,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Stream;
+import java.util.logging.Level;
 
 /**
  * Scans the augments directory and registers all enabled augments into Endless Leveling via API.
@@ -46,7 +48,7 @@ public final class AugmentRegistration {
      */
     public static int registerAll(File augmentsFolder) {
         if (augmentsFolder == null || !augmentsFolder.isDirectory()) {
-            LOGGER.atWarning().log("Augments folder is null or not a directory");
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Augments folder is null or not a directory");
             return 0;
         }
 
@@ -68,10 +70,10 @@ public final class AugmentRegistration {
                 }
             }
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to scan augments folder: %s", e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to scan augments folder: %s", e.getMessage());
         }
 
-        LOGGER.atInfo().log("Registered %d addon augment(s)", count);
+        AddonLoggingManager.log(LOGGER, Level.INFO, "Registered %d addon augment(s)", count);
         return count;
     }
 
@@ -80,7 +82,7 @@ public final class AugmentRegistration {
             // Check if augment is enabled before parsing
             if (!isEnabled(yamlFile, yaml)) {
                 String fileName = yamlFile.getFileName().toString();
-                LOGGER.atFine().log("Skipping disabled augment: %s", fileName);
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping disabled augment: %s", fileName);
                 return false;
             }
 
@@ -90,7 +92,7 @@ public final class AugmentRegistration {
             }
 
             if (!ExampleFeatureManager.get().shouldRegisterContent(yamlFile.getFileName().toString(), definition.getId())) {
-                LOGGER.atFine().log("Skipping example augment due to config: %s", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.FINE, "Skipping example augment due to config: %s", definition.getId());
                 return false;
             }
 
@@ -104,19 +106,19 @@ public final class AugmentRegistration {
             if (success) {
                 registeredAugmentIds.add(definition.getId());
                 if (factory == null) {
-                    LOGGER.atInfo().log("Registered addon augment: %s", definition.getId());
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Registered addon augment: %s", definition.getId());
                 } else {
-                    LOGGER.atInfo().log("Registered addon augment with backend factory: %s", definition.getId());
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Registered addon augment with backend factory: %s", definition.getId());
                 }
             } else {
-                LOGGER.atWarning().log("Failed to register augment: %s (may already exist)", definition.getId());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to register augment: %s (may already exist)", definition.getId());
             }
             return success;
         } catch (IOException e) {
-            LOGGER.atWarning().log("Failed to parse augment file %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to parse augment file %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         } catch (Exception e) {
-            LOGGER.atWarning().log("Error registering augment from %s: %s", yamlFile.getFileName(), e.getMessage());
+            AddonLoggingManager.log(LOGGER, Level.WARNING, "Error registering augment from %s: %s", yamlFile.getFileName(), e.getMessage());
             return false;
         }
     }
@@ -268,10 +270,10 @@ public final class AugmentRegistration {
             try {
                 if (EndlessLevelingAPI.get().unregisterAugment(augmentId)) {
                     count++;
-                    LOGGER.atInfo().log("Unregistered addon augment: %s", augmentId);
+                    AddonLoggingManager.log(LOGGER, Level.INFO, "Unregistered addon augment: %s", augmentId);
                 }
             } catch (Exception e) {
-                LOGGER.atWarning().log("Failed to unregister augment %s: %s", augmentId, e.getMessage());
+                AddonLoggingManager.log(LOGGER, Level.WARNING, "Failed to unregister augment %s: %s", augmentId, e.getMessage());
             }
         }
         registeredAugmentIds.clear();
