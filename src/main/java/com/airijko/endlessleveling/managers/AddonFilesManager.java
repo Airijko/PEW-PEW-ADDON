@@ -191,8 +191,10 @@ public final class AddonFilesManager {
         text.append("# -----------------------------------------------------------------------\n\n");
 
         text.append("# How frequently (in minutes) a new dungeon gate can naturally spawn.\n");
+        text.append("# Each spawn cycle picks a random value between min and max (inclusive).\n");
         text.append("# Minimum enforced value: 1.\n");
-        text.append("spawn_interval_minutes: ").append(options.spawnIntervalMinutes).append("\n\n");
+        text.append("spawn_interval_minutes_min: ").append(options.spawnIntervalMinutesMin).append("\n");
+        text.append("spawn_interval_minutes_max: ").append(options.spawnIntervalMinutesMax).append("\n\n");
 
         text.append("# Maximum number of dungeon gate instances that may be active at the same time.\n");
         text.append("# Set to -1 for no limit.\n");
@@ -903,7 +905,21 @@ public final class AddonFilesManager {
     }
 
     public int getDungeonSpawnIntervalMinutes() {
-        return dungeonGateOptions == null ? DungeonGateOptions.defaults().spawnIntervalMinutes : dungeonGateOptions.spawnIntervalMinutes;
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnIntervalMinutesMax
+                : dungeonGateOptions.spawnIntervalMinutesMax;
+    }
+
+    public int getDungeonSpawnIntervalMinutesMin() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnIntervalMinutesMin
+                : dungeonGateOptions.spawnIntervalMinutesMin;
+    }
+
+    public int getDungeonSpawnIntervalMinutesMax() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnIntervalMinutesMax
+                : dungeonGateOptions.spawnIntervalMinutesMax;
     }
 
     public int getDungeonDurationMinutes() {
@@ -1035,9 +1051,28 @@ public final class AddonFilesManager {
             List<String> portalWorldWhitelist = normalizeWorldWhitelist(root.get("portal_world_whitelist"),
                     defaults.portalWorldWhitelist);
 
-            int spawnInterval = defaults.spawnIntervalMinutes;
+            int spawnIntervalMin = defaults.spawnIntervalMinutesMin;
+            int spawnIntervalMax = defaults.spawnIntervalMinutesMax;
+            if (root.get("spawn_interval_minutes_min") instanceof Number n) {
+                spawnIntervalMin = Math.max(1, n.intValue());
+            }
+            if (root.get("spawn_interval_minutes_max") instanceof Number n) {
+                spawnIntervalMax = Math.max(1, n.intValue());
+            }
+
+            // Backward compatibility for legacy single interval key.
             if (root.get("spawn_interval_minutes") instanceof Number n) {
-                spawnInterval = Math.max(1, n.intValue());
+                int legacyInterval = Math.max(1, n.intValue());
+                if (!(root.get("spawn_interval_minutes_min") instanceof Number)) {
+                    spawnIntervalMin = legacyInterval;
+                }
+                if (!(root.get("spawn_interval_minutes_max") instanceof Number)) {
+                    spawnIntervalMax = legacyInterval;
+                }
+            }
+
+            if (spawnIntervalMax < spawnIntervalMin) {
+                spawnIntervalMax = spawnIntervalMin;
             }
 
             int gateDuration = defaults.gateDurationMinutes;
@@ -1146,8 +1181,8 @@ public final class AddonFilesManager {
                 rankWeightE = readRankWeight(root.get("rank_weight_e"), rankWeightE);
             }
 
-            return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
-                    maxSpawns, spawnInterval, gateDuration, maxPlayers, minLevel,
+                return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
+                    maxSpawns, spawnIntervalMin, spawnIntervalMax, gateDuration, maxPlayers, minLevel,
                     portalWorldWhitelist,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
                     normalMobLevelRange, bossLevelBonus, scopePercent,
@@ -1244,7 +1279,8 @@ public final class AddonFilesManager {
         private final boolean announceOnSpawn;
         private final boolean announceOnDespawn;
         private final int maxConcurrentSpawns;
-        private final int spawnIntervalMinutes;
+        private final int spawnIntervalMinutesMin;
+        private final int spawnIntervalMinutesMax;
         private final int gateDurationMinutes;
         private final int maxPlayersPerInstance;
         private final int minLevelRequired;
@@ -1268,7 +1304,8 @@ public final class AddonFilesManager {
                 boolean announceOnSpawn,
             boolean announceOnDespawn,
                 int maxConcurrentSpawns,
-                int spawnIntervalMinutes,
+                int spawnIntervalMinutesMin,
+                int spawnIntervalMinutesMax,
                 int gateDurationMinutes,
                 int maxPlayersPerInstance,
                 int minLevelRequired,
@@ -1291,7 +1328,8 @@ public final class AddonFilesManager {
             this.announceOnSpawn = announceOnSpawn;
             this.announceOnDespawn = announceOnDespawn;
             this.maxConcurrentSpawns = maxConcurrentSpawns;
-            this.spawnIntervalMinutes = spawnIntervalMinutes;
+            this.spawnIntervalMinutesMin = Math.max(1, spawnIntervalMinutesMin);
+            this.spawnIntervalMinutesMax = Math.max(this.spawnIntervalMinutesMin, spawnIntervalMinutesMax);
             this.gateDurationMinutes = gateDurationMinutes;
             this.maxPlayersPerInstance = maxPlayersPerInstance;
             this.minLevelRequired = minLevelRequired;
@@ -1312,7 +1350,7 @@ public final class AddonFilesManager {
         }
 
         private static DungeonGateOptions defaults() {
-            return new DungeonGateOptions(true, false, true, true, 3, 30, 30, -1, 1,
+                return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
                     "AVERAGE", "UPPER", 0, 30, 20, 10, 25,
                     1, 6, 13, 30, 25, 25);

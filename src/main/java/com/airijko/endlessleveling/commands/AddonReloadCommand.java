@@ -40,9 +40,10 @@ public final class AddonReloadCommand extends AbstractCommand {
                     summary.registeredAugments,
                     summary.registeredPassives)).color("#9cd6ff"));
             context.sendMessage(Message.raw(String.format(
-                    "Dungeon gates: enabled=%s spawn_interval=%dmin duration=%dmin",
+                    "Dungeon gates: enabled=%s spawn_interval=%d-%dmin duration=%dmin",
                     summary.dungeonGateEnabled,
-                    summary.spawnIntervalMinutes,
+                    summary.spawnIntervalMinutesMin,
+                    summary.spawnIntervalMinutesMax,
                     summary.gateDurationMinutes)).color("#9cd6ff"));
         }).exceptionally(exception -> {
             Throwable cause = exception.getCause() != null ? exception.getCause() : exception;

@@ -8,8 +8,10 @@ enabled: true
 # -----------------------------------------------------------------------
 
 # How frequently (in minutes) a new dungeon gate can naturally spawn.
+# Each spawn cycle picks a random value between min and max (inclusive).
 # Minimum enforced value: 1.
-spawn_interval_minutes: 20
+spawn_interval_minutes_min: 25
+spawn_interval_minutes_max: 40
 
 # Maximum number of dungeon gate instances that may be active at the same time.
 # Set to -1 for no limit.

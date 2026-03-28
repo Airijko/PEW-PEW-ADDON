@@ -168,9 +168,10 @@ public final class PortalProximityManager {
                     playerRef,
                     world,
                     candidate.blockId(),
-                anchor.x(),
-                anchor.y(),
-                anchor.z());
+                    anchor.x(),
+                    anchor.y(),
+                    anchor.z(),
+                    anchor.gateId());
         }
 
         if (triggered) {

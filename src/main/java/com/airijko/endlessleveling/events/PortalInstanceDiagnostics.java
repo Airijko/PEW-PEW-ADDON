@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -38,6 +39,9 @@ public final class PortalInstanceDiagnostics {
             "EL_MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0))),
             "EL_MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0))),
             "EL_MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0))),
+            "MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0))),
+            "MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0))),
+            "MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0))),
             "EL_Endgame_Frozen_Dungeon", new InstanceDebugDefinition("Endgame Frozen Dungeon", List.of(spawn(-17.0, 104.0, 65.0))),
             "EL_Endgame_Swamp_Dungeon", new InstanceDebugDefinition("Endgame Swamp Dungeon", List.of(spawn(4.0, 115.0, 145.0))),
             "EL_Endgame_Golem_Void", new InstanceDebugDefinition(
@@ -57,6 +61,7 @@ public final class PortalInstanceDiagnostics {
 
     private static final Map<String, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<String> PENDING_INSTANCE_REMOVALS = ConcurrentHashMap.newKeySet();
+    private static final Set<String> EXPLICIT_DEATH_WIPE_REMOVALS = ConcurrentHashMap.newKeySet();
     private static final Map<String, InstanceDebugDefinition> TEMPLATE_NAME_INDEX;
 
     static {
@@ -140,6 +145,10 @@ public final class PortalInstanceDiagnostics {
                 worldName,
                 pendingDeath != null,
                 format(event.getTransform() == null ? null : event.getTransform().getPosition()));
+
+        if (pendingDeath != null && pendingDeath.worldName.equals(worldName)) {
+            attemptDeathWipeWhenWorldEmpties(worldName, playerRef.getUsername());
+        }
     }
 
     public static void onWorldRemoved(@Nonnull RemoveWorldEvent event) {
@@ -155,7 +164,20 @@ public final class PortalInstanceDiagnostics {
         if (api != null) {
             api.removeMobWorldFixedLevelOverride(worldName);
         }
-        PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
+
+        boolean explicitDeathWipe = EXPLICIT_DEATH_WIPE_REMOVALS.remove(worldName);
+        if (explicitDeathWipe) {
+            PortalLeveledInstanceRouter.unpairInstanceWorldPreservingExpectation(worldName, "all-players-dead");
+            PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
+        }
+
+        // Keep level metadata if this world is still paired to an active gate.
+        // The world can be unloaded while empty and later reloaded for the same gate.
+        if (!explicitDeathWipe && !PortalLeveledInstanceRouter.isInstancePairedToActiveGate(worldName)) {
+            PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
+        } else if (!explicitDeathWipe) {
+            PortalLeveledInstanceRouter.reloadPairedInstanceIfPossible(worldName, "world-removed-while-gate-active");
+        }
 
         log(Level.INFO,
                 "world-remove world=%s reason=%s cancelled=%s",
@@ -285,15 +307,62 @@ public final class PortalInstanceDiagnostics {
                 if (!isTrackedInstanceWorld(worldName)) {
                     continue;
                 }
-                scheduleInstanceRemoval(worldName, "startup-stale-cleanup");
+                scheduleInstanceRemoval(worldName, "startup-stale-cleanup", false);
             }
         } catch (Exception ex) {
             log(Level.WARNING, "startup-stale-cleanup-failed error=%s", ex.getMessage());
         }
     }
 
-    private static void scheduleInstanceRemoval(@Nullable String worldName, @Nonnull String reason) {
+    private static void attemptDeathWipeWhenWorldEmpties(@Nonnull String worldName,
+                                                         @Nonnull String playerName) {
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            Universe universe = Universe.get();
+            if (universe == null) {
+                return;
+            }
+
+            int occupants = countPlayersInWorld(universe, worldName);
+            if (occupants > 0) {
+                log(Level.INFO,
+                        "instance-death-wipe-skip world=%s player=%s occupants=%d",
+                        worldName,
+                        playerName,
+                        occupants);
+                return;
+            }
+
+            scheduleInstanceRemoval(worldName, "all-players-dead", true);
+        }, 100L, TimeUnit.MILLISECONDS);
+    }
+
+    private static int countPlayersInWorld(@Nonnull Universe universe, @Nonnull String worldName) {
+        int count = 0;
+        for (PlayerRef online : universe.getPlayers()) {
+            UUID worldUuid = online.getWorldUuid();
+            if (worldUuid == null) {
+                continue;
+            }
+
+            World onlineWorld = universe.getWorld(worldUuid);
+            if (onlineWorld != null && worldName.equals(onlineWorld.getName())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static void scheduleInstanceRemoval(@Nullable String worldName,
+                                                @Nonnull String reason,
+                                                boolean allowPairedGateRemoval) {
         if (worldName == null || worldName.isBlank() || !isTrackedInstanceWorld(worldName)) {
+            return;
+        }
+        if (!allowPairedGateRemoval && PortalLeveledInstanceRouter.isInstancePairedToActiveGate(worldName)) {
+            log(Level.INFO,
+                    "instance-remove-skip world=%s reason=%s pairedActiveGate=true",
+                    worldName,
+                    reason);
             return;
         }
         if (!PENDING_INSTANCE_REMOVALS.add(worldName)) {
@@ -302,10 +371,26 @@ public final class PortalInstanceDiagnostics {
 
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             try {
+                if (!allowPairedGateRemoval && PortalLeveledInstanceRouter.isInstancePairedToActiveGate(worldName)) {
+                    PENDING_INSTANCE_REMOVALS.remove(worldName);
+                    log(Level.INFO,
+                            "instance-remove-skip world=%s reason=%s pairedActiveGate=true",
+                            worldName,
+                            reason);
+                    return;
+                }
+
+                if (allowPairedGateRemoval) {
+                    EXPLICIT_DEATH_WIPE_REMOVALS.add(worldName);
+                }
+
                 InstancesPlugin.safeRemoveInstance(worldName);
                 log(Level.INFO, "instance-remove-request world=%s reason=%s", worldName, reason);
             } catch (Exception ex) {
                 PENDING_INSTANCE_REMOVALS.remove(worldName);
+                if (allowPairedGateRemoval) {
+                    EXPLICIT_DEATH_WIPE_REMOVALS.remove(worldName);
+                }
                 log(Level.WARNING,
                         "instance-remove-request-failed world=%s reason=%s error=%s",
                         worldName,

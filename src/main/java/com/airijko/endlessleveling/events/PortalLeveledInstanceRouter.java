@@ -3,6 +3,7 @@ package com.airijko.endlessleveling.events;
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
@@ -12,6 +13,7 @@ import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
+import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
@@ -28,11 +30,15 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 import java.util.logging.Level;
 
 public final class PortalLeveledInstanceRouter {
@@ -83,6 +89,16 @@ public final class PortalLeveledInstanceRouter {
             "EL_EndgamePortal_Golem_Void", "EL_Endgame_Golem_Void"
     );
 
+            /** Routing template name -> base portal block ID for pairing backfill. */
+            private static final Map<String, String> ROUTING_NAME_TO_BLOCK_ID = Map.of(
+                "EL_MJ_Instance_D01", "EL_MajorDungeonPortal_D01",
+                "EL_MJ_Instance_D02", "EL_MajorDungeonPortal_D02",
+                "EL_MJ_Instance_D03", "EL_MajorDungeonPortal_D03",
+                "EL_Endgame_Frozen_Dungeon", "EL_EndgamePortal_Frozen_Dungeon",
+                "EL_Endgame_Swamp_Dungeon", "EL_EndgamePortal_Swamp_Dungeon",
+                "EL_Endgame_Golem_Void", "EL_EndgamePortal_Golem_Void"
+            );
+
     /** Routing world template name → level profile announced when the portal gate was placed. */
     private static final Map<String, PendingLevelProfile> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
 
@@ -98,11 +114,15 @@ public final class PortalLeveledInstanceRouter {
 
     /** Gate key (world+xyz) -> instance world name (e.g., "uuid:120:65:-40" -> "instance-EL_MJ_Instance_D01-abc123") */
     private static final Map<String, String> GATE_KEY_TO_INSTANCE_NAME = new ConcurrentHashMap<>();
-    /** Gate key -> spawn lock expiry millis to prevent concurrent duplicate spawns per gate. */
+    /** Gate identity -> expected instance metadata captured at gate spawn time. */
+    private static final Map<String, GateInstanceExpectation> GATE_INSTANCE_EXPECTATIONS = new ConcurrentHashMap<>();
+    /** Gate key -> spawn lock start millis to prevent concurrent duplicate spawns per gate. */
     private static final Map<String, Long> GATE_SPAWN_IN_FLIGHT = new ConcurrentHashMap<>();
+    /** Instance world names currently being reloaded after unload while still paired to an active gate. */
+    private static final Set<String> PAIRED_INSTANCE_RELOADS_IN_FLIGHT = ConcurrentHashMap.newKeySet();
 
     private static final long ROUTING_DEDUPE_WINDOW_MILLIS = 5000L;
-    private static final long GATE_SPAWN_LOCK_MILLIS = 15000L;
+    private static final long GATE_SPAWN_STALE_MILLIS = 120000L;
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -129,9 +149,49 @@ public final class PortalLeveledInstanceRouter {
         PLAYER_ENTRY_TARGETS.clear();
         PLAYER_ROUTING_THROTTLES.clear();
         GATE_KEY_TO_INSTANCE_NAME.clear();
+        GATE_INSTANCE_EXPECTATIONS.clear();
         GATE_SPAWN_IN_FLIGHT.clear();
+        PAIRED_INSTANCE_RELOADS_IN_FLIGHT.clear();
         filesManager = null;
         plugin = null;
+    }
+
+    public static void registerGateExpectedInstance(@Nonnull String gateIdentity,
+                                                    @Nonnull String blockId) {
+        if (gateIdentity.isBlank() || blockId.isBlank()) {
+            return;
+        }
+
+        String routingName = resolveRoutingName(blockId);
+        if (routingName == null) {
+            return;
+        }
+
+        String expectedGroupId = toInstanceGroupId(gateIdentity, routingName);
+        GATE_INSTANCE_EXPECTATIONS.put(
+                gateIdentity,
+                new GateInstanceExpectation(
+                        blockId,
+                        routingName,
+                expectedGroupId,
+                expectedGroupId,
+                        System.currentTimeMillis()));
+        log(Level.INFO,
+                "[ELPortal] Gate expectation cached gateId=%s block=%s template=%s expectedGroupId=%s expectedWorldId=%s",
+                gateIdentity,
+                blockId,
+                routingName,
+            expectedGroupId,
+            expectedGroupId);
+
+        // Emit a warning-level twin log so this is visible even when addon INFO logs are suppressed.
+        log(Level.WARNING,
+                "[ELPortal] Gate expectation cached gateId=%s block=%s template=%s expectedGroupId=%s expectedWorldId=%s",
+                gateIdentity,
+                blockId,
+                routingName,
+                expectedGroupId,
+                expectedGroupId);
     }
 
     /**
@@ -142,19 +202,28 @@ public final class PortalLeveledInstanceRouter {
                                            int y,
                                            int z,
                                            @Nonnull String blockId) {
-        String gateKey = buildGateKey(world, x, y, z);
-        String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateKey);
-        GATE_SPAWN_IN_FLIGHT.remove(gateKey);
+        String stableGateId = NaturalPortalGateManager.resolveGateIdAt(world, x, y, z);
+        String legacyKey = buildGateKey(world, x, y, z);
+        String gateIdentity = stableGateId != null && !stableGateId.isBlank() ? stableGateId : legacyKey;
+        String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
+        GATE_INSTANCE_EXPECTATIONS.remove(gateIdentity);
+        GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
+        if (instanceName == null && !legacyKey.equals(gateIdentity)) {
+            instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(legacyKey);
+            GATE_INSTANCE_EXPECTATIONS.remove(legacyKey);
+            GATE_SPAWN_IN_FLIGHT.remove(legacyKey);
+            gateIdentity = legacyKey;
+        }
         if (instanceName != null) {
             InstancesPlugin instances = InstancesPlugin.get();
             if (instances != null) {
                 try {
                     instances.safeRemoveInstance(instanceName);
                     log(Level.INFO, "[ELPortal] Cleaned up paired instance %s for expired gate %s key=%s",
-                            instanceName, blockId, gateKey);
+                            instanceName, blockId, gateIdentity);
                 } catch (Exception ex) {
                     log(Level.WARNING, "[ELPortal] Failed to remove instance %s for gate %s key=%s: %s",
-                            instanceName, blockId, gateKey, ex.getMessage());
+                            instanceName, blockId, gateIdentity, ex.getMessage());
                 }
             }
             // Also clear level ranges
@@ -162,6 +231,39 @@ public final class PortalLeveledInstanceRouter {
             ACTIVE_BOSS_LEVELS.remove(instanceName);
             ACTIVE_RANK_LETTERS.remove(instanceName);
         }
+    }
+
+    public static void cleanupGateInstanceByIdentity(@Nonnull String gateIdentity,
+                                                     @Nonnull String blockId) {
+        String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
+        GATE_INSTANCE_EXPECTATIONS.remove(gateIdentity);
+        GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
+        if (instanceName == null || instanceName.isBlank()) {
+            return;
+        }
+
+        InstancesPlugin instances = InstancesPlugin.get();
+        if (instances != null) {
+            try {
+                instances.safeRemoveInstance(instanceName);
+                log(Level.INFO,
+                        "[ELPortal] Cleaned up paired instance %s for expired gate %s identity=%s",
+                        instanceName,
+                        blockId,
+                        gateIdentity);
+            } catch (Exception ex) {
+                log(Level.WARNING,
+                        "[ELPortal] Failed to remove instance %s for gate %s identity=%s: %s",
+                        instanceName,
+                        blockId,
+                        gateIdentity,
+                        ex.getMessage());
+            }
+        }
+
+        ACTIVE_LEVEL_RANGES.remove(instanceName);
+        ACTIVE_BOSS_LEVELS.remove(instanceName);
+        ACTIVE_RANK_LETTERS.remove(instanceName);
     }
 
     @Nonnull
@@ -205,6 +307,16 @@ public final class PortalLeveledInstanceRouter {
                                                 int x,
                                                 int y,
                                                 int z) {
+        return enterPortalFromBlock(playerRef, sourceWorld, blockId, x, y, z, null);
+    }
+
+    public static boolean enterPortalFromBlock(@Nonnull PlayerRef playerRef,
+                                               @Nonnull World sourceWorld,
+                                               @Nonnull String blockId,
+                                               int x,
+                                               int y,
+                                               int z,
+                                               @Nullable String stableGateId) {
         String routingName = resolveRoutingName(blockId);
         if (routingName == null) {
             log(Level.WARNING,
@@ -218,7 +330,10 @@ public final class PortalLeveledInstanceRouter {
             return false;
         }
 
-        String gateKey = buildGateKey(sourceWorld, x, y, z);
+        String gateKey = stableGateId != null && !stableGateId.isBlank()
+            ? stableGateId
+            : buildGateKey(sourceWorld, x, y, z);
+        logGateEntryExpectation(gateKey, blockId, routingName, playerRef.getUsername());
         // Try to route to existing instance for this gate, or create new one
         boolean started = routePlayerToGateInstance(playerRef,
                 sourceWorld,
@@ -252,8 +367,15 @@ public final class PortalLeveledInstanceRouter {
             // Register the level range immediately so mobs are leveled correctly
             // before the player sends ClientReady (which fires ~4s later).
             if (!originalTemplate) {
-            registerInstanceLevelOverride(routingName);
+                registerInstanceLevelOverride(routingName);
             }
+
+            backfillGatePairingFromDirectEntry(playerRef,
+                    routingWorld,
+                    routingName,
+                    directWorldTemplate,
+                    null);
+
             applyFixedGateSpawn(playerRef, routingWorld, directWorldSuffix);
             log(Level.INFO,
                 "[ELPortal] Applied direct instance spawn correction player=%s world=%s suffix=%s template=%s",
@@ -414,6 +536,7 @@ public final class PortalLeveledInstanceRouter {
         // Check if this gate already has a paired instance
         String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(gateKey);
         if (existingInstance != null) {
+            cacheResolvedInstanceWorld(gateKey, existingInstance, blockId, routingName, "existing-pairing");
             Universe universe = Universe.get();
             if (universe != null) {
                 World targetInstance = null;
@@ -430,14 +553,69 @@ public final class PortalLeveledInstanceRouter {
                         return true;
                     }
                 }
+
+                // Instance may be unloaded while still paired to an active gate; reopen it instead of spawning a new one.
+                if (universe.isWorldLoadable(existingInstance)) {
+                    CompletableFuture<World> loadFuture = universe.loadWorld(existingInstance);
+                    loadFuture.thenAccept(loadedWorld -> {
+                        if (loadedWorld == null) {
+                            GATE_KEY_TO_INSTANCE_NAME.remove(gateKey, existingInstance);
+                            return;
+                        }
+
+                        restoreActiveInstanceOverride(existingInstance);
+
+                        Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+            queueTeleportToInstanceSpawn(playerRef,
+                loadedWorld,
+                effectiveReturnTransform,
+                () -> {
+                    cacheResolvedInstanceWorld(gateKey,
+                        loadedWorld.getName(),
+                        blockId,
+                        routingName,
+                        "reload-paired-instance");
+                    rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
+                    String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
+                    if (suffix != null) {
+                    applyFixedGateSpawn(playerRef, loadedWorld, suffix);
+                    }
+                    log(Level.INFO,
+                        "[ELPortal] Reloaded paired gate instance %s for key=%s block=%s player=%s",
+                        existingInstance,
+                        gateKey,
+                        blockId,
+                        playerRef.getUsername());
+                });
+                    }).exceptionally(ex -> {
+                        GATE_KEY_TO_INSTANCE_NAME.remove(gateKey, existingInstance);
+                        AddonLoggingManager.log(plugin,
+                                Level.WARNING,
+                                ex,
+                                "[ELPortal] Failed to reload paired gate instance %s for key=%s",
+                                existingInstance,
+                                gateKey);
+                        return null;
+                    });
+                    return true;
+                }
             }
             // Mapping became stale if world no longer exists.
             GATE_KEY_TO_INSTANCE_NAME.remove(gateKey, existingInstance);
         }
 
+        if (attemptRouteToExpectedWorldId(playerRef,
+                gateKey,
+                blockId,
+                routingName,
+                returnWorld,
+                returnTransform)) {
+            return true;
+        }
+
         long now = System.currentTimeMillis();
-        Long inflightUntil = GATE_SPAWN_IN_FLIGHT.get(gateKey);
-        if (inflightUntil != null && inflightUntil > now) {
+        Long inflightSince = GATE_SPAWN_IN_FLIGHT.get(gateKey);
+        if (inflightSince != null && (now - inflightSince) <= GATE_SPAWN_STALE_MILLIS) {
             log(Level.INFO,
                     "[ELPortal] Gate spawn already in-flight key=%s block=%s player=%s",
                     gateKey,
@@ -445,12 +623,16 @@ public final class PortalLeveledInstanceRouter {
                     playerRef.getUsername());
             return false;
         }
-        if (inflightUntil != null) {
-            GATE_SPAWN_IN_FLIGHT.remove(gateKey, inflightUntil);
+        if (inflightSince != null) {
+            GATE_SPAWN_IN_FLIGHT.remove(gateKey, inflightSince);
+            log(Level.WARNING,
+                    "[ELPortal] Cleared stale gate spawn lock key=%s ageMs=%d",
+                    gateKey,
+                    now - inflightSince);
         }
 
-        Long claimed = GATE_SPAWN_IN_FLIGHT.putIfAbsent(gateKey, now + GATE_SPAWN_LOCK_MILLIS);
-        if (claimed != null && claimed > now) {
+        Long claimed = GATE_SPAWN_IN_FLIGHT.putIfAbsent(gateKey, now);
+        if (claimed != null && (now - claimed) <= GATE_SPAWN_STALE_MILLIS) {
             log(Level.INFO,
                     "[ELPortal] Gate spawn claim denied key=%s block=%s player=%s",
                     gateKey,
@@ -458,9 +640,101 @@ public final class PortalLeveledInstanceRouter {
                     playerRef.getUsername());
             return false;
         }
+        if (claimed != null) {
+            GATE_SPAWN_IN_FLIGHT.put(gateKey, now);
+            log(Level.WARNING,
+                    "[ELPortal] Replaced stale gate spawn claim key=%s staleAgeMs=%d",
+                    gateKey,
+                    now - claimed);
+        }
 
         // No existing instance, create new one
         return routePlayerToTemplate(playerRef, sourceWorld, gateKey, blockId, routingName, returnWorld, returnTransform);
+    }
+
+    private static boolean attemptRouteToExpectedWorldId(@Nonnull PlayerRef playerRef,
+                                                         @Nonnull String gateKey,
+                                                         @Nonnull String blockId,
+                                                         @Nonnull String routingName,
+                                                         @Nonnull World returnWorld,
+                                                         @Nullable Transform returnTransform) {
+        GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(gateKey);
+        if (expectation == null || expectation.expectedWorldId() == null || expectation.expectedWorldId().isBlank()) {
+            return false;
+        }
+
+        String expectedWorldId = expectation.expectedWorldId();
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return false;
+        }
+
+        Object loaded = universe.getWorlds().get(expectedWorldId);
+        if (loaded instanceof World loadedWorld) {
+            Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+            if (teleportToInstanceSpawn(playerRef, loadedWorld, effectiveReturnTransform)) {
+                GATE_KEY_TO_INSTANCE_NAME.put(gateKey, expectedWorldId);
+                rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
+                String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
+                if (suffix != null) {
+                    applyFixedGateSpawn(playerRef, loadedWorld, suffix);
+                }
+                log(Level.WARNING,
+                        "[ELPortal] Recovered gate pairing from expected cached world gateId=%s worldId=%s block=%s player=%s",
+                        gateKey,
+                        expectedWorldId,
+                        blockId,
+                        playerRef.getUsername());
+                return true;
+            }
+        }
+
+        if (!universe.isWorldLoadable(expectedWorldId)) {
+            log(Level.WARNING,
+                    "[ELPortal] Cached expected world is not loadable; allowing new spawn gateId=%s expectedWorldId=%s block=%s template=%s",
+                    gateKey,
+                    expectedWorldId,
+                    blockId,
+                    routingName);
+            return false;
+        }
+
+        universe.loadWorld(expectedWorldId)
+                .thenAccept(reloadedWorld -> {
+                    if (reloadedWorld == null) {
+                        return;
+                    }
+
+                    restoreActiveInstanceOverride(expectedWorldId);
+                    Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+                    queueTeleportToInstanceSpawn(playerRef,
+                            reloadedWorld,
+                            effectiveReturnTransform,
+                            () -> {
+                                GATE_KEY_TO_INSTANCE_NAME.put(gateKey, expectedWorldId);
+                                rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
+                                String suffix = resolveSuffixFromWorldName(reloadedWorld.getName());
+                                if (suffix != null) {
+                                    applyFixedGateSpawn(playerRef, reloadedWorld, suffix);
+                                }
+                                log(Level.WARNING,
+                                        "[ELPortal] Reloaded expected cached world for gate gateId=%s worldId=%s block=%s player=%s",
+                                        gateKey,
+                                        expectedWorldId,
+                                        blockId,
+                                        playerRef.getUsername());
+                            });
+                })
+                .exceptionally(ex -> {
+                    AddonLoggingManager.log(plugin,
+                            Level.WARNING,
+                            ex,
+                            "[ELPortal] Failed loading expected cached world gateId=%s expectedWorldId=%s",
+                            gateKey,
+                            expectedWorldId);
+                    return null;
+                });
+        return true;
     }
 
     private static boolean routePlayerToTemplate(@Nonnull PlayerRef playerRef,
@@ -488,29 +762,47 @@ public final class PortalLeveledInstanceRouter {
         Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
         rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
         
-        // Use gate block ID as instance group so InstancesPlugin reuses instances for same gate
-        String instanceGroupId = gateKey != null ? gateKey : routingName;
+        // Use filesystem-safe deterministic group ID so InstancesPlugin can reuse on all OSes.
+        String instanceGroupId = gateKey != null ? toInstanceGroupId(gateKey, routingName) : routingName;
+        log(Level.INFO,
+            "[ELPortal] Spawning routed instance player=%s template=%s gateId=%s instanceGroupId=%s",
+            playerRef.getUsername(),
+            routingName,
+            gateKey == null ? "<none>" : gateKey,
+            instanceGroupId);
         instances.spawnInstance(routingName, instanceGroupId, returnWorld, effectiveReturnTransform)
                 .thenAccept(spawned -> {
                     try {
                         if (gateKey != null) {
                             GATE_KEY_TO_INSTANCE_NAME.put(gateKey, spawned.getName());
+                            cacheResolvedInstanceWorld(gateKey,
+                                    spawned.getName(),
+                                    gateBlockId,
+                                    routingName,
+                                    "spawn-instance");
                             log(Level.INFO, "[ELPortal] Registered gate->instance pairing key=%s block=%s -> %s",
                                     gateKey,
                                     gateBlockId == null ? "unknown" : gateBlockId,
                                     spawned.getName());
                         }
 
-                        if (teleportToInstanceSpawn(playerRef, spawned, effectiveReturnTransform)) {
-                        LevelRange range = registerInstanceLevelOverride(spawned.getName());
-                        String suffix = ROUTING_TO_SUFFIX.get(routingName);
-                        if (suffix != null) {
-                            applyFixedGateSpawn(playerRef, spawned, suffix);
-                        }
-                        broadcastEntry(playerRef, displayName, range.min(), range.max());
-                        log(Level.INFO, "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
-                                spawned.getName(), routingName, range.min(), range.max());
-                    }
+                        queueTeleportToInstanceSpawn(playerRef,
+                            spawned,
+                            effectiveReturnTransform,
+                            () -> {
+                                LevelRange range = registerInstanceLevelOverride(spawned.getName());
+                                String suffix = ROUTING_TO_SUFFIX.get(routingName);
+                                if (suffix != null) {
+                                applyFixedGateSpawn(playerRef, spawned, suffix);
+                                }
+                                broadcastEntry(playerRef, displayName, range.min(), range.max());
+                                log(Level.INFO,
+                                    "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
+                                    spawned.getName(),
+                                    routingName,
+                                    range.min(),
+                                    range.max());
+                            });
                     } finally {
                         if (gateKey != null) {
                             GATE_SPAWN_IN_FLIGHT.remove(gateKey);
@@ -784,6 +1076,107 @@ public final class PortalLeveledInstanceRouter {
         ACTIVE_RANK_LETTERS.remove(worldName);
     }
 
+    public static boolean isInstancePairedToActiveGate(@Nonnull String worldName) {
+        return GATE_KEY_TO_INSTANCE_NAME.containsValue(worldName);
+    }
+
+    public static void unpairInstanceWorldPreservingExpectation(@Nonnull String worldName,
+                                                                 @Nonnull String reason) {
+        if (worldName.isBlank()) {
+            return;
+        }
+
+        List<String> removedGateIds = new ArrayList<>();
+        for (Map.Entry<String, String> entry : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
+            String gateIdentity = entry.getKey();
+            if (!worldName.equals(entry.getValue())) {
+                continue;
+            }
+            if (GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity, worldName)) {
+                GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
+                removedGateIds.add(gateIdentity);
+            }
+        }
+
+        if (!removedGateIds.isEmpty()) {
+            log(Level.WARNING,
+                    "[ELPortal] Unpaired world from active gate mapping world=%s reason=%s gates=%s",
+                    worldName,
+                    reason,
+                    String.join(",", removedGateIds));
+        }
+    }
+
+    public static void reloadPairedInstanceIfPossible(@Nonnull String worldName, @Nonnull String reason) {
+        if (!isInstancePairedToActiveGate(worldName)) {
+            return;
+        }
+
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        if (!universe.isWorldLoadable(worldName)) {
+            log(Level.WARNING,
+                    "[ELPortal] Paired instance unload observed but world is not loadable world=%s reason=%s",
+                    worldName,
+                    reason);
+            return;
+        }
+
+        if (!PAIRED_INSTANCE_RELOADS_IN_FLIGHT.add(worldName)) {
+            return;
+        }
+
+        universe.loadWorld(worldName)
+                .thenAccept(reloaded -> {
+                    try {
+                        if (reloaded == null) {
+                            log(Level.WARNING,
+                                    "[ELPortal] Paired instance reload returned null world=%s reason=%s",
+                                    worldName,
+                                    reason);
+                            return;
+                        }
+
+                        restoreActiveInstanceOverride(worldName);
+                        log(Level.INFO,
+                                "[ELPortal] Reloaded paired instance world=%s reason=%s",
+                                worldName,
+                                reason);
+                    } finally {
+                        PAIRED_INSTANCE_RELOADS_IN_FLIGHT.remove(worldName);
+                    }
+                })
+                .exceptionally(ex -> {
+                    PAIRED_INSTANCE_RELOADS_IN_FLIGHT.remove(worldName);
+                    AddonLoggingManager.log(plugin,
+                            Level.WARNING,
+                            ex,
+                            "[ELPortal] Failed to reload paired instance world=%s reason=%s",
+                            worldName,
+                            reason);
+                    return null;
+                });
+    }
+
+    private static void restoreActiveInstanceOverride(@Nonnull String worldName) {
+        LevelRange range = ACTIVE_LEVEL_RANGES.get(worldName);
+        Integer bossLevel = ACTIVE_BOSS_LEVELS.get(worldName);
+        if (range == null || bossLevel == null) {
+            return;
+        }
+
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api == null) {
+            return;
+        }
+
+        int bossOffset = Math.max(0, bossLevel - range.max());
+        api.registerMobWorldFixedLevelOverride(worldName, worldName, range.min(), range.max(), bossOffset);
+    }
+
     /**
      * Returns the human-readable display name for a gate instance world (e.g. "Major Dungeon I"),
      * or null if the world is not a gate instance.
@@ -825,6 +1218,226 @@ public final class PortalLeveledInstanceRouter {
         return templateName;
     }
 
+    private static void backfillGatePairingFromDirectEntry(@Nonnull PlayerRef playerRef,
+                                                           @Nonnull World instanceWorld,
+                                                           @Nonnull String instanceWorldName,
+                                                           @Nullable String templateName,
+                                                           @Nullable Transform addEventTransform) {
+        String canonicalTemplate = templateName == null ? null : canonicalizeRoutingTemplate(templateName);
+        if (canonicalTemplate == null) {
+            return;
+        }
+
+        String blockId = ROUTING_NAME_TO_BLOCK_ID.get(canonicalTemplate);
+        if (blockId == null) {
+            return;
+        }
+
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        World returnWorld = resolveReturnWorld(instanceWorld, universe);
+        Transform returnTransform = resolveReturnTransform(instanceWorld, playerRef);
+        Transform anchorTransform = returnTransform != null ? returnTransform : addEventTransform;
+        if (anchorTransform == null || anchorTransform.getPosition() == null) {
+            return;
+        }
+
+        int x = MathUtil.floor(anchorTransform.getPosition().x);
+        int y = MathUtil.floor(anchorTransform.getPosition().y);
+        int z = MathUtil.floor(anchorTransform.getPosition().z);
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid != null) {
+            PortalProximityManager.markPlayerEnterInstance(playerUuid);
+        }
+        var anchor = NaturalPortalGateManager.resolveTrackedGateAnchor(
+                returnWorld,
+                blockId,
+                x,
+                y,
+                z);
+
+        String gateKey = anchor.gateId() != null && !anchor.gateId().isBlank()
+            ? anchor.gateId()
+            : buildGateKey(returnWorld, anchor.x(), anchor.y(), anchor.z());
+        String existing = GATE_KEY_TO_INSTANCE_NAME.get(gateKey);
+        if (Objects.equals(existing, instanceWorldName)) {
+            return;
+        }
+
+        if (existing != null && !existing.isBlank() && isKnownLiveOrLoadableWorld(existing, universe)) {
+            return;
+        }
+
+        GATE_KEY_TO_INSTANCE_NAME.put(gateKey, instanceWorldName);
+        log(Level.INFO,
+                "[ELPortal] Backfilled gate pairing key=%s block=%s -> %s (template=%s player=%s)",
+                gateKey,
+                blockId,
+                instanceWorldName,
+                canonicalTemplate,
+                playerRef.getUsername());
+    }
+
+    private static boolean isKnownLiveOrLoadableWorld(@Nonnull String worldName, @Nonnull Universe universe) {
+        Object loaded = universe.getWorlds().get(worldName);
+        if (loaded instanceof World) {
+            return true;
+        }
+        return universe.isWorldLoadable(worldName);
+    }
+
+    @Nonnull
+    private static String toInstanceGroupId(@Nonnull String gateIdentity,
+                                            @Nullable String routingName) {
+        String templateToken = sanitizeInstanceToken(routingName, "el_dungeon");
+        String gateToken = sanitizeInstanceToken(gateIdentity, "gate");
+        gateToken = stripGatePrefix(gateToken);
+        return templateToken + "_gate_" + gateToken;
+    }
+
+    @Nonnull
+    private static String stripGatePrefix(@Nonnull String gateToken) {
+        String normalized = gateToken;
+        if (normalized.startsWith("el_gate_")) {
+            normalized = normalized.substring("el_gate_".length());
+        } else if (normalized.startsWith("gate_")) {
+            normalized = normalized.substring("gate_".length());
+        }
+
+        return normalized.isBlank() ? "gate" : normalized;
+    }
+
+    @Nonnull
+    private static String sanitizeInstanceToken(@Nullable String rawValue,
+                                                @Nonnull String fallback) {
+        if (rawValue == null || rawValue.isBlank()) {
+            return fallback;
+        }
+
+        String lowered = rawValue.toLowerCase(Locale.ROOT);
+        String sanitized = lowered.replaceAll("[^a-z0-9._-]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_+", "")
+                .replaceAll("_+$", "");
+        return sanitized.isBlank() ? fallback : sanitized;
+    }
+
+    private static void logGateEntryExpectation(@Nonnull String gateIdentity,
+                                                @Nonnull String blockId,
+                                                @Nonnull String routingName,
+                                                @Nonnull String playerName) {
+        GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(gateIdentity);
+        if (expectation == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Gate expectation miss on entry gateId=%s player=%s block=%s template=%s",
+                    gateIdentity,
+                    playerName,
+                    blockId,
+                    routingName);
+            return;
+        }
+
+        boolean blockMatches = stripRankSuffix(expectation.blockId()).equals(stripRankSuffix(blockId));
+        boolean templateMatches = expectation.routingName().equals(routingName);
+        log(Level.INFO,
+                "[ELPortal] Gate entry expectation check gateId=%s player=%s blockMatch=%s templateMatch=%s expectedTemplate=%s actualTemplate=%s expectedWorldId=%s",
+                gateIdentity,
+                playerName,
+                blockMatches,
+                templateMatches,
+                expectation.routingName(),
+                routingName,
+                expectation.expectedWorldId() == null ? "<pending>" : expectation.expectedWorldId());
+    }
+
+    private static void cacheResolvedInstanceWorld(@Nonnull String gateIdentity,
+                                                   @Nonnull String resolvedWorldId,
+                                                   @Nullable String blockId,
+                                                   @Nullable String routingName,
+                                                   @Nonnull String source) {
+        GateInstanceExpectation existing = GATE_INSTANCE_EXPECTATIONS.get(gateIdentity);
+        if (existing == null) {
+            String fallbackBlock = blockId == null ? "unknown" : blockId;
+            String fallbackTemplate = routingName == null ? "unknown" : routingName;
+            GATE_INSTANCE_EXPECTATIONS.put(gateIdentity,
+                    new GateInstanceExpectation(
+                            fallbackBlock,
+                            fallbackTemplate,
+                            toInstanceGroupId(gateIdentity, fallbackTemplate),
+                            resolvedWorldId,
+                            System.currentTimeMillis()));
+            log(Level.INFO,
+                    "[ELPortal] Gate expectation backfilled gateId=%s source=%s worldId=%s",
+                    gateIdentity,
+                    source,
+                    resolvedWorldId);
+            return;
+        }
+
+        if (existing.expectedWorldId() == null) {
+            GATE_INSTANCE_EXPECTATIONS.put(gateIdentity,
+                    new GateInstanceExpectation(
+                            existing.blockId(),
+                            existing.routingName(),
+                            existing.expectedGroupId(),
+                            resolvedWorldId,
+                            existing.createdAtMillis()));
+            log(Level.WARNING,
+                    "[ELPortal] Gate expected world ID resolved gateId=%s source=%s worldId=%s",
+                    gateIdentity,
+                    source,
+                    resolvedWorldId);
+            return;
+        }
+
+        if (existing.expectedWorldId().equals(resolvedWorldId)) {
+            log(Level.INFO,
+                    "[ELPortal] Gate expected world ID match gateId=%s source=%s worldId=%s",
+                    gateIdentity,
+                    source,
+                    resolvedWorldId);
+            return;
+        }
+
+        Universe universe = Universe.get();
+        boolean oldLoadable = universe != null && universe.isWorldLoadable(existing.expectedWorldId());
+        if (!oldLoadable) {
+            GATE_INSTANCE_EXPECTATIONS.put(gateIdentity,
+                new GateInstanceExpectation(
+                    existing.blockId(),
+                    existing.routingName(),
+                    existing.expectedGroupId(),
+                    resolvedWorldId,
+                    existing.createdAtMillis()));
+            log(Level.WARNING,
+                "[ELPortal] Gate expected world ID rotated (old world missing) gateId=%s source=%s old=%s new=%s",
+                gateIdentity,
+                source,
+                existing.expectedWorldId(),
+                resolvedWorldId);
+            return;
+        }
+
+        log(Level.WARNING,
+                "[ELPortal] Gate expected world ID mismatch gateId=%s source=%s expected=%s actual=%s",
+                gateIdentity,
+                source,
+                existing.expectedWorldId(),
+                resolvedWorldId);
+    }
+
+    @Nonnull
+    private static String stripRankSuffix(@Nonnull String blockId) {
+        int rankIndex = blockId.indexOf("_Rank");
+        if (rankIndex <= 0) {
+            return blockId;
+        }
+        return blockId.substring(0, rankIndex);
+    }
+
     @Nonnull
     private static String resolveRankLetterFromBlockId(@Nonnull String blockId) {
         if (blockId.endsWith("_RankS")) {
@@ -850,36 +1463,38 @@ public final class PortalLeveledInstanceRouter {
 
     @Nullable
     private static String resolveSuffixFromWorldName(@Nonnull String worldName) {
-        if (worldName.startsWith("instance-")) {
-            String bestTemplate = null;
-            String bestSuffix = null;
-            for (Map.Entry<String, String> entry : INSTANCE_TEMPLATE_TO_SUFFIX.entrySet()) {
-                String template = entry.getKey();
-                if (!worldName.contains(template)) {
-                    continue;
-                }
-
-                if (bestTemplate == null || template.length() > bestTemplate.length()) {
-                    bestTemplate = template;
-                    bestSuffix = entry.getValue();
-                }
+        String normalizedWorldName = worldName.toLowerCase(Locale.ROOT);
+        String bestTemplate = null;
+        String bestSuffix = null;
+        for (Map.Entry<String, String> entry : INSTANCE_TEMPLATE_TO_SUFFIX.entrySet()) {
+            String template = entry.getKey();
+            if (!normalizedWorldName.contains(template.toLowerCase(Locale.ROOT))) {
+                continue;
             }
-            return bestSuffix;
-        }
 
-        return null;
+            if (bestTemplate == null || template.length() > bestTemplate.length()) {
+                bestTemplate = template;
+                bestSuffix = entry.getValue();
+            }
+        }
+        return bestSuffix;
     }
 
     @Nullable
     private static String resolveTemplateNameFromWorldName(@Nonnull String worldName) {
+        String normalizedWorldName = worldName.toLowerCase(Locale.ROOT);
+
         // Check routing/template names first (the worldName may BE the template name for routed path)
-        if (ROUTING_TO_SUFFIX.containsKey(worldName)) {
-            return worldName;
+        for (String routingTemplate : ROUTING_TO_SUFFIX.keySet()) {
+            if (routingTemplate.equalsIgnoreCase(worldName)) {
+                return routingTemplate;
+            }
         }
+
         // Check instance world names (e.g. "instance-EL_MJ_Instance_D02-<uuid>")
         String bestTemplate = null;
         for (String templateName : INSTANCE_TEMPLATE_TO_SUFFIX.keySet()) {
-            if (!worldName.contains(templateName)) {
+            if (!normalizedWorldName.contains(templateName.toLowerCase(Locale.ROOT))) {
                 continue;
             }
 
@@ -887,7 +1502,8 @@ public final class PortalLeveledInstanceRouter {
                 bestTemplate = templateName;
             }
         }
-        return bestTemplate;
+
+        return bestTemplate == null ? null : canonicalizeRoutingTemplate(bestTemplate);
     }
 
     private static void applyFixedGateSpawn(@Nonnull PlayerRef playerRef,
@@ -1002,6 +1618,52 @@ public final class PortalLeveledInstanceRouter {
 
 
 
+    private static void queueTeleportToInstanceSpawn(@Nonnull PlayerRef playerRef,
+                                                     @Nonnull World targetWorld,
+                                                     @Nullable Transform overrideReturn,
+                                                     @Nonnull Runnable onSuccess) {
+        Runnable task = () -> {
+            if (teleportToInstanceSpawn(playerRef, targetWorld, overrideReturn)) {
+                onSuccess.run();
+            }
+        };
+
+        if (executeOnPlayerWorldThread(playerRef, task)) {
+            return;
+        }
+        task.run();
+    }
+
+    private static boolean executeOnPlayerWorldThread(@Nonnull PlayerRef playerRef, @Nonnull Runnable task) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return false;
+        }
+
+        UUID playerWorldUuid = playerRef.getWorldUuid();
+        if (playerWorldUuid == null) {
+            return false;
+        }
+
+        World playerWorld = universe.getWorld(playerWorldUuid);
+        if (playerWorld == null) {
+            return false;
+        }
+
+        try {
+            playerWorld.execute(task);
+            return true;
+        } catch (Exception ex) {
+            AddonLoggingManager.log(plugin,
+                    Level.FINE,
+                    ex,
+                    "[ELPortal] Failed to queue task on player world thread player=%s world=%s",
+                    playerRef.getUsername(),
+                    playerWorld.getName());
+            return false;
+        }
+    }
+
     private static boolean teleportToInstanceSpawn(@Nonnull PlayerRef playerRef,
                                                    @Nonnull World targetWorld,
                                                    @Nullable Transform overrideReturn) {
@@ -1054,6 +1716,13 @@ public final class PortalLeveledInstanceRouter {
         private PendingLevelProfile {
             Objects.requireNonNull(rankLetter, "rankLetter");
         }
+    }
+
+    private record GateInstanceExpectation(@Nonnull String blockId,
+                                           @Nonnull String routingName,
+                                           @Nonnull String expectedGroupId,
+                                           @Nullable String expectedWorldId,
+                                           long createdAtMillis) {
     }
 
     public record ReturnTargetDiagnostics(@Nonnull String source,

@@ -187,7 +187,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
                     registeredAugments,
                     registeredPassives,
                     this.filesManager.isDungeonGateEnabled(),
-                    this.filesManager.getDungeonSpawnIntervalMinutes(),
+                    this.filesManager.getDungeonSpawnIntervalMinutesMin(),
+                    this.filesManager.getDungeonSpawnIntervalMinutesMax(),
                     this.filesManager.getDungeonDurationMinutes());
         }
     }
@@ -202,7 +203,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
         public final int registeredAugments;
         public final int registeredPassives;
         public final boolean dungeonGateEnabled;
-        public final int spawnIntervalMinutes;
+        public final int spawnIntervalMinutesMin;
+        public final int spawnIntervalMinutesMax;
         public final int gateDurationMinutes;
 
         public ReloadSummary(int unregisteredRaces,
@@ -214,7 +216,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
                 int registeredAugments,
                 int registeredPassives,
                 boolean dungeonGateEnabled,
-                int spawnIntervalMinutes,
+                int spawnIntervalMinutesMin,
+                int spawnIntervalMinutesMax,
                 int gateDurationMinutes) {
             this.unregisteredRaces = unregisteredRaces;
             this.unregisteredClasses = unregisteredClasses;
@@ -225,7 +228,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
             this.registeredAugments = registeredAugments;
             this.registeredPassives = registeredPassives;
             this.dungeonGateEnabled = dungeonGateEnabled;
-            this.spawnIntervalMinutes = spawnIntervalMinutes;
+            this.spawnIntervalMinutesMin = spawnIntervalMinutesMin;
+            this.spawnIntervalMinutesMax = spawnIntervalMinutesMax;
             this.gateDurationMinutes = gateDurationMinutes;
         }
     }

@@ -79,14 +79,11 @@ public final class NaturalPortalGateManager {
         public static void initialize(@Nonnull JavaPlugin owner, @Nullable AddonFilesManager manager) {
         plugin = owner;
         filesManager = manager;
-        long spawnIntervalMinutes = Math.max(1L, resolveSpawnIntervalMinutes());
+            refreshConfigSnapshot();
+            long spawnIntervalMinutesMin = Math.max(1L, resolveSpawnIntervalMinutesMin());
+            long spawnIntervalMinutesMax = Math.max(spawnIntervalMinutesMin, resolveSpawnIntervalMinutesMax());
         long gateLifetimeMinutes = resolveGateLifetimeMinutes();
-        periodicTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
-                NaturalPortalGateManager::spawnNaturalGateTick,
-            spawnIntervalMinutes,
-            spawnIntervalMinutes,
-                TimeUnit.MINUTES
-        );
+            scheduleNextNaturalSpawnTick();
         pendingRemovalTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleWithFixedDelay(
             NaturalPortalGateManager::processPendingRemovals,
             REMOVAL_RETRY_INTERVAL_SECONDS,
@@ -94,8 +91,9 @@ public final class NaturalPortalGateManager {
             TimeUnit.SECONDS
         );
         log(Level.INFO,
-            "[ELPortal] Natural gate spawner enabled: every %d minute(s), lifetime %d minute(s)",
-            spawnIntervalMinutes,
+                "[ELPortal] Natural gate spawner enabled: every %d-%d minute(s), lifetime %d minute(s)",
+                spawnIntervalMinutesMin,
+                spawnIntervalMinutesMax,
             gateLifetimeMinutes);
     }
 
@@ -203,6 +201,19 @@ public final class NaturalPortalGateManager {
         }
     }
 
+    private static void scheduleNextNaturalSpawnTick() {
+        long delayMinutes = resolveRandomSpawnIntervalMinutes();
+        periodicTask = HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            try {
+                spawnNaturalGateTick();
+            } finally {
+                if (plugin != null) {
+                    scheduleNextNaturalSpawnTick();
+                }
+            }
+        }, delayMinutes, TimeUnit.MINUTES);
+    }
+
     @Nonnull
     private static CompletableFuture<Boolean> spawnGateViaWorldDispatch(@Nonnull World world,
                                                                           @Nonnull PlayerRef playerRef,
@@ -288,14 +299,17 @@ public final class NaturalPortalGateManager {
                 String rankedBlockId = blockId + gateRank.tier.blockIdSuffix();
                 chunk.setBlock(x, y, z, rankedBlockId);
                 trackActiveGate(world, rankedBlockId, x, y, z);
+                String gateId = resolveGateIdAt(world, x, y, z);
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
                         announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
                 log(Level.INFO,
-                    "[ELPortal] Gate spawned world=%s block=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                    "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
                     world.getName(),
                     rankedBlockId,
+                    gateId == null ? "<unknown>" : gateId,
+                    gateId == null ? "<unknown>" : gateId,
                     isTestSpawn,
                     x,
                     y,
@@ -363,12 +377,17 @@ public final class NaturalPortalGateManager {
 
         try {
             chunk.setBlock(x, y, z, AIR_BLOCK_ID);
-            untrackActiveGate(world, x, y, z);
+            String gateId = resolveGateIdAt(world, x, y, z);
             if (isAnnounceOnDespawnEnabled()) {
                 announceGateDespawn(x, y, z, blockId);
             }
             // Cleanup the paired instance when gate expires
-            PortalLeveledInstanceRouter.cleanupGateInstance(world, x, y, z, blockId);
+            if (gateId != null && !gateId.isBlank()) {
+                PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(gateId, blockId);
+            } else {
+                PortalLeveledInstanceRouter.cleanupGateInstance(world, x, y, z, blockId);
+            }
+            untrackActiveGate(world, x, y, z);
             log(Level.INFO,
                     "[ELPortal] Gate expired and removed world=%s block=%s at %d %d %d reason=%s",
                     world.getName(),
@@ -418,7 +437,14 @@ public final class NaturalPortalGateManager {
         if (worldUuid == null) {
             return;
         }
-        ACTIVE_GATES.add(new ActiveGate(worldUuid, blockId, x, y, z));
+        String gateId = buildStableGateId(worldUuid, x, y, z);
+        ACTIVE_GATES.add(new ActiveGate(gateId, worldUuid, blockId, x, y, z));
+        PortalLeveledInstanceRouter.registerGateExpectedInstance(gateId, blockId);
+    }
+
+    @Nonnull
+    private static String buildStableGateId(@Nonnull UUID worldUuid, int x, int y, int z) {
+        return "el_gate:" + worldUuid + ":" + x + ":" + y + ":" + z;
     }
 
     @Nonnull
@@ -429,7 +455,7 @@ public final class NaturalPortalGateManager {
                                                       int z) {
         UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
         if (worldUuid == null || ACTIVE_GATES.isEmpty()) {
-            return new GateAnchor(x, y, z);
+            return new GateAnchor(x, y, z, null);
         }
 
         String blockBase = stripRankSuffix(blockId);
@@ -457,9 +483,27 @@ public final class NaturalPortalGateManager {
         }
 
         if (best == null) {
-            return new GateAnchor(x, y, z);
+            return new GateAnchor(x, y, z, null);
         }
-        return new GateAnchor(best.x(), best.y(), best.z());
+        return new GateAnchor(best.x(), best.y(), best.z(), best.gateId());
+    }
+
+    @Nullable
+    public static String resolveGateIdAt(@Nonnull World world, int x, int y, int z) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return null;
+        }
+
+        for (ActiveGate gate : ACTIVE_GATES) {
+            if (!gate.worldUuid().equals(worldUuid)) {
+                continue;
+            }
+            if (gate.x() == x && gate.y() == y && gate.z() == z) {
+                return gate.gateId();
+            }
+        }
+        return null;
     }
 
     @Nonnull
@@ -758,11 +802,27 @@ public final class NaturalPortalGateManager {
         return Math.max(0, filesManager.getDungeonBossLevelBonus());
     }
 
-    private static long resolveSpawnIntervalMinutes() {
+    private static long resolveSpawnIntervalMinutesMin() {
         if (filesManager == null) {
             return DEFAULT_SPAWN_INTERVAL_MINUTES;
         }
-        return Math.max(1L, filesManager.getDungeonSpawnIntervalMinutes());
+        return Math.max(1L, filesManager.getDungeonSpawnIntervalMinutesMin());
+    }
+
+    private static long resolveSpawnIntervalMinutesMax() {
+        if (filesManager == null) {
+            return DEFAULT_SPAWN_INTERVAL_MINUTES;
+        }
+        return Math.max(1L, filesManager.getDungeonSpawnIntervalMinutesMax());
+    }
+
+    private static long resolveRandomSpawnIntervalMinutes() {
+        long min = resolveSpawnIntervalMinutesMin();
+        long max = Math.max(min, resolveSpawnIntervalMinutesMax());
+        if (min == max) {
+            return min;
+        }
+        return randomInt((int) min, (int) max);
     }
 
     private static long resolveGateLifetimeMinutes() {
@@ -895,10 +955,15 @@ public final class NaturalPortalGateManager {
     private record GateRemovalRequest(@Nonnull String blockId, int x, int y, int z) {
     }
 
-    private record ActiveGate(@Nonnull UUID worldUuid, @Nonnull String blockId, int x, int y, int z) {
+    private record ActiveGate(@Nonnull String gateId,
+                              @Nonnull UUID worldUuid,
+                              @Nonnull String blockId,
+                              int x,
+                              int y,
+                              int z) {
     }
 
-    public record GateAnchor(int x, int y, int z) {
+    public record GateAnchor(int x, int y, int z, @Nullable String gateId) {
     }
 
     private record LevelBand(int minLevel, int maxLevel) {
