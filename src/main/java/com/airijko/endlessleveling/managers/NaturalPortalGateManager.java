@@ -1051,7 +1051,7 @@ public final class NaturalPortalGateManager {
 
         Message message = Message.join(
                 Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-                Message.raw(String.format("%s RANK CLOSE", gateRankTier.letter())).color(gateRankTier.color().hex()),
+                Message.raw(String.format("%s RANK CLOSED", gateRankTier.letter())).color(gateRankTier.color().hex()),
                 Message.raw("\n"),
                 Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
                 Message.raw(String.format("Position: (%d, %d, %d)", x, y, z)).color(PortalGateColor.POSITION.hex())

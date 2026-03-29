@@ -1,15 +1,16 @@
-package com.airijko.endlessleveling.commands;
+package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.enums.GateRankTier;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.arguments.system.OptionalArg;
+import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.inventory.container.CombinedItemContainer;
 import com.hypixel.hytale.server.core.inventory.transaction.ItemStackTransaction;
+import com.hypixel.hytale.server.core.universe.world.World;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -25,8 +26,8 @@ public class PortalGiveCommand extends AbstractCommand {
     private static final String PORTAL_VOID   = "EL_EndgamePortal_Golem_Void";
 
     public PortalGiveCommand() {
-        super("portal", "Give dungeon portal items by type and rank");
-        this.addAliases("dungeonportal", "elportal", "egportal", "mdportal");
+        super("give", "Give dungeon portal items by type and rank");
+        this.addAliases("portal");
 
         this.addSubCommand(new GivePortalSubCommand("d1",    PORTAL_D01,    "Give Major Dungeon I portal"));
         this.addSubCommand(new GivePortalSubCommand("d2",    PORTAL_D02,    "Give Major Dungeon II portal"));
@@ -41,7 +42,7 @@ public class PortalGiveCommand extends AbstractCommand {
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-                "Usage: /portal <d1|d2|d3|swamp|frozen|void|all> [rank: E|D|C|B|A|S]")
+                "Usage: /gate give <d1|d2|d3|swamp|frozen|void|all> <rank: E|D|C|B|A|S>")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
@@ -63,31 +64,42 @@ public class PortalGiveCommand extends AbstractCommand {
             return CompletableFuture.completedFuture(null);
         }
 
-        CombinedItemContainer container = player.getInventory() != null
-                ? player.getInventory().getCombinedHotbarFirst()
-                : null;
-        if (container == null) {
-            context.sendMessage(Message.raw("Could not access your inventory right now.").color("#ff6666"));
+        World world = player.getWorld();
+        if (world == null) {
+            context.sendMessage(Message.raw("You are not in a world right now.").color("#ff6666"));
             return CompletableFuture.completedFuture(null);
         }
 
         String blockId = baseBlockId + tier.blockIdSuffix();
+        CompletableFuture<Void> future = new CompletableFuture<>();
 
-        try {
-            ItemStack stack = new ItemStack(blockId, 1);
-            ItemStackTransaction transaction = container.addItemStack(stack);
-            ItemStack remainder = transaction.getRemainder();
+        world.execute(() -> {
+            try {
+                CombinedItemContainer container = player.getInventory() != null
+                        ? player.getInventory().getCombinedHotbarFirst()
+                        : null;
+                if (container == null) {
+                    context.sendMessage(Message.raw("Could not access your inventory right now.").color("#ff6666"));
+                    return;
+                }
 
-            if (remainder != null && !ItemStack.isEmpty(remainder)) {
-                context.sendMessage(Message.raw("Inventory full — could not add: " + blockId).color("#ff6666"));
-            } else {
-                context.sendMessage(Message.raw("Gave " + blockId).color("#6cff78"));
+                ItemStack stack = new ItemStack(blockId, 1);
+                ItemStackTransaction transaction = container.addItemStack(stack);
+                ItemStack remainder = transaction.getRemainder();
+
+                if (remainder != null && !ItemStack.isEmpty(remainder)) {
+                    context.sendMessage(Message.raw("Inventory full — could not add: " + blockId).color("#ff6666"));
+                } else {
+                    context.sendMessage(Message.raw("Gave " + blockId).color("#6cff78"));
+                }
+            } catch (Exception ex) {
+                context.sendMessage(Message.raw("Failed to give portal right now.").color("#ff6666"));
+            } finally {
+                future.complete(null);
             }
-        } catch (Exception ex) {
-            context.sendMessage(Message.raw("Failed to give portal right now.").color("#ff6666"));
-        }
+        });
 
-        return CompletableFuture.completedFuture(null);
+        return future;
     }
 
     // -------------------------------------------------------------------------
@@ -95,8 +107,8 @@ public class PortalGiveCommand extends AbstractCommand {
     private static final class GivePortalSubCommand extends AbstractCommand {
 
         private final String baseBlockId;
-        private final OptionalArg<String> rankArg =
-                this.withOptionalArg("rank", "Rank tier (E/D/C/B/A/S)", ArgTypes.STRING);
+        private final RequiredArg<String> rankArg =
+            this.withRequiredArg("rank", "Rank tier (E/D/C/B/A/S)", ArgTypes.STRING);
 
         private GivePortalSubCommand(@Nonnull String name,
                                      @Nonnull String baseBlockId,
@@ -108,20 +120,16 @@ public class PortalGiveCommand extends AbstractCommand {
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-            GateRankTier tier = GateRankTier.E;
-
-            if (rankArg.provided(context)) {
-                GateRankTier parsed = parseRank(rankArg.get(context));
-                if (parsed == null) {
-                    context.sendMessage(Message.raw(
-                            "Unknown rank '" + rankArg.get(context) + "'. Valid ranks: E D C B A S")
-                            .color("#ff6666"));
-                    return CompletableFuture.completedFuture(null);
-                }
-                tier = parsed;
+            GateRankTier parsed = parseRank(rankArg.get(context));
+            if (parsed == null) {
+                context.sendMessage(Message.raw(
+                        "Unknown rank '" + rankArg.get(context)
+                                + "'. Valid ranks: E D C B A S")
+                        .color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
             }
 
-            return givePortal(context, baseBlockId, tier);
+            return givePortal(context, baseBlockId, parsed);
         }
     }
 
@@ -129,8 +137,8 @@ public class PortalGiveCommand extends AbstractCommand {
 
     private static final class GiveAllPortalsSubCommand extends AbstractCommand {
 
-        private final OptionalArg<String> rankArg =
-                this.withOptionalArg("rank", "Rank tier (E/D/C/B/A/S)", ArgTypes.STRING);
+        private final RequiredArg<String> rankArg =
+            this.withRequiredArg("rank", "Rank tier (E/D/C/B/A/S)", ArgTypes.STRING);
 
         private GiveAllPortalsSubCommand() {
             super("all", "Give all dungeon portal items");
@@ -139,20 +147,16 @@ public class PortalGiveCommand extends AbstractCommand {
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-            GateRankTier tier = GateRankTier.E;
-
-            if (rankArg.provided(context)) {
-                GateRankTier parsed = parseRank(rankArg.get(context));
-                if (parsed == null) {
-                    context.sendMessage(Message.raw(
-                            "Unknown rank '" + rankArg.get(context) + "'. Valid ranks: E D C B A S")
-                            .color("#ff6666"));
-                    return CompletableFuture.completedFuture(null);
-                }
-                tier = parsed;
+            GateRankTier parsed = parseRank(rankArg.get(context));
+            if (parsed == null) {
+            context.sendMessage(Message.raw(
+                "Unknown rank '" + rankArg.get(context)
+                    + "'. Valid ranks: E D C B A S")
+                .color("#ff6666"));
+            return CompletableFuture.completedFuture(null);
             }
 
-            final GateRankTier finalTier = tier;
+            final GateRankTier finalTier = parsed;
             return givePortal(context, PORTAL_D01, finalTier)
                     .thenCompose(v -> givePortal(context, PORTAL_D02, finalTier))
                     .thenCompose(v -> givePortal(context, PORTAL_D03, finalTier))

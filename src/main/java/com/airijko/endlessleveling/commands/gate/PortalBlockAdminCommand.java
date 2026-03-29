@@ -1,4 +1,4 @@
-package com.airijko.endlessleveling.commands;
+package com.airijko.endlessleveling.commands.gate;
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -66,8 +66,8 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static ScheduledFuture<?> pendingTask;
 
     public PortalBlockAdminCommand() {
-        super("portalblocks", "List and remove placed portal blocks in your current world");
-        this.addAliases("portalblock", "elportalblocks", "gateblocks");
+        super("blocks", "List and remove placed portal blocks in your current world");
+        this.addAliases("portalblocks", "portalblock", "elportalblocks", "gateblocks");
         this.addSubCommand(new ListSubCommand());
         this.addSubCommand(new RemoveNearestSubCommand());
         this.addSubCommand(new RemoveAllSubCommand());
@@ -77,7 +77,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /portalblocks <list|remove-nearest|remove-all>").color("#ffcc66"));
+        context.sendMessage(Message.raw("Usage: /gate blocks <list|remove-nearest|remove-all>").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 

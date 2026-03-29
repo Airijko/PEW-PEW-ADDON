@@ -1,4 +1,4 @@
-package com.airijko.endlessleveling.commands;
+package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.hypixel.hytale.server.core.Message;
@@ -12,8 +12,8 @@ import java.util.concurrent.CompletableFuture;
 public final class ClearElDungeonsCommand extends AbstractCommand {
 
     public ClearElDungeonsCommand() {
-        super("elcleardungeons", "Clear all tracked Endless Leveling dungeon instances");
-        this.addAliases("cleareldungeons", "elclearinstances", "eldungeonsclear");
+        super("deleteinstances", "Delete all tracked Endless Leveling dungeon instances");
+        this.addAliases("delete", "clear", "clearinstances", "elcleardungeons", "cleareldungeons");
     }
 
     @Nullable

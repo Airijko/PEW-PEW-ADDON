@@ -1,4 +1,4 @@
-package com.airijko.endlessleveling.commands;
+package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.server.core.Message;
@@ -13,8 +13,8 @@ import java.util.concurrent.CompletableFuture;
 public class PortalGateTestCommand extends AbstractCommand {
 
     public PortalGateTestCommand() {
-        super("gatespawntest", "Spawn a random EL gate near you for testing");
-        this.addAliases("elgatespawntest", "spawnrandomgate");
+        super("test", "Spawn a random EL gate near you for testing");
+        this.addAliases("gatespawntest", "elgatespawntest", "spawnrandomgate");
     }
 
     @Nullable

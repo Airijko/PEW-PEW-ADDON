@@ -22,12 +22,8 @@
 
 package com.airijko.endlessleveling;
 
-import com.airijko.endlessleveling.commands.PortalGateTestCommand;
-import com.airijko.endlessleveling.commands.PortalGiveCommand;
-import com.airijko.endlessleveling.commands.PortalBlockAdminCommand;
-import com.airijko.endlessleveling.commands.PortalReturnPosCommand;
+import com.airijko.endlessleveling.commands.gate.GateCommand;
 import com.airijko.endlessleveling.commands.AddonReloadCommand;
-import com.airijko.endlessleveling.commands.ClearElDungeonsCommand;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -88,12 +84,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
             this.filesManager.shouldEnableExampleEvents());
         ExampleFeatureManager.get().registerExamples(this);
 
-        this.getCommandRegistry().registerCommand(new PortalGiveCommand());
-        this.getCommandRegistry().registerCommand(new PortalGateTestCommand());
-        this.getCommandRegistry().registerCommand(new PortalBlockAdminCommand());
-        this.getCommandRegistry().registerCommand(new PortalReturnPosCommand());
+        this.getCommandRegistry().registerCommand(new GateCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
-        this.getCommandRegistry().registerCommand(new ClearElDungeonsCommand());
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
         PortalProximityManager.initialize(this);

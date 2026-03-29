@@ -35,7 +35,7 @@
     "BlockSoundSetId": "Stone",
     "Particles": [
       {
-        "SystemId": "MagicPortal",
+        "SystemId": "MagicPortal_VoidKeyArt",
         "Color": "#ff2a2a",
         "PositionOffset": {
           "X": 1.0,

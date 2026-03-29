@@ -1,4 +1,4 @@
-package com.airijko.endlessleveling.commands;
+package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.hypixel.hytale.component.Ref;
@@ -37,8 +37,8 @@ public class PortalReturnPosCommand extends AbstractCommand {
     private static final int MAX_LIST_LINES = 20;
 
     public PortalReturnPosCommand() {
-        super("portalreturnpos", "Show coordinates of return portal blocks in your current world");
-        this.addAliases("returnportalpos", "rportalpos", "returnpos");
+        super("returnpos", "Show coordinates of return portal blocks in your current world");
+        this.addAliases("portalreturnpos", "returnportalpos", "rportalpos");
     }
 
     @Nullable
