@@ -477,7 +477,7 @@ public final class PortalLeveledInstanceRouter {
         // Some portals add players directly into generated instance worlds like
         // "instance-EL_MJ_Instance_D03-<uuid>", bypassing the routing aliases.
         String directWorldSuffix = resolveSuffixFromWorldName(routingName);
-        if (directWorldSuffix != null) {
+        if (directWorldSuffix != null && !isRoutingTemplateWorldName(routingName)) {
             enforcePersistentInstanceLifecycle(routingWorld, "direct-entry");
             String directWorldTemplate = resolveTemplateNameFromWorldName(routingName);
             boolean originalTemplate = isOriginalTemplateName(directWorldTemplate);
@@ -793,7 +793,12 @@ public final class PortalLeveledInstanceRouter {
             enforcePersistentInstanceLifecycle(loadedWorld, "expected-world-loaded");
             Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
             if (teleportToInstanceSpawn(playerRef, loadedWorld, effectiveReturnTransform)) {
-                GATE_KEY_TO_INSTANCE_NAME.put(gateKey, expectedWorldId);
+                GATE_KEY_TO_INSTANCE_NAME.put(gateKey, loadedWorld.getName());
+                cacheResolvedInstanceWorld(gateKey,
+                        loadedWorld.getName(),
+                        blockId,
+                        routingName,
+                        "expected-world-loaded");
                 rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
                 String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
                 if (suffix != null) {
@@ -832,7 +837,12 @@ public final class PortalLeveledInstanceRouter {
                             reloadedWorld,
                             effectiveReturnTransform,
                             () -> {
-                                GATE_KEY_TO_INSTANCE_NAME.put(gateKey, expectedWorldId);
+                            GATE_KEY_TO_INSTANCE_NAME.put(gateKey, reloadedWorld.getName());
+                            cacheResolvedInstanceWorld(gateKey,
+                                reloadedWorld.getName(),
+                                blockId,
+                                routingName,
+                                "expected-world-reload");
                                 rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
                                 String suffix = resolveSuffixFromWorldName(reloadedWorld.getName());
                                 if (suffix != null) {
@@ -1634,6 +1644,11 @@ public final class PortalLeveledInstanceRouter {
         }
 
         GATE_KEY_TO_INSTANCE_NAME.put(gateKey, instanceWorldName);
+        cacheResolvedInstanceWorld(gateKey,
+                instanceWorldName,
+                blockId,
+                canonicalTemplate,
+                "direct-entry-backfill");
         log(Level.INFO,
                 "[ELPortal] Backfilled gate pairing key=%s block=%s -> %s (template=%s player=%s)",
                 gateKey,
@@ -1641,6 +1656,15 @@ public final class PortalLeveledInstanceRouter {
                 instanceWorldName,
                 canonicalTemplate,
                 playerRef.getUsername());
+    }
+
+    private static boolean isRoutingTemplateWorldName(@Nonnull String worldName) {
+        for (String template : ROUTING_TO_SUFFIX.keySet()) {
+            if (template.equalsIgnoreCase(worldName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isKnownLiveOrLoadableWorld(@Nonnull String worldName, @Nonnull Universe universe) {
