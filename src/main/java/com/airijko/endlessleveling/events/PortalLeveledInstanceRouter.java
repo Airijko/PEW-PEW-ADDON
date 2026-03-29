@@ -132,6 +132,9 @@ public final class PortalLeveledInstanceRouter {
     private static final long GATE_SPAWN_STALE_MILLIS = 120000L;
     private static final long FALLBACK_TELEPORT_RETRY_DELAY_MILLIS = 100L;
     private static final int FALLBACK_TELEPORT_MAX_RETRIES = 8;
+    private static final long DEATH_RETURN_RETRY_DELAY_MILLIS = 100L;
+    private static final int DEATH_RETURN_MAX_RETRIES = 3;
+    private static final long DEATH_RETURN_INITIAL_DELAY_MILLIS = 100L;
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -1055,13 +1058,13 @@ public final class PortalLeveledInstanceRouter {
                     playerRef.getUsername(), targetWorld.getName(), formatTransform(spawnTransform));
 
             if (teleportToWorld(playerRef, targetWorld, spawnTransform)) {
-                log(Level.WARNING,
+                log(Level.INFO,
                     "[ELPortal] Fallback return to world spawn successful player=%s world=%s spawn=%s",
                     playerRef.getUsername(),
                     targetWorld.getName(),
                     formatTransform(spawnTransform));
             } else {
-                log(Level.WARNING,
+                log(Level.INFO,
                         "[ELPortal] Fallback teleport deferred retry player=%s world=%s delayMs=%d",
                         playerRef.getUsername(),
                         targetWorld.getName(),
@@ -1080,7 +1083,7 @@ public final class PortalLeveledInstanceRouter {
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             Runnable retryTask = () -> {
                 if (teleportToWorld(playerRef, targetWorld, spawnTransform)) {
-                    log(Level.WARNING,
+                    log(Level.INFO,
                             "[ELPortal] Fallback retry teleport succeeded player=%s world=%s spawn=%s attempt=%d/%d",
                             playerRef.getUsername(),
                             targetWorld.getName(),
@@ -1090,7 +1093,7 @@ public final class PortalLeveledInstanceRouter {
                 } else {
                     if (attempt < FALLBACK_TELEPORT_MAX_RETRIES) {
                         queueFallbackTeleportRetry(playerRef, targetWorld, spawnTransform, attempt + 1);
-                        log(Level.WARNING,
+                        log(Level.INFO,
                                 "[ELPortal] Fallback retry still pending player=%s world=%s attempt=%d/%d",
                                 playerRef.getUsername(),
                                 targetWorld.getName(),
@@ -1154,27 +1157,125 @@ public final class PortalLeveledInstanceRouter {
     }
 
     /** Blocks to push the player backward from the portal entrance after a death return teleport. */
-    private static final double DEATH_RETURN_OFFSET_BLOCKS = 3.0;
+    private static final double DEATH_RETURN_OFFSET_BLOCKS = 5.0;
 
         /**
-         * Teleports the player to the configured server default world spawn after death.
-         * This intentionally ignores saved portal-entry return targets.
+         * Tries to return the player near their portal entry (offset backwards) after death.
+         * Falls back to configured world spawn when the entry return cannot be applied.
          */
     public static void teleportPlayerToDeathReturnEntry(
             @Nonnull PlayerRef playerRef,
             @Nullable String returnWorldName,
             @Nullable Transform returnTransform,
             @Nonnull World sourceWorld) {
+        if (returnWorldName == null || returnWorldName.isBlank() || returnTransform == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: missing entry target, using fallback spawn player=%s returnWorld=%s hasTransform=%s",
+                    playerRef.getUsername(),
+                    returnWorldName != null ? returnWorldName : "null",
+                    returnTransform != null);
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        Universe universe = Universe.get();
+        if (universe == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: universe unavailable, using fallback spawn player=%s",
+                    playerRef.getUsername());
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        World targetWorld = universe.getWorld(returnWorldName);
+        if (targetWorld == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: target world unavailable, using fallback spawn player=%s returnWorld=%s",
+                    playerRef.getUsername(),
+                    returnWorldName);
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
         log(Level.INFO,
-            "[ELPortal] Death-return: forced default-world spawn player=%s savedTargetWorld=%s hasSavedTransform=%s",
+                "[ELPortal] Death-return: attempting entry-offset player=%s world=%s base=%s offset=%s",
+                playerRef.getUsername(),
+                targetWorld.getName(),
+                formatTransform(returnTransform),
+                formatTransform(offsetTransform));
+
+        log(Level.INFO,
+            "[ELPortal] Death-return: scheduling first entry-offset attempt player=%s world=%s delayMs=%d",
             playerRef.getUsername(),
-            returnWorldName != null ? returnWorldName : "null",
-            returnTransform != null);
-        fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            targetWorld.getName(),
+            DEATH_RETURN_INITIAL_DELAY_MILLIS);
+        queueDeathReturnOffsetRetry(playerRef, targetWorld, offsetTransform, sourceWorld, 1, DEATH_RETURN_INITIAL_DELAY_MILLIS);
+    }
+
+    private static void queueDeathReturnOffsetRetry(@Nonnull PlayerRef playerRef,
+                                                    @Nonnull World targetWorld,
+                                                    @Nonnull Transform targetTransform,
+                                                    @Nonnull World sourceWorld,
+                                                    int attempt,
+                                                    long delayMillis) {
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            Runnable retryTask = () -> {
+                if (teleportToWorld(playerRef, targetWorld, targetTransform)) {
+                    log(Level.INFO,
+                            "[ELPortal] Death-return: entry-offset retry succeeded player=%s world=%s attempt=%d/%d",
+                            playerRef.getUsername(),
+                            targetWorld.getName(),
+                            attempt,
+                            DEATH_RETURN_MAX_RETRIES);
+                    return;
+                }
+
+                if (attempt < DEATH_RETURN_MAX_RETRIES) {
+                    queueDeathReturnOffsetRetry(
+                        playerRef,
+                        targetWorld,
+                        targetTransform,
+                        sourceWorld,
+                        attempt + 1,
+                        DEATH_RETURN_RETRY_DELAY_MILLIS);
+                    log(Level.INFO,
+                            "[ELPortal] Death-return: entry-offset retry pending player=%s world=%s attempt=%d/%d",
+                            playerRef.getUsername(),
+                            targetWorld.getName(),
+                            attempt,
+                            DEATH_RETURN_MAX_RETRIES);
+                    return;
+                }
+
+                log(Level.WARNING,
+                        "[ELPortal] Death-return: entry-offset failed after retries player=%s world=%s attempts=%d; using fallback spawn",
+                        playerRef.getUsername(),
+                        targetWorld.getName(),
+                        attempt);
+                fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            };
+
+            if (executeOnPlayerWorldThread(playerRef, retryTask)) {
+                return;
+            }
+
+            try {
+                targetWorld.execute(retryTask);
+            } catch (Exception ex) {
+                AddonLoggingManager.log(plugin,
+                        Level.FINE,
+                        ex,
+                        "[ELPortal] Failed to queue death-return retry on target world thread player=%s world=%s",
+                        playerRef.getUsername(),
+                        targetWorld.getName());
+                retryTask.run();
+            }
+        }, delayMillis, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * Computes a Transform offset 3 blocks behind the player's facing direction at the time they entered
+     * Computes a Transform offset behind the player's facing direction at the time they entered
      * the portal, so they do not re-enter it on respawn.
      */
     @Nonnull
