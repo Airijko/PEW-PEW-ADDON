@@ -13,6 +13,7 @@ import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
@@ -65,6 +66,8 @@ public final class NaturalPortalGateManager {
     private static final int DEFAULT_WEIGHT_D = 25;
     private static final int DEFAULT_WEIGHT_E = 25;
     private static final int AIR_BLOCK_ID = 0;
+    private static final int WORLD_MIN_Y = 0;
+    private static final int WORLD_MAX_Y = 319;
     private static final long REMOVAL_RETRY_INTERVAL_SECONDS = 10L;
     private static final int REMOVAL_RETRY_BATCH_PER_WORLD = 32;
 
@@ -327,26 +330,29 @@ public final class NaturalPortalGateManager {
                                                           @Nonnull String blockId,
                                                           boolean isTestSpawn,
                                                           @Nonnull CompletableFuture<Boolean> future) {
-            Vector3d base = playerRef.getTransform().getPosition();
-            int baseX = MathUtil.floor(base.x);
-            int baseY = MathUtil.floor(base.y);
-            int baseZ = MathUtil.floor(base.z);
+            List<Long> loadedChunkIndexes = resolveLoadedChunkIndexes(world);
+            if (loadedChunkIndexes.isEmpty()) {
+                log(Level.INFO,
+                        "[ELPortal] Spawn skipped: no active loaded chunks in world %s",
+                        world.getName());
+                future.complete(false);
+                return;
+            }
 
-            for (int attempt = 0; attempt < PLACEMENT_ATTEMPTS; attempt++) {
-                int offsetX = randomInt(-MAX_OFFSET_BLOCKS, MAX_OFFSET_BLOCKS);
-                int offsetZ = randomInt(-MAX_OFFSET_BLOCKS, MAX_OFFSET_BLOCKS);
-                int x = baseX + offsetX;
-                int y = Math.max(baseY, 1);
-                int z = baseZ + offsetZ;
-
-                WorldChunk chunk = world.getChunkIfLoaded(ChunkUtil.indexChunkFromBlock(x, z));
+            int attempts = Math.max(PLACEMENT_ATTEMPTS, loadedChunkIndexes.size());
+            for (int attempt = 0; attempt < attempts; attempt++) {
+                long chunkIndex = loadedChunkIndexes.get(randomInt(0, loadedChunkIndexes.size() - 1));
+                WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
                 if (chunk == null) {
-                    // chunk is not currently loaded by any player — skip
                     continue;
                 }
 
-                // Do not overwrite world blocks when spawning portal gates.
-                if (chunk.getBlock(x, y, z) != 0) {
+                int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
+                int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
+                int x = (chunkX << 5) + randomInt(0, 31);
+                int z = (chunkZ << 5) + randomInt(0, 31);
+                int y = resolveGroundPlacementY(chunk, x, z);
+                if (y < 0) {
                     continue;
                 }
 
@@ -361,33 +367,89 @@ public final class NaturalPortalGateManager {
                 String gateId = resolveGateIdAt(world, x, y, z);
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, gateId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
-                        announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
+                    announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
                 log(Level.INFO,
-                    "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
-                    world.getName(),
-                    rankedBlockId,
-                    gateId == null ? "<unknown>" : gateId,
-                    gateId == null ? "<unknown>" : gateId,
-                    isTestSpawn,
-                    x,
-                    y,
-                    z,
-                    gateRank.tier.letter(),
-                    gateRank.roll,
-                    normalLevelMin,
-                    normalLevelMax,
-                    bossLevel);
+                        "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                        world.getName(),
+                        rankedBlockId,
+                        gateId == null ? "<unknown>" : gateId,
+                        gateId == null ? "<unknown>" : gateId,
+                        isTestSpawn,
+                        x,
+                        y,
+                        z,
+                        gateRank.tier.letter(),
+                        gateRank.roll,
+                        normalLevelMin,
+                        normalLevelMax,
+                        bossLevel);
                 scheduleRemoval(world, rankedBlockId, x, y, z);
                 future.complete(true);
                 return;
             }
 
-                log(Level.INFO,
-                    "[ELPortal] No loaded chunk found near %s in world %s for gate placement",
+            log(Level.INFO,
+                    "[ELPortal] No valid ground placement found for player=%s in world %s (loadedChunks=%d)",
                     playerRef.getUsername(),
-                    world.getName());
+                    world.getName(),
+                    loadedChunkIndexes.size());
             future.complete(false);
+    }
+
+    @Nonnull
+    private static List<Long> resolveLoadedChunkIndexes(@Nonnull World world) {
+        List<Long> loaded = new ArrayList<>();
+        for (Long chunkIndexObj : world.getChunkStore().getChunkIndexes()) {
+            if (chunkIndexObj == null) {
+                continue;
+            }
+            long chunkIndex = chunkIndexObj;
+            if (world.getChunkIfLoaded(chunkIndex) != null) {
+                loaded.add(chunkIndex);
+            }
+        }
+        return loaded;
+    }
+
+    private static int resolveGroundPlacementY(@Nonnull WorldChunk chunk, int x, int z) {
+        for (int y = WORLD_MAX_Y - 2; y >= WORLD_MIN_Y + 1; y--) {
+            int supportBlock = chunk.getBlock(x, y, z);
+            if (supportBlock == AIR_BLOCK_ID || isLikelyFoliageOrWood(supportBlock)) {
+                continue;
+            }
+
+            int placeY = y + 1;
+            if (placeY >= WORLD_MAX_Y) {
+                continue;
+            }
+
+            // Keep gate close to terrain: place directly above the surface with two clear blocks.
+            if (chunk.getBlock(x, placeY, z) != AIR_BLOCK_ID) {
+                continue;
+            }
+            if (chunk.getBlock(x, placeY + 1, z) != AIR_BLOCK_ID) {
+                continue;
+            }
+            return placeY;
+        }
+        return -1;
+    }
+
+    private static boolean isLikelyFoliageOrWood(int blockIntId) {
+        BlockType blockType = BlockType.getAssetMap().getAsset(blockIntId);
+        if (blockType == null || blockType.getId() == null) {
+            return false;
+        }
+
+        String id = blockType.getId().toLowerCase(Locale.ROOT);
+        return id.contains("leaf")
+                || id.contains("log")
+                || id.contains("wood")
+                || id.contains("branch")
+                || id.contains("vine")
+                || id.contains("canopy")
+                || id.contains("bamboo");
     }
 
     private static void refreshConfigSnapshot() {
