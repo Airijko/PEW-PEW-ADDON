@@ -1380,6 +1380,32 @@ public final class PortalLeveledInstanceRouter {
     private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName,
                                                             @Nullable String gateIdentity,
                                                             @Nullable String templateHint) {
+        LevelRange existingRange = ACTIVE_LEVEL_RANGES.get(worldName);
+        Integer existingBossLevel = ACTIVE_BOSS_LEVELS.get(worldName);
+        String existingRank = ACTIVE_RANK_LETTERS.get(worldName);
+        if (existingRange != null && existingBossLevel != null) {
+            EndlessLevelingAPI api = EndlessLevelingAPI.get();
+            if (api != null) {
+                int bossOffset = Math.max(0, existingBossLevel - existingRange.max());
+                api.registerMobWorldFixedLevelOverride(
+                        worldName,
+                        worldName,
+                        existingRange.min(),
+                        existingRange.max(),
+                        bossOffset);
+                log(Level.INFO,
+                        "[ELPortal] Reused level override world=%s range=%d-%d bossOffset=%d",
+                        worldName,
+                        existingRange.min(),
+                        existingRange.max(),
+                        bossOffset);
+            }
+            if (existingRank != null) {
+                ACTIVE_RANK_LETTERS.put(worldName, existingRank);
+            }
+            return existingRange;
+        }
+
         PendingLevelProfile profile = resolveDynamicInstanceRange(worldName, gateIdentity, templateHint);
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
         if (api != null) {

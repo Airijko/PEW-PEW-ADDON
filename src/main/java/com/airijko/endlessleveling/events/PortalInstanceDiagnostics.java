@@ -62,7 +62,7 @@ public final class PortalInstanceDiagnostics {
             )
     );
 
-    private static final Map<String, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
+    private static final Map<UUID, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<String> PENDING_INSTANCE_REMOVALS = ConcurrentHashMap.newKeySet();
     private static final Set<String> EXPLICIT_DEATH_WIPE_REMOVALS = ConcurrentHashMap.newKeySet();
     private static final boolean DEATH_WIPE_ON_EMPTY_ENABLED = false;
@@ -95,11 +95,15 @@ public final class PortalInstanceDiagnostics {
         if (playerRef == null) {
             return;
         }
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
 
         World world = event.getWorld();
         String worldName = world.getName();
         InstanceDebugDefinition definition = resolveDefinitionByWorldName(worldName);
-        PendingDeath pendingDeath = PENDING_DEATHS.remove(playerRef.getUsername());
+        PendingDeath pendingDeath = PENDING_DEATHS.remove(playerUuid);
         if (definition == null && pendingDeath == null) {
             return;
         }
@@ -152,9 +156,13 @@ public final class PortalInstanceDiagnostics {
         if (playerRef == null) {
             return;
         }
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
 
         String worldName = event.getWorld().getName();
-        PendingDeath pendingDeath = PENDING_DEATHS.get(playerRef.getUsername());
+        PendingDeath pendingDeath = PENDING_DEATHS.get(playerUuid);
         if (!isTrackedInstanceWorld(worldName) && (pendingDeath == null || !pendingDeath.worldName.equals(worldName))) {
             return;
         }
@@ -296,7 +304,9 @@ public final class PortalInstanceDiagnostics {
             returnDiag != null ? returnDiag.returnTransform() : null,
             returnDiag != null ? returnDiag.source() : "unknown"
         );
-        PENDING_DEATHS.put(player.getDisplayName(), deathInfo);
+        if (playerUuid != null) {
+            PENDING_DEATHS.put(playerUuid, deathInfo);
+        }
         
         log(Level.INFO,
                 "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f" +
