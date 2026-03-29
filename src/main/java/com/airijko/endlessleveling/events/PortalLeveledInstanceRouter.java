@@ -944,7 +944,6 @@ public final class PortalLeveledInstanceRouter {
                                 if (suffix != null) {
                                 applyFixedGateSpawn(playerRef, spawned, suffix);
                                 }
-                                broadcastEntry(playerRef, displayName, range.min(), range.max());
                                 log(Level.INFO,
                                     "[ELPortal] Created routed instance %s for template %s bracket %d-%d",
                                     spawned.getName(),
@@ -1690,8 +1689,37 @@ public final class PortalLeveledInstanceRouter {
      */
     @Nullable
     public static String resolveGateDisplayName(@Nonnull String worldName) {
+        String normalizedWorldName = worldName.trim().toLowerCase(Locale.ROOT);
+        boolean isCanonicalGateWorld = normalizedWorldName.startsWith("el_gate_");
+        boolean isActiveGatePair = isInstancePairedToActiveGate(worldName);
+        if (!isCanonicalGateWorld && !isActiveGatePair) {
+            return null;
+        }
+
         String templateName = resolveTemplateNameFromWorldName(worldName);
-        return templateName != null ? ROUTING_TO_DISPLAY.get(templateName) : null;
+        if (templateName != null) {
+            return ROUTING_TO_DISPLAY.get(templateName);
+        }
+
+        // el_gate_* world IDs do not include template name; recover display from
+        // gate pairing/expectation metadata.
+        for (Map.Entry<String, String> entry : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
+            if (!worldName.equals(entry.getValue())) {
+                continue;
+            }
+
+            GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(entry.getKey());
+            if (expectation == null || expectation.routingName() == null || expectation.routingName().isBlank()) {
+                continue;
+            }
+
+            String displayName = ROUTING_TO_DISPLAY.get(expectation.routingName());
+            if (displayName != null && !displayName.isBlank()) {
+                return displayName;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1812,22 +1840,13 @@ public final class PortalLeveledInstanceRouter {
     @Nonnull
     private static String toInstanceGroupId(@Nonnull String gateIdentity,
                                             @Nullable String routingName) {
-        String templateToken = sanitizeInstanceToken(routingName, "el_dungeon");
-        String gateToken = sanitizeInstanceToken(gateIdentity, "gate");
-        gateToken = stripGatePrefix(gateToken);
-        return templateToken + "_gate_" + gateToken;
-    }
-
-    @Nonnull
-    private static String stripGatePrefix(@Nonnull String gateToken) {
-        String normalized = gateToken;
-        if (normalized.startsWith("el_gate_")) {
-            normalized = normalized.substring("el_gate_".length());
-        } else if (normalized.startsWith("gate_")) {
-            normalized = normalized.substring("gate_".length());
+        String gateToken = sanitizeInstanceToken(gateIdentity, "el_gate");
+        if (gateToken.startsWith("gate_")) {
+            gateToken = "el_" + gateToken;
+        } else if (!gateToken.startsWith("el_gate_")) {
+            gateToken = "el_gate_" + gateToken;
         }
-
-        return normalized.isBlank() ? "gate" : normalized;
+        return gateToken;
     }
 
     @Nonnull

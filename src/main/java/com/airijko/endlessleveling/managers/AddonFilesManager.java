@@ -1,6 +1,9 @@
 package com.airijko.endlessleveling.managers;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
@@ -12,8 +15,10 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
@@ -22,10 +27,12 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.jar.JarEntry;
 import java.util.jar.JarInputStream;
 import java.util.regex.Matcher;
@@ -46,8 +53,11 @@ public final class AddonFilesManager {
     private static final String GATE_WORLD_SETTINGS_RESOURCE = "world-settings/el-gate-dungeons.json";
     private static final String GATE_WORLD_SETTINGS_FILE_NAME = "zz-el-gate-dungeons.json";
     private static final String LEGACY_GATE_WORLD_SETTINGS_FILE_NAME = "el-gate-dungeons.json";
+    private static final String GATE_WORLD_OVERRIDES_PATH = "World_Overrides";
+    private static final String CANONICAL_GATE_WORLD_OVERRIDE_KEY = "*el_gate_*";
     private static final DateTimeFormatter ARCHIVE_TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Pattern MANIFEST_VERSION_PATTERN = Pattern.compile("\"Version\"\\s*:\\s*\"([^\"]+)\"");
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClassFull();
 
     private final JavaPlugin plugin;
@@ -577,7 +587,7 @@ public final class AddonFilesManager {
         }
 
         File targetFile = new File(coreWorldSettingsFolder, GATE_WORLD_SETTINGS_FILE_NAME);
-        copyResourceToFile(GATE_WORLD_SETTINGS_RESOURCE, targetFile, true);
+        syncGateWorldSettingsBundle(targetFile.toPath());
         log(Level.INFO, "Synced addon gate world-settings bundle to %s", targetFile.getAbsolutePath());
 
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
@@ -585,6 +595,164 @@ public final class AddonFilesManager {
             api.reloadWorldSettings();
             log(Level.INFO, "Triggered core world-settings reload after sync");
         }
+    }
+
+    private void syncGateWorldSettingsBundle(Path targetPath) {
+        try {
+            Map<String, Object> bundled = readBundledJsonAsMap(GATE_WORLD_SETTINGS_RESOURCE);
+            if (bundled == null) {
+                return;
+            }
+
+            Map<String, Object> canonicalBundled = canonicalizeGateWorldSettings(bundled);
+            if (!Files.exists(targetPath)) {
+                writeJsonMap(targetPath, canonicalBundled);
+                return;
+            }
+
+            Map<String, Object> current = readJsonFileAsMap(targetPath);
+            if (current == null) {
+                writeJsonMap(targetPath, canonicalBundled);
+                return;
+            }
+
+            Map<String, Object> canonicalCurrent = canonicalizeGateWorldSettings(current);
+            Map<String, Object> merged = deepMergeDefaultsWithCurrent(canonicalBundled, canonicalCurrent);
+            if (!Objects.equals(current, merged)) {
+                archivePathIfExists(targetPath, "world-settings/" + GATE_WORLD_SETTINGS_FILE_NAME,
+                        "normalized-gate-world-settings");
+                writeJsonMap(targetPath, merged);
+            }
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to sync addon gate world-settings bundle", exception);
+        }
+    }
+
+    private Map<String, Object> readBundledJsonAsMap(String resourcePath) {
+        try (InputStream in = plugin.getClassLoader().getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                log(Level.WARNING, "Bundled world-settings resource missing: %s", resourcePath);
+                return null;
+            }
+            try (Reader reader = new InputStreamReader(in)) {
+                return GSON.fromJson(reader, new TypeToken<LinkedHashMap<String, Object>>() {
+                }.getType());
+            }
+        } catch (Exception exception) {
+            log(Level.WARNING, "Failed to read bundled world-settings resource %s: %s",
+                    resourcePath,
+                    exception.getMessage());
+            return null;
+        }
+    }
+
+    private Map<String, Object> readJsonFileAsMap(Path path) {
+        try (Reader reader = Files.newBufferedReader(path)) {
+            return GSON.fromJson(reader, new TypeToken<LinkedHashMap<String, Object>>() {
+            }.getType());
+        } catch (Exception exception) {
+            log(Level.WARNING, "Failed to parse JSON file %s: %s", path, exception.getMessage());
+            return null;
+        }
+    }
+
+    private void writeJsonMap(Path targetPath, Map<String, Object> content) throws IOException {
+        Path parent = targetPath.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        String output = GSON.toJson(content);
+        if (!output.endsWith("\n")) {
+            output = output + "\n";
+        }
+        Files.writeString(targetPath, output);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> canonicalizeGateWorldSettings(Map<String, Object> source) {
+        if (source == null || source.isEmpty()) {
+            return source;
+        }
+
+        Object worldOverridesRaw = source.get(GATE_WORLD_OVERRIDES_PATH);
+        if (!(worldOverridesRaw instanceof Map<?, ?> worldOverrides)) {
+            return source;
+        }
+
+        Map<String, Object> mergedGateOverride = new LinkedHashMap<>();
+        Map<String, Object> passthroughOverrides = new LinkedHashMap<>();
+
+        for (Map.Entry<?, ?> entry : worldOverrides.entrySet()) {
+            if (!(entry.getKey() instanceof String key)) {
+                continue;
+            }
+            if (!(entry.getValue() instanceof Map<?, ?> valueMap)) {
+                passthroughOverrides.put(key, entry.getValue());
+                continue;
+            }
+            if (isLegacyGateWorldOverrideKey(key)) {
+                mergedGateOverride = deepMergeDefaultsWithCurrent(mergedGateOverride,
+                        (Map<String, Object>) valueMap);
+                continue;
+            }
+            passthroughOverrides.put(key, entry.getValue());
+        }
+
+        Object existingCanonical = passthroughOverrides.remove(CANONICAL_GATE_WORLD_OVERRIDE_KEY);
+        if (existingCanonical instanceof Map<?, ?> existingCanonicalMap) {
+            mergedGateOverride = deepMergeDefaultsWithCurrent(mergedGateOverride,
+                    (Map<String, Object>) existingCanonicalMap);
+        }
+
+        if (mergedGateOverride.isEmpty()) {
+            return source;
+        }
+
+        Map<String, Object> normalizedOverrides = new LinkedHashMap<>();
+        normalizedOverrides.put(CANONICAL_GATE_WORLD_OVERRIDE_KEY, mergedGateOverride);
+        normalizedOverrides.putAll(passthroughOverrides);
+
+        Map<String, Object> normalizedRoot = new LinkedHashMap<>(source);
+        normalizedRoot.put(GATE_WORLD_OVERRIDES_PATH, normalizedOverrides);
+        return normalizedRoot;
+    }
+
+    private boolean isLegacyGateWorldOverrideKey(String key) {
+        if (key == null || key.isBlank()) {
+            return false;
+        }
+        String lowered = key.toLowerCase(Locale.ROOT);
+        return lowered.contains("el_mj_instance_")
+                || lowered.contains("el_endgame_")
+                || CANONICAL_GATE_WORLD_OVERRIDE_KEY.equalsIgnoreCase(lowered);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> deepMergeDefaultsWithCurrent(Map<String, Object> defaults, Map<String, Object> current) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Object> entry : defaults.entrySet()) {
+            String key = entry.getKey();
+            Object defaultValue = entry.getValue();
+            Object currentValue = current.get(key);
+
+            if (defaultValue instanceof Map<?, ?> defaultMap && currentValue instanceof Map<?, ?> currentMap) {
+                merged.put(key, deepMergeDefaultsWithCurrent((Map<String, Object>) defaultMap,
+                        (Map<String, Object>) currentMap));
+            } else if (current.containsKey(key)) {
+                merged.put(key, currentValue);
+            } else {
+                merged.put(key, defaultValue);
+            }
+        }
+
+        for (Map.Entry<String, Object> entry : current.entrySet()) {
+            if (!merged.containsKey(entry.getKey())) {
+                merged.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        return merged;
     }
 
     public Path archiveFileIfExists(File sourceFile, String archiveRelativePath, String priorVersionTag) {

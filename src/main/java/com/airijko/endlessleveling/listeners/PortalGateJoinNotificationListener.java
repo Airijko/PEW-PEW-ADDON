@@ -12,6 +12,7 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -51,6 +52,10 @@ public class PortalGateJoinNotificationListener {
         }
 
         String worldName = playerWorld.getName();
+        if (worldName == null || !worldName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
+            return;
+        }
+
         String displayName = PortalLeveledInstanceRouter.resolveGateDisplayName(worldName);
         if (displayName == null) {
             return;
