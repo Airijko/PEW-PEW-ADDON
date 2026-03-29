@@ -107,8 +107,8 @@ rank_anchor_mode: highest_mob
 # Effective chance = tier_weight / total_weight.
 rank_weights:
   S: 1
-  A: 6
-  B: 13
+  A: 5
+  B: 14
   C: 30
   D: 25
   E: 25
