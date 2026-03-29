@@ -101,18 +101,19 @@ public final class PortalInstanceDiagnostics {
             return;
         }
 
-        // If player is returning after death, restore their entry target for consistent return portal teleport
-        if (pendingDeath != null && pendingDeath.returnTargetWorldName != null && pendingDeath.returnTargetTransform != null) {
-            UUID playerUuid = playerRef.getUuid();
-            if (playerUuid != null) {
-                // Restore entry target so it's available when custom return portal is used
-                PortalLeveledInstanceRouter.restorePlayerEntryTarget(playerUuid, pendingDeath.returnTargetWorldName, pendingDeath.returnTargetTransform);
-                log(Level.INFO,
-                        "player-restore-death-target player=%s returnWorld=%s source=%s",
-                        playerRef.getUsername(),
-                        pendingDeath.returnTargetWorldName,
-                        pendingDeath.returnTargetSource);
-            }
+        // If player died in a dungeon, teleport them back to their portal entry location (with offset).
+        // Falls through to world spawn if the entry target is unavailable or the teleport fails.
+        if (pendingDeath != null) {
+            PortalLeveledInstanceRouter.teleportPlayerToDeathReturnEntry(
+                    playerRef,
+                    pendingDeath.returnTargetWorldName,
+                    pendingDeath.returnTargetTransform,
+                    world);
+            log(Level.INFO,
+                    "player-death-return player=%s returnWorld=%s source=%s",
+                    playerRef.getUsername(),
+                    pendingDeath.returnTargetWorldName != null ? pendingDeath.returnTargetWorldName : "none",
+                    pendingDeath.returnTargetSource);
         }
 
         world.execute(() -> {

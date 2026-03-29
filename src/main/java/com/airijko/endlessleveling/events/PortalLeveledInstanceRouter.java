@@ -16,6 +16,8 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Transform;
+import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.math.vector.Vector3f;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
@@ -1058,6 +1060,91 @@ public final class PortalLeveledInstanceRouter {
         }
 
         return null;
+    }
+
+    /** Blocks to push the player backward from the portal entrance after a death return teleport. */
+    private static final double DEATH_RETURN_OFFSET_BLOCKS = 3.0;
+
+    /**
+     * Teleports the player to their original portal entry location after death, offset away from the portal
+     * so they do not immediately re-enter it. Falls back to the default world {@code /spawn} if the return
+     * target is unavailable or the teleport fails.
+     */
+    public static void teleportPlayerToDeathReturnEntry(
+            @Nonnull PlayerRef playerRef,
+            @Nullable String returnWorldName,
+            @Nullable Transform returnTransform,
+            @Nonnull World sourceWorld) {
+        if (returnWorldName == null || returnTransform == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: no entry target for player=%s — falling back to world spawn",
+                    playerRef.getUsername());
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        Universe universe = Universe.get();
+        if (universe == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: universe unavailable player=%s — falling back to world spawn",
+                    playerRef.getUsername());
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        World returnWorld = null;
+        Object worldObj = universe.getWorlds().get(returnWorldName);
+        if (worldObj instanceof World w) {
+            returnWorld = w;
+        }
+
+        if (returnWorld == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: world not found player=%s returnWorld=%s — falling back to world spawn",
+                    playerRef.getUsername(), returnWorldName);
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+            return;
+        }
+
+        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
+        boolean success = teleportToWorld(playerRef, returnWorld, offsetTransform);
+
+        if (success) {
+            log(Level.INFO,
+                    "[ELPortal] Death-return: teleported player=%s to world=%s at %s",
+                    playerRef.getUsername(), returnWorldName, formatTransform(offsetTransform));
+        } else {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return: teleport failed player=%s — falling back to world spawn",
+                    playerRef.getUsername());
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+        }
+    }
+
+    /**
+     * Computes a Transform offset 3 blocks behind the player's facing direction at the time they entered
+     * the portal, so they do not re-enter it on respawn.
+     */
+    @Nonnull
+    private static Transform computeDeathReturnOffset(@Nonnull Transform entryTransform) {
+        Vector3d pos = entryTransform.getPosition();
+        Vector3f rot = entryTransform.getRotation();
+
+        double offsetX = 0.0;
+        double offsetZ = 0.0;
+
+        float yaw = rot.getYaw();
+        if (!Float.isNaN(yaw)) {
+            // The player was facing TOWARD the portal; move them in the opposite direction.
+            // Hytale forward: dx = -sin(yaw), dz = -cos(yaw) → backward: +sin(yaw), +cos(yaw)
+            offsetX = Math.sin(yaw) * DEATH_RETURN_OFFSET_BLOCKS;
+            offsetZ = Math.cos(yaw) * DEATH_RETURN_OFFSET_BLOCKS;
+        } else {
+            // No valid yaw — apply a fixed +Z offset as a safe fallback
+            offsetZ = DEATH_RETURN_OFFSET_BLOCKS;
+        }
+
+        return new Transform(new Vector3d(pos.x + offsetX, pos.y, pos.z + offsetZ), rot);
     }
 
     @Nonnull
