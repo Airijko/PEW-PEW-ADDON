@@ -1,6 +1,8 @@
 package com.airijko.endlessleveling.managers;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.EndlessLeveling;
+import com.airijko.endlessleveling.player.PlayerData;
 import com.airijko.endlessleveling.enums.GateRankTier;
 import com.airijko.endlessleveling.enums.PortalGateColor;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -72,6 +74,7 @@ public final class NaturalPortalGateManager {
     private static ScheduledFuture<?> pendingRemovalTask;
     private static final Map<UUID, Set<GateRemovalRequest>> PENDING_GATE_REMOVALS = new ConcurrentHashMap<>();
     private static final Set<ActiveGate> ACTIVE_GATES = ConcurrentHashMap.newKeySet();
+    private static volatile int HIGHEST_SEEN_PLAYER_LEVEL = DYNAMIC_MIN_LEVEL;
 
     private NaturalPortalGateManager() {
     }
@@ -641,18 +644,33 @@ public final class NaturalPortalGateManager {
         LevelBand worldBand = resolveGlobalLevelBand(anchorPlayerRef);
         int normalRange = resolveNormalMobLevelRange();
         int bossBonus = resolveBossLevelBonus();
+        int highestLevel = worldBand.maxLevel();
 
         int normalMin;
         int normalMax;
 
         if (rankTier == GateRankTier.S) {
-            int sOffset = resolveSOffset();
-            normalMin = clampDynamicLevel(worldBand.maxLevel() + sOffset);
+            // S rank starts strictly above the highest level any player has ever reached.
+            int sOffset = Math.max(1, resolveSOffset());
+            normalMin = clampDynamicLevel(highestLevel + sOffset);
             normalMax = clampDynamicLevel(normalMin + normalRange);
         } else {
-            int baseLevel = resolveRankAnchorLevel(worldBand.minLevel(), worldBand.maxLevel(), rankTier);
-            normalMax = clampDynamicLevel(baseLevel);
-            normalMin = clampDynamicLevel(normalMax - normalRange);
+            int baseLevel = resolveTierAnchorLevel(DYNAMIC_MIN_LEVEL, highestLevel, rankTier);
+            String anchorMode = filesManager != null ? filesManager.getDungeonRankAnchorMode() : "HIGHEST_MOB";
+            if ("LOWEST_MOB".equals(anchorMode)) {
+                // Anchor is the lowest normal mob — range extends upward.
+                normalMin = clampDynamicLevel(baseLevel);
+                normalMax = clampDynamicLevel(normalMin + normalRange);
+            } else if ("BOSS".equals(anchorMode)) {
+                // Anchor is the boss level — derive normal range below it.
+                int bossAnchor = clampDynamicLevel(baseLevel);
+                normalMax = clampDynamicLevel(bossAnchor - bossBonus);
+                normalMin = clampDynamicLevel(normalMax - normalRange);
+            } else {
+                // HIGHEST_MOB (default) — anchor is the highest normal mob, range extends downward.
+                normalMax = clampDynamicLevel(baseLevel);
+                normalMin = clampDynamicLevel(normalMax - normalRange);
+            }
         }
 
         if (normalMax < normalMin) {
@@ -666,38 +684,84 @@ public final class NaturalPortalGateManager {
 
     @Nonnull
     private static LevelBand resolveGlobalLevelBand(@Nonnull PlayerRef anchorPlayerRef) {
-        Universe universe = Universe.get();
-        if (universe == null) {
-            int fallbackLevel = resolveFallbackLevel(anchorPlayerRef);
-            return new LevelBand(fallbackLevel, fallbackLevel);
+        boolean overallScope = isOverallLevelPlayerScope();
+
+        if (overallScope) {
+            // OVERALL: find the highest level across all known players (online + offline).
+            EndlessLeveling plugin = EndlessLeveling.getInstance();
+            if (plugin != null) {
+                List<PlayerData> allPlayers = plugin.getPlayerDataManager().getAllPlayersSortedByLevel();
+                if (!allPlayers.isEmpty()) {
+                    int highest = allPlayers.get(0).getLevel();
+                    if (highest > HIGHEST_SEEN_PLAYER_LEVEL) {
+                        HIGHEST_SEEN_PLAYER_LEVEL = highest;
+                    }
+                }
+            }
+        } else {
+            // ONLINE: update high-water mark from currently online players only.
+            EndlessLevelingAPI api = EndlessLevelingAPI.get();
+            Universe universe = Universe.get();
+            if (universe != null && api != null) {
+                for (PlayerRef player : universe.getPlayers()) {
+                    if (player == null) {
+                        continue;
+                    }
+                    UUID playerUuid = player.getUuid();
+                    if (playerUuid == null) {
+                        continue;
+                    }
+                    int level = api.getPlayerLevel(playerUuid);
+                    if (level > HIGHEST_SEEN_PLAYER_LEVEL) {
+                        HIGHEST_SEEN_PLAYER_LEVEL = level;
+                    }
+                }
+            }
         }
 
+        // Ensure the anchor (gate-spawning) player is reflected regardless of scope.
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
-        int minLevel = Integer.MAX_VALUE;
-        int maxLevel = Integer.MIN_VALUE;
-        for (PlayerRef player : universe.getPlayers()) {
-            if (player == null) {
-                continue;
-            }
-
-            UUID playerUuid = player.getUuid();
-            if (playerUuid == null) {
-                continue;
-            }
-
-            int level = api != null ? api.getPlayerLevel(playerUuid) : 0;
-            if (level > 0) {
-                minLevel = Math.min(minLevel, level);
-                maxLevel = Math.max(maxLevel, level);
+        if (api != null) {
+            UUID anchorUuid = anchorPlayerRef.getUuid();
+            if (anchorUuid != null) {
+                int anchorLevel = api.getPlayerLevel(anchorUuid);
+                if (anchorLevel > HIGHEST_SEEN_PLAYER_LEVEL) {
+                    HIGHEST_SEEN_PLAYER_LEVEL = anchorLevel;
+                }
             }
         }
 
-        if (minLevel == Integer.MAX_VALUE || maxLevel == Integer.MIN_VALUE) {
-            int fallbackLevel = resolveFallbackLevel(anchorPlayerRef);
-            return new LevelBand(fallbackLevel, fallbackLevel);
+        // Band always spans from level 1 to the highest level any player has ever reached.
+        int high = HIGHEST_SEEN_PLAYER_LEVEL > 0
+                ? clampDynamicLevel(HIGHEST_SEEN_PLAYER_LEVEL)
+                : clampDynamicLevel(resolveFallbackLevel(anchorPlayerRef));
+        return new LevelBand(DYNAMIC_MIN_LEVEL, high);
+    }
+
+    private static boolean isOverallLevelPlayerScope() {
+        return filesManager != null && "OVERALL".equals(filesManager.getDungeonLevelPlayerScope());
+    }
+
+    private static int resolveTierAnchorLevel(int minLevel, int maxLevel, @Nonnull GateRankTier tier) {
+        if (maxLevel <= minLevel) {
+            return clampDynamicLevel(maxLevel);
         }
 
-        return new LevelBand(clampDynamicLevel(minLevel), clampDynamicLevel(maxLevel));
+        // Each rank occupies a 20% slice of the [1, highest] band.
+        // A random point within that slice is chosen on every spawn for variety.
+        double[] range = switch (tier) {
+            case E -> new double[]{0.00, 0.20};
+            case D -> new double[]{0.20, 0.40};
+            case C -> new double[]{0.40, 0.60};
+            case B -> new double[]{0.60, 0.80};
+            case A -> new double[]{0.80, 1.00};
+            default -> new double[]{0.40, 0.60};
+        };
+
+        double ratio = range[0] + Math.random() * (range[1] - range[0]);
+        int span = maxLevel - minLevel;
+        int anchored = minLevel + (int) Math.round(span * ratio);
+        return clampDynamicLevel(Math.max(minLevel, Math.min(anchored, maxLevel)));
     }
 
     private static int resolveFallbackLevel(@Nonnull PlayerRef playerRef) {

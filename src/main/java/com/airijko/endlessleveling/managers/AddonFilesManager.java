@@ -262,6 +262,17 @@ public final class AddonFilesManager {
         text.append("# Minimum enforced value: 0.\n");
         text.append("boss_level_bonus: ").append(options.bossLevelBonus).append("\n\n");
 
+        text.append("# Which players are considered when determining the highest-level player ceiling.\n");
+        text.append("# online  = only players currently online (high-water mark: remembered until restart).\n");
+        text.append("# overall = all players ever seen (online and offline data).\n");
+        text.append("level_player_scope: ").append(options.levelPlayerScope.toLowerCase(Locale.ROOT)).append("\n\n");
+
+        text.append("# Which mob level is used as the anchor point when placing a rank in the band.\n");
+        text.append("# lowest_mob  = the lowest normal mob level determines rank position.\n");
+        text.append("# highest_mob = the highest normal mob level determines rank position (default).\n");
+        text.append("# boss        = the boss mob level determines rank position.\n");
+        text.append("rank_anchor_mode: ").append(options.rankAnchorMode.toLowerCase(Locale.ROOT).replace('_', '_')).append("\n\n");
+
         text.append("# -----------------------------------------------------------------------\n");
         text.append("# Rank weighting\n");
         text.append("# -----------------------------------------------------------------------\n\n");
@@ -984,6 +995,20 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.levelReferenceScope;
     }
 
+    @Nonnull
+    public String getDungeonLevelPlayerScope() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().levelPlayerScope
+                : dungeonGateOptions.levelPlayerScope;
+    }
+
+    @Nonnull
+    public String getDungeonRankAnchorMode() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().rankAnchorMode
+                : dungeonGateOptions.rankAnchorMode;
+    }
+
     public int getDungeonLevelReferenceScopePercent() {
         return dungeonGateOptions == null
                 ? DungeonGateOptions.defaults().scopePercent
@@ -1144,6 +1169,16 @@ public final class AddonFilesManager {
                 bossLevelBonus = Math.max(0, n.intValue());
             }
 
+            String levelPlayerScope = defaults.levelPlayerScope;
+            if (root.get("level_player_scope") instanceof String scopeRaw && !scopeRaw.isBlank()) {
+                levelPlayerScope = normalizeLevelPlayerScope(scopeRaw, defaults.levelPlayerScope);
+            }
+
+            String rankAnchorMode = defaults.rankAnchorMode;
+            if (root.get("rank_anchor_mode") instanceof String modeRaw && !modeRaw.isBlank()) {
+                rankAnchorMode = normalizeRankAnchorMode(modeRaw, defaults.rankAnchorMode);
+            }
+
             int scopePercent = defaults.scopePercent;
             if (root.get("scope_percent") instanceof Number n) {
                 scopePercent = clampScopePercent(n.intValue());
@@ -1185,7 +1220,7 @@ public final class AddonFilesManager {
                     maxSpawns, spawnIntervalMin, spawnIntervalMax, gateDuration, maxPlayers, minLevel,
                     portalWorldWhitelist,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
-                    normalMobLevelRange, bossLevelBonus, scopePercent,
+                    normalMobLevelRange, bossLevelBonus, scopePercent, levelPlayerScope, rankAnchorMode,
                     rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE);
         } catch (IOException ignored) {
             return defaults;
@@ -1207,6 +1242,24 @@ public final class AddonFilesManager {
     private static String normalizeLevelReferenceScope(@Nonnull String rawScope, @Nonnull String fallback) {
         String normalized = rawScope.trim().toUpperCase(Locale.ROOT);
         if ("ALL".equals(normalized) || "UPPER".equals(normalized) || "LOWER".equals(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    @Nonnull
+    private static String normalizeLevelPlayerScope(@Nonnull String rawScope, @Nonnull String fallback) {
+        String normalized = rawScope.trim().toUpperCase(Locale.ROOT);
+        if ("ONLINE".equals(normalized) || "OVERALL".equals(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    @Nonnull
+    private static String normalizeRankAnchorMode(@Nonnull String raw, @Nonnull String fallback) {
+        String normalized = raw.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+        if ("LOWEST_MOB".equals(normalized) || "HIGHEST_MOB".equals(normalized) || "BOSS".equals(normalized)) {
             return normalized;
         }
         return fallback;
@@ -1292,6 +1345,8 @@ public final class AddonFilesManager {
         private final int normalMobLevelRange;
         private final int bossLevelBonus;
         private final int scopePercent;
+        private final String levelPlayerScope;
+        private final String rankAnchorMode;
         private final int rankWeightS;
         private final int rankWeightA;
         private final int rankWeightB;
@@ -1317,6 +1372,8 @@ public final class AddonFilesManager {
                 int normalMobLevelRange,
                 int bossLevelBonus,
                 int scopePercent,
+                @Nonnull String levelPlayerScope,
+                @Nonnull String rankAnchorMode,
                 int rankWeightS,
                 int rankWeightA,
                 int rankWeightB,
@@ -1341,6 +1398,8 @@ public final class AddonFilesManager {
             this.normalMobLevelRange = Math.max(0, normalMobLevelRange);
             this.bossLevelBonus = Math.max(0, bossLevelBonus);
             this.scopePercent = clampScopePercent(scopePercent);
+            this.levelPlayerScope = levelPlayerScope;
+            this.rankAnchorMode = rankAnchorMode;
             this.rankWeightS = Math.max(0, rankWeightS);
             this.rankWeightA = Math.max(0, rankWeightA);
             this.rankWeightB = Math.max(0, rankWeightB);
@@ -1352,7 +1411,7 @@ public final class AddonFilesManager {
         private static DungeonGateOptions defaults() {
                 return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
-                    "AVERAGE", "UPPER", 0, 30, 20, 10, 25,
+                    "AVERAGE", "UPPER", 0, 30, 20, 10, 25, "ONLINE", "HIGHEST_MOB",
                     1, 6, 13, 30, 25, 25);
         }
     }
