@@ -4,9 +4,12 @@ import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.hypixel.hytale.builtin.instances.InstancesPlugin;
+import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
+import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.entity.entities.Player;
@@ -156,12 +159,28 @@ public final class PortalInstanceDiagnostics {
             return;
         }
 
+        // Read InstanceEntityConfig before Hytale's onPlayerDrainFromWorld fires (which calls removeAndGet).
+        // This reveals where ExitInstance / Hytale will redirect the player after they leave the instance.
+        InstanceEntityConfig entityConfig = event.getHolder().getComponent(InstanceEntityConfig.getComponentType());
+        WorldReturnPoint entityReturnPoint = entityConfig != null ? entityConfig.getReturnPoint() : null;
+        WorldReturnPoint entityReturnOverride = entityConfig != null ? entityConfig.getReturnPointOverride() : null;
+        String drainReturnWorldUuid = entityReturnPoint != null && entityReturnPoint.getWorld() != null
+                ? entityReturnPoint.getWorld().toString() : "null";
+        String drainReturnTransform = entityReturnPoint != null
+                ? formatPos(entityReturnPoint.getReturnPoint()) : "null";
+        String drainReturnOverrideUuid = entityReturnOverride != null && entityReturnOverride.getWorld() != null
+                ? entityReturnOverride.getWorld().toString() : "null";
+
         log(Level.INFO,
-                "player-drain player=%s sourceWorld=%s pendingDeath=%s drainTransform=%s",
+                "player-drain player=%s sourceWorld=%s pendingDeath=%s drainTransform=%s" +
+                " entityReturnWorldUuid=%s entityReturnTransform=%s entityReturnOverrideUuid=%s",
                 playerRef.getUsername(),
                 worldName,
                 pendingDeath != null,
-                format(event.getTransform() == null ? null : event.getTransform().getPosition()));
+                format(event.getTransform() == null ? null : event.getTransform().getPosition()),
+                drainReturnWorldUuid,
+                drainReturnTransform,
+                drainReturnOverrideUuid);
 
         if (DEATH_WIPE_ON_EMPTY_ENABLED && pendingDeath != null && pendingDeath.worldName.equals(worldName)) {
             attemptDeathWipeWhenWorldEmpties(worldName, playerRef.getUsername());
@@ -280,14 +299,17 @@ public final class PortalInstanceDiagnostics {
         PENDING_DEATHS.put(player.getDisplayName(), deathInfo);
         
         log(Level.INFO,
-                "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f returnTarget=%s awaitingDrain=true",
+                "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f" +
+                " returnTarget=%s returnWorld=%s returnTransform=%s awaitingDrain=true",
                 player.getDisplayName(),
                 worldName,
                 definition.label,
                 format(actualPosition),
                 format(nearestSpawn.expected),
                 nearestSpawn.distance,
-                deathInfo.returnTargetSource);
+                deathInfo.returnTargetSource,
+                deathInfo.returnTargetWorldName != null ? deathInfo.returnTargetWorldName : "null",
+                formatPos(deathInfo.returnTargetTransform));
 
         // Instance persists for its entire gate duration; not removed on death.
         // Player will respawn in the same instance and can return to entry point consistently.
@@ -469,6 +491,15 @@ public final class PortalInstanceDiagnostics {
             return "<unknown>";
         }
         return String.format("(%.2f, %.2f, %.2f)", position.x, position.y, position.z);
+    }
+
+    @Nonnull
+    private static String formatPos(@Nullable Transform transform) {
+        if (transform == null || transform.getPosition() == null) {
+            return "null";
+        }
+        return String.format(Locale.ROOT, "(%.2f,%.2f,%.2f)",
+                transform.getPosition().x, transform.getPosition().y, transform.getPosition().z);
     }
 
     private static void log(@Nonnull Level level, @Nonnull String message, Object... args) {
