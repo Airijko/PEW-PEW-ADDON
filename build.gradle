@@ -6,10 +6,6 @@ plugins {
     id 'java'
 }
 
-group = 'com.airijko'
-version = '2.1.1'
-description = 'EndlessLevelingAddon'
-
 def home = "${System.getProperty('user.home')}/AppData/Roaming/Hytale"
 def patchline = providers.gradleProperty('patchline').orElse('release').get()
 
