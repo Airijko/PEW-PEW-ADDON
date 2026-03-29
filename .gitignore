@@ -42,5 +42,6 @@ build/
 ### Gradle ###
 .gradle
 .kotlin
+bin/
 devserver
 /.idea/

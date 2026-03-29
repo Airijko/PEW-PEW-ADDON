@@ -8,17 +8,25 @@ core_content_merge:
   augments: true
   passives: true
 
-sync:
-  # True = seed addon example files on startup when a system merge is enabled.
-  # False = do not seed addon defaults; keep only what you create manually.
-  seed_addon_examples_on_startup: true
+# Addon updates are always migration-only and never force overwrite your files.
 
-  # Core-style forced sync controls.
-  # True = overwrite that section with bundled addon defaults when version changes.
-  # False = keep custom files and only seed when missing/empty.
-  force_builtin_config: false
-  force_builtin_races: false
-  force_builtin_classes: false
-  force_builtin_augments: false
-  force_builtin_passives: false
+# Master logging toggle:
+# true  = enables full addon logs according to logging.base_level
+# false = suppresses INFO/FINE logs unless explicitly enabled by debug sections
+enable_logging: false
+
+logging:
+  # Base level for addon logs. Supported values: SEVERE, WARNING, INFO, FINE
+  # When enable_logging is false, this is clamped to WARNING/SEVERE.
+  base_level: WARNING
+
+examples:
+  # Master switch for all Java example features in this addon.
+  enabled: false
+
+  # Toggle /example command registration + execution.
+  command: false
+
+  # Toggle example event hooks (e.g. player ready welcome message).
+  events: false
 

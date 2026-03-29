@@ -21,6 +21,7 @@
     "DrawType": "Cube",
     "Material": "Solid",
     "Opacity": "Transparent",
+    "HitboxType": "Portal_3x3",
     "RequiresAlphaBlending": true,
     "VariantRotation": "NESW",
     "Group": "Stone",
@@ -30,7 +31,6 @@
         "Weight": 1
       }
     ],
-    "HitboxType": "Portal_3x3",
     "BlockParticleSetId": "Stone",
     "BlockSoundSetId": "Stone",
     "Particles": [
@@ -44,7 +44,7 @@
         "Scale": 1.5
       }
     ],
-    "InteractionHint": "endlesslevelingaddon.portals.interact",
+    "InteractionHint": "E Rank Gate",
     "Flags": {
       "IsUsable": true
     },
@@ -57,7 +57,7 @@
         "Interactions": [
           {
             "Type": "TeleportInstance",
-            "InstanceName": "Endgame_Swamp_Dungeon",
+            "InstanceName": "EL_Endgame_Swamp_Dungeon",
             "PositionOffset": {
               "X": 0,
               "Y": 0,
