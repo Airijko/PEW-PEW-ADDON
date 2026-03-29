@@ -7,7 +7,7 @@ plugins {
 }
 
 group = 'com.airijko'
-version = '2.1'
+version = '2.1.1'
 description = 'EndlessLevelingAddon'
 
 def hytaleInstallPath = providers.gradleProperty('hytaleInstallPath')
