@@ -42,6 +42,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.Set;
 import java.util.logging.Level;
 
@@ -129,6 +130,8 @@ public final class PortalLeveledInstanceRouter {
 
     private static final long ROUTING_DEDUPE_WINDOW_MILLIS = 5000L;
     private static final long GATE_SPAWN_STALE_MILLIS = 120000L;
+    private static final long FALLBACK_TELEPORT_RETRY_DELAY_MILLIS = 100L;
+    private static final int FALLBACK_TELEPORT_MAX_RETRIES = 8;
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -387,13 +390,21 @@ public final class PortalLeveledInstanceRouter {
                                             int bossLevel) {
         String routingName = resolveRoutingName(blockId);
         if (routingName != null) {
+            String rankLetter = resolveRankLetterFromBlockId(blockId);
             int bossOffset = Math.max(0, bossLevel - Math.max(min, max));
             PendingLevelProfile profile = new PendingLevelProfile(
                     min,
                     max,
                     bossOffset,
-                    resolveRankLetterFromBlockId(blockId));
-            PENDING_LEVEL_RANGES.put(routingName, profile);
+                    rankLetter);
+
+            // Template-level pending data is a legacy fallback for flows that do not
+            // carry a stable gate identity. Keep ranked profiles scoped to gate-id
+            // entries so they cannot bleed into non-gate instance routing.
+            if ((gateIdentity == null || gateIdentity.isBlank()) || "E".equals(rankLetter)) {
+                PENDING_LEVEL_RANGES.put(routingName, profile);
+            }
+
             if (gateIdentity != null && !gateIdentity.isBlank()) {
                 PENDING_LEVEL_RANGES_BY_GATE.put(gateIdentity, profile);
             }
@@ -481,6 +492,13 @@ public final class PortalLeveledInstanceRouter {
             enforcePersistentInstanceLifecycle(routingWorld, "direct-entry");
             String directWorldTemplate = resolveTemplateNameFromWorldName(routingName);
             boolean originalTemplate = isOriginalTemplateName(directWorldTemplate);
+
+            Universe universe = Universe.get();
+            if (universe != null) {
+                World returnWorld = resolveReturnWorld(routingWorld, universe);
+                Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
+                rememberEntryTarget(playerRef, returnWorld, returnTransform);
+            }
 
             // Register the level range immediately so mobs are leveled correctly
             // before the player sends ClientReady (which fires ~4s later).
@@ -657,11 +675,7 @@ public final class PortalLeveledInstanceRouter {
             cacheResolvedInstanceWorld(gateKey, existingInstance, blockId, routingName, "existing-pairing");
             Universe universe = Universe.get();
             if (universe != null) {
-                World targetInstance = null;
-                Object worldObject = universe.getWorlds().get(existingInstance);
-                if (worldObject instanceof World castWorld) {
-                    targetInstance = castWorld;
-                }
+                World targetInstance = universe.getWorld(existingInstance);
                 if (targetInstance != null) {
                     // Reuse existing instance
                     if (teleportToInstanceSpawn(playerRef, targetInstance, playerRef.getTransform())) {
@@ -788,8 +802,8 @@ public final class PortalLeveledInstanceRouter {
             return false;
         }
 
-        Object loaded = universe.getWorlds().get(expectedWorldId);
-        if (loaded instanceof World loadedWorld) {
+        World loadedWorld = universe.getWorld(expectedWorldId);
+        if (loadedWorld != null) {
             enforcePersistentInstanceLifecycle(loadedWorld, "expected-world-loaded");
             Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
             if (teleportToInstanceSpawn(playerRef, loadedWorld, effectiveReturnTransform)) {
@@ -1010,10 +1024,8 @@ public final class PortalLeveledInstanceRouter {
     }
 
     /**
-     * Fallback teleportation: Returns player to the source world's spawn when
-     * normal return targets are unavailable after death. Falls back further to the
-     * server default world if the source world's spawn provider is unavailable.
-     * Logs a warning.
+     * Teleports player to Hytale's configured default world spawn.
+     * This uses {@link Universe#getDefaultWorld()} so world naming does not matter.
      */
     private static void fallbackReturnPlayerToWorldSpawn(@Nonnull PlayerRef playerRef, @Nonnull World sourceWorld) {
         try {
@@ -1023,23 +1035,14 @@ public final class PortalLeveledInstanceRouter {
                 return;
             }
 
-            // Prefer sourceWorld (the world the player was just placed in) over the server default.
-            // sourceWorld is typically the overworld the player came from, so its spawn is safe.
-            World targetWorld = sourceWorld;
+            World targetWorld = universe.getDefaultWorld();
+            if (targetWorld == null) {
+                targetWorld = sourceWorld;
+            }
+
             Transform spawnTransform = null;
             if (targetWorld.getWorldConfig() != null && targetWorld.getWorldConfig().getSpawnProvider() != null) {
                 spawnTransform = targetWorld.getWorldConfig().getSpawnProvider().getSpawnPoint(targetWorld, playerRef.getUuid());
-            }
-
-            // Only fall back to the server default if the source world's spawn provider returned nothing
-            if (spawnTransform == null) {
-                World defaultWorld = universe.getDefaultWorld();
-                if (defaultWorld != null) {
-                    targetWorld = defaultWorld;
-                    if (defaultWorld.getWorldConfig() != null && defaultWorld.getWorldConfig().getSpawnProvider() != null) {
-                        spawnTransform = defaultWorld.getWorldConfig().getSpawnProvider().getSpawnPoint(defaultWorld, playerRef.getUuid());
-                    }
-                }
             }
 
             if (spawnTransform == null) {
@@ -1051,18 +1054,74 @@ public final class PortalLeveledInstanceRouter {
                     "[ELPortal] Fallback return player=%s targetWorld=%s spawn=%s",
                     playerRef.getUsername(), targetWorld.getName(), formatTransform(spawnTransform));
 
-            if (teleportToReturnTarget(playerRef, new ReturnTarget(null, targetWorld.getName(), spawnTransform))) {
+            if (teleportToWorld(playerRef, targetWorld, spawnTransform)) {
                 log(Level.WARNING,
                     "[ELPortal] Fallback return to world spawn successful player=%s world=%s spawn=%s",
                     playerRef.getUsername(),
                     targetWorld.getName(),
                     formatTransform(spawnTransform));
             } else {
-                log(Level.WARNING, "[ELPortal] Fallback teleport failed player=%s world=%s", playerRef.getUsername(), targetWorld.getName());
+                log(Level.WARNING,
+                        "[ELPortal] Fallback teleport deferred retry player=%s world=%s delayMs=%d",
+                        playerRef.getUsername(),
+                        targetWorld.getName(),
+                        FALLBACK_TELEPORT_RETRY_DELAY_MILLIS);
+                queueFallbackTeleportRetry(playerRef, targetWorld, spawnTransform, 1);
             }
         } catch (Exception ex) {
             log(Level.WARNING, "[ELPortal] Fallback teleport exception player=%s error=%s", playerRef.getUsername(), ex.getMessage());
         }
+    }
+
+    private static void queueFallbackTeleportRetry(@Nonnull PlayerRef playerRef,
+                                                   @Nonnull World targetWorld,
+                                                   @Nonnull Transform spawnTransform,
+                                                   int attempt) {
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            Runnable retryTask = () -> {
+                if (teleportToWorld(playerRef, targetWorld, spawnTransform)) {
+                    log(Level.WARNING,
+                            "[ELPortal] Fallback retry teleport succeeded player=%s world=%s spawn=%s attempt=%d/%d",
+                            playerRef.getUsername(),
+                            targetWorld.getName(),
+                            formatTransform(spawnTransform),
+                            attempt,
+                            FALLBACK_TELEPORT_MAX_RETRIES);
+                } else {
+                    if (attempt < FALLBACK_TELEPORT_MAX_RETRIES) {
+                        queueFallbackTeleportRetry(playerRef, targetWorld, spawnTransform, attempt + 1);
+                        log(Level.WARNING,
+                                "[ELPortal] Fallback retry still pending player=%s world=%s attempt=%d/%d",
+                                playerRef.getUsername(),
+                                targetWorld.getName(),
+                                attempt,
+                                FALLBACK_TELEPORT_MAX_RETRIES);
+                    } else {
+                        log(Level.WARNING,
+                                "[ELPortal] Fallback teleport failed player=%s world=%s attempts=%d",
+                                playerRef.getUsername(),
+                                targetWorld.getName(),
+                                attempt);
+                    }
+                }
+            };
+
+            if (executeOnPlayerWorldThread(playerRef, retryTask)) {
+                return;
+            }
+
+            try {
+                targetWorld.execute(retryTask);
+            } catch (Exception ex) {
+                AddonLoggingManager.log(plugin,
+                        Level.FINE,
+                        ex,
+                        "[ELPortal] Failed to queue fallback retry on target world thread player=%s world=%s",
+                        playerRef.getUsername(),
+                        targetWorld.getName());
+                retryTask.run();
+            }
+        }, FALLBACK_TELEPORT_RETRY_DELAY_MILLIS, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -1097,70 +1156,21 @@ public final class PortalLeveledInstanceRouter {
     /** Blocks to push the player backward from the portal entrance after a death return teleport. */
     private static final double DEATH_RETURN_OFFSET_BLOCKS = 3.0;
 
-    /**
-     * Teleports the player to their original portal entry location after death, offset away from the portal
-     * so they do not immediately re-enter it. Falls back to the default world {@code /spawn} if the return
-     * target is unavailable or the teleport fails.
-     */
+        /**
+         * Teleports the player to the configured server default world spawn after death.
+         * This intentionally ignores saved portal-entry return targets.
+         */
     public static void teleportPlayerToDeathReturnEntry(
             @Nonnull PlayerRef playerRef,
             @Nullable String returnWorldName,
             @Nullable Transform returnTransform,
             @Nonnull World sourceWorld) {
-        if (returnWorldName == null || returnTransform == null) {
-            log(Level.WARNING,
-                    "[ELPortal] Death-return: no entry target for player=%s — falling back to world spawn",
-                    playerRef.getUsername());
-            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
-            return;
-        }
-
-        Universe universe = Universe.get();
-        if (universe == null) {
-            log(Level.WARNING,
-                    "[ELPortal] Death-return: universe unavailable player=%s — falling back to world spawn",
-                    playerRef.getUsername());
-            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
-            return;
-        }
-
-        World returnWorld = null;
-        Object worldObj = universe.getWorlds().get(returnWorldName);
-        if (worldObj instanceof World w) {
-            returnWorld = w;
-        }
-
         log(Level.INFO,
-                "[ELPortal] Death-return: world-lookup player=%s returnWorldName=%s foundWorld=%s",
-                playerRef.getUsername(),
-                returnWorldName,
-                returnWorld != null ? returnWorld.getName() : "null");
-
-        if (returnWorld == null) {
-            log(Level.WARNING,
-                    "[ELPortal] Death-return: world not found player=%s returnWorld=%s — falling back to world spawn",
-                    playerRef.getUsername(), returnWorldName);
-            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
-            return;
-        }
-
-        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
-        log(Level.INFO,
-                "[ELPortal] Death-return: attempting teleport player=%s world=%s entryTransform=%s offsetTransform=%s",
-                playerRef.getUsername(), returnWorldName,
-                formatTransform(returnTransform), formatTransform(offsetTransform));
-        boolean success = teleportToWorld(playerRef, returnWorld, offsetTransform);
-
-        if (success) {
-            log(Level.INFO,
-                    "[ELPortal] Death-return: teleported player=%s to world=%s at %s",
-                    playerRef.getUsername(), returnWorldName, formatTransform(offsetTransform));
-        } else {
-            log(Level.WARNING,
-                    "[ELPortal] Death-return: teleport failed player=%s — falling back to world spawn",
-                    playerRef.getUsername());
-            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
-        }
+            "[ELPortal] Death-return: forced default-world spawn player=%s savedTargetWorld=%s hasSavedTransform=%s",
+            playerRef.getUsername(),
+            returnWorldName != null ? returnWorldName : "null",
+            returnTransform != null);
+        fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
     }
 
     /**
@@ -1225,10 +1235,7 @@ public final class PortalLeveledInstanceRouter {
         World world = target.worldUuid() != null ? universe.getWorld(target.worldUuid()) : null;
         boolean foundByUuid = world != null;
         if (world == null && !target.worldName().isBlank()) {
-            Object worldObject = universe.getWorlds().get(target.worldName());
-            if (worldObject instanceof World byName) {
-                world = byName;
-            }
+            world = universe.getWorld(target.worldName());
         }
 
         log(Level.INFO,
@@ -1309,7 +1316,8 @@ public final class PortalLeveledInstanceRouter {
         }
 
         if (source instanceof Transform transform) {
-            return new ReturnTarget(null, "unknown", transform);
+            // Transform-only payload has no world context, so it cannot be used for cross-world return.
+            return null;
         }
 
         try {
@@ -1694,8 +1702,7 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private static boolean isKnownLiveOrLoadableWorld(@Nonnull String worldName, @Nonnull Universe universe) {
-        Object loaded = universe.getWorlds().get(worldName);
-        if (loaded instanceof World) {
+        if (universe.getWorld(worldName) != null) {
             return true;
         }
         return universe.isWorldLoadable(worldName);
