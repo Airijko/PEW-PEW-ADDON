@@ -15,7 +15,7 @@
   },
   "Particle": {
     "Texture": "Particles/Textures/Rnd/Ring7.png",
-    "ScaleRatioConstraint": "None",
+    "ScaleRatioConstraint": "OneToOne",
     "Animation": {
       "0": {
         "FrameIndex": {
@@ -30,10 +30,10 @@
           },
           "Y": {
             "Min": 1.2,
-            "Max": 1.2
+            "Max": 1.4
           }
         },
-        "Color": "#ffb08a"
+        "Color": "#9b3a36"
       },
       "30": {
         "Opacity": 1
@@ -50,7 +50,7 @@
             "Max": 1.0
           }
         },
-        "Color": "#ff2d24"
+        "Color": "#5c1218"
       }
     },
     "InitialAnimationFrame": {
@@ -60,8 +60,8 @@
           "Max": 0.8
         },
         "Y": {
-          "Min": 1.2,
-          "Max": 1.2
+          "Min": 0.8,
+          "Max": 0.8
         }
       },
       "Opacity": 0.8,

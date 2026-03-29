@@ -12,7 +12,7 @@
   },
   "LinearFiltering": true,
   "Particle": {
-    "ScaleRatioConstraint": "None",
+    "ScaleRatioConstraint": "OneToOne",
     "Animation": {
       "0": {
         "Opacity": 0.0
@@ -31,12 +31,12 @@
           "Max": 1.2
         },
         "Y": {
-          "Min": 2.0,
-          "Max": 2.0
+          "Min": 1.2,
+          "Max": 1.2
         }
       },
       "Opacity": 1.0,
-      "Color": "#7a120d"
+      "Color": "#4a0b10"
     },
     "Texture": "Particles/Textures/Basic/Ball.png"
   },

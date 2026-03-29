@@ -35,7 +35,7 @@
     "BlockSoundSetId": "Stone",
     "Particles": [
       {
-        "SystemId": "MagicPortal",
+        "SystemId": "EL_MagicPortal_Circle",
         "PositionOffset": {
           "X": 1.0,
           "Y": 1.5,

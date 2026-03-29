@@ -1,5 +1,5 @@
 {
-  "RenderMode": "BlendAdd",
+  "RenderMode": "Erosion",
   "ParticleRotationInfluence": "None",
   "LinearFiltering": true,
   "LightInfluence": 0,
@@ -10,7 +10,7 @@
   },
   "ParticleRotateWithSpawner": true,
   "SpawnRate": {
-    "Min": 2.0,
+    "Min": 1.0,
     "Max": 2.0
   },
   "Particle": {
@@ -26,14 +26,14 @@
         "Scale": {
           "X": {
             "Min": 1.2,
-            "Max": 1.2
+            "Max": 1.4
           },
           "Y": {
             "Min": 1.2,
-            "Max": 1.2
+            "Max": 1.4
           }
         },
-        "Color": "#8f3a30"
+        "Color": "#cdfffc"
       },
       "30": {
         "Opacity": 1
@@ -42,15 +42,15 @@
         "Opacity": 0,
         "Scale": {
           "X": {
-            "Min": 0.8,
-            "Max": 0.8
+            "Min": 1.0,
+            "Max": 1.0
           },
           "Y": {
-            "Min": 0.8,
-            "Max": 0.8
+            "Min": 1,
+            "Max": 1.0
           }
         },
-        "Color": "#6f1e22"
+        "Color": "#424cff"
       }
     },
     "InitialAnimationFrame": {
@@ -64,7 +64,7 @@
           "Max": 0.8
         }
       },
-      "Opacity": 1.0,
+      "Opacity": 0.8,
       "FrameIndex": {
         "Min": 0,
         "Max": 0
@@ -78,9 +78,5 @@
     "StrengthCurveType": "IncreaseQuartOut",
     "Scale": 2.0,
     "SpeedX": 0.2
-  },
-  "WaveDelay": {
-    "Min": 0.2,
-    "Max": 0.5
   }
 }

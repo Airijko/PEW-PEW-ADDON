@@ -1,14 +1,14 @@
 {
-  "RenderMode": "BlendAdd",
+  "RenderMode": "BlendLinear",
   "ParticleRotationInfluence": "None",
-  "MaxConcurrentParticles": 2,
+  "MaxConcurrentParticles": 4,
   "ParticleLifeSpan": {
     "Min": 2.0,
     "Max": 2.0
   },
   "SpawnRate": {
-    "Min": 1.0,
-    "Max": 1.0
+    "Min": 2.0,
+    "Max": 2.0
   },
   "LinearFiltering": true,
   "Particle": {
@@ -35,10 +35,10 @@
           "Max": 1.2
         }
       },
-      "Opacity": 0.644,
-      "Color": "#7f262a"
+      "Opacity": 1.0,
+      "Color": "#272f74"
     },
-    "Texture": "Particles/Textures/Basic/Ball5.png"
+    "Texture": "Particles/Textures/Basic/Ball.png"
   },
   "SpawnBurst": true,
   "ParticleRotateWithSpawner": true,
@@ -46,5 +46,5 @@
     "Min": 1.0,
     "Max": 1.0
   },
-  "CameraOffset": 0.1
+  "CameraOffset": 0.2
 }

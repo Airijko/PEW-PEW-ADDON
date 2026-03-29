@@ -62,7 +62,7 @@
             "Max": 0
           }
         },
-        "Color": "#7d2b2f"
+        "Color": "#a8fffb"
       },
       "20": {
         "Opacity": 0.8
@@ -120,7 +120,7 @@
         "Min": 0,
         "Max": 0
       },
-      "Color": "#7d2b2f"
+      "Color": "#a8fffb"
     },
     "SoftParticlesFadeFactor": 2.0,
     "SoftParticles": "Disable"
