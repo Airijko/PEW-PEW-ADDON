@@ -264,6 +264,24 @@ public final class AddonFilesManager {
         text.append("rank_floor_e_min_offset: ").append(options.rankFloorEMinOffset).append("\n");
         text.append("rank_floor_s_min_offset: ").append(options.rankFloorSMinOffset).append("\n\n");
 
+        text.append("# If true, E..S absolute floor offsets are compressed to the current highest\n");
+        text.append("# player level band when the server's top level is below S floor.\n");
+        text.append("adaptive_rank_floor_scaling_enabled: ").append(options.adaptiveRankFloorScalingEnabled).append("\n\n");
+
+        text.append("# S-rank pity boost: when many top-level players are online and S has not spawned\n");
+        text.append("# for a long time, temporarily boost S rank roll weight.\n");
+        text.append("s_rank_pity_enabled: ").append(options.sRankPityEnabled).append("\n");
+        text.append("s_rank_pity_min_hours_since_last_spawn: ").append(options.sRankPityMinHoursSinceLastSpawn).append("\n");
+        text.append("s_rank_pity_top_player_count_min: ").append(options.sRankPityTopPlayerCountMin).append("\n");
+        text.append("s_rank_pity_top_level_delta: ").append(options.sRankPityTopLevelDelta).append("\n");
+        text.append("s_rank_pity_s_weight_multiplier: ").append(options.sRankPitySWeightMultiplier).append("\n\n");
+
+        text.append("# Low-level rank bias: if the anchor player is below the E floor, bias gate rank\n");
+        text.append("# toward nearby tier floors so low-level players get more appropriate gates.\n");
+        text.append("low_level_rank_bias_enabled: ").append(options.lowLevelRankBiasEnabled).append("\n");
+        text.append("low_level_rank_bias_window_levels: ").append(options.lowLevelRankBiasWindowLevels).append("\n");
+        text.append("low_level_rank_bias_strength_percent: ").append(options.lowLevelRankBiasStrengthPercent).append("\n\n");
+
         text.append("# S-rank random offset range added on top of the highest player level.\n");
         text.append("# Example: highest=100 and rolled offset=0 => normal mob minimum starts at 100.\n");
         text.append("# Minimum enforced value: 0.\n");
@@ -1165,6 +1183,54 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.rankFloorSMinOffset;
     }
 
+    public boolean isDungeonAdaptiveRankFloorScalingEnabled() {
+        return dungeonGateOptions == null || dungeonGateOptions.adaptiveRankFloorScalingEnabled;
+    }
+
+    public boolean isDungeonSRankPityEnabled() {
+        return dungeonGateOptions == null || dungeonGateOptions.sRankPityEnabled;
+    }
+
+    public int getDungeonSRankPityMinHoursSinceLastSpawn() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().sRankPityMinHoursSinceLastSpawn
+                : dungeonGateOptions.sRankPityMinHoursSinceLastSpawn;
+    }
+
+    public int getDungeonSRankPityTopPlayerCountMin() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().sRankPityTopPlayerCountMin
+                : dungeonGateOptions.sRankPityTopPlayerCountMin;
+    }
+
+    public int getDungeonSRankPityTopLevelDelta() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().sRankPityTopLevelDelta
+                : dungeonGateOptions.sRankPityTopLevelDelta;
+    }
+
+    public int getDungeonSRankPitySWeightMultiplier() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().sRankPitySWeightMultiplier
+                : dungeonGateOptions.sRankPitySWeightMultiplier;
+    }
+
+    public boolean isDungeonLowLevelRankBiasEnabled() {
+        return dungeonGateOptions == null || dungeonGateOptions.lowLevelRankBiasEnabled;
+    }
+
+    public int getDungeonLowLevelRankBiasWindowLevels() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().lowLevelRankBiasWindowLevels
+                : dungeonGateOptions.lowLevelRankBiasWindowLevels;
+    }
+
+    public int getDungeonLowLevelRankBiasStrengthPercent() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().lowLevelRankBiasStrengthPercent
+                : dungeonGateOptions.lowLevelRankBiasStrengthPercent;
+    }
+
     public int getDungeonNormalMobLevelRange() {
         return dungeonGateOptions == null
                 ? DungeonGateOptions.defaults().normalMobLevelRange
@@ -1362,6 +1428,44 @@ public final class AddonFilesManager {
                 rankFloorSMinOffset = rankFloorEMinOffset;
             }
 
+            boolean adaptiveRankFloorScalingEnabled = readBoolean(
+                    root.get("adaptive_rank_floor_scaling_enabled"),
+                    defaults.adaptiveRankFloorScalingEnabled);
+
+            boolean sRankPityEnabled = readBoolean(root.get("s_rank_pity_enabled"), defaults.sRankPityEnabled);
+
+            int sRankPityMinHoursSinceLastSpawn = defaults.sRankPityMinHoursSinceLastSpawn;
+            if (root.get("s_rank_pity_min_hours_since_last_spawn") instanceof Number n) {
+                sRankPityMinHoursSinceLastSpawn = Math.max(0, n.intValue());
+            }
+
+            int sRankPityTopPlayerCountMin = defaults.sRankPityTopPlayerCountMin;
+            if (root.get("s_rank_pity_top_player_count_min") instanceof Number n) {
+                sRankPityTopPlayerCountMin = Math.max(1, n.intValue());
+            }
+
+            int sRankPityTopLevelDelta = defaults.sRankPityTopLevelDelta;
+            if (root.get("s_rank_pity_top_level_delta") instanceof Number n) {
+                sRankPityTopLevelDelta = Math.max(0, n.intValue());
+            }
+
+            int sRankPitySWeightMultiplier = defaults.sRankPitySWeightMultiplier;
+            if (root.get("s_rank_pity_s_weight_multiplier") instanceof Number n) {
+                sRankPitySWeightMultiplier = Math.max(1, n.intValue());
+            }
+
+            boolean lowLevelRankBiasEnabled = readBoolean(root.get("low_level_rank_bias_enabled"), defaults.lowLevelRankBiasEnabled);
+
+            int lowLevelRankBiasWindowLevels = defaults.lowLevelRankBiasWindowLevels;
+            if (root.get("low_level_rank_bias_window_levels") instanceof Number n) {
+                lowLevelRankBiasWindowLevels = Math.max(1, n.intValue());
+            }
+
+            int lowLevelRankBiasStrengthPercent = defaults.lowLevelRankBiasStrengthPercent;
+            if (root.get("low_level_rank_bias_strength_percent") instanceof Number n) {
+                lowLevelRankBiasStrengthPercent = Math.max(0, Math.min(100, n.intValue()));
+            }
+
             int normalMobLevelRange = defaults.normalMobLevelRange;
             if (root.get("normal_mob_level_range") instanceof Number n) {
                 normalMobLevelRange = Math.max(0, n.intValue());
@@ -1424,6 +1528,10 @@ public final class AddonFilesManager {
                     portalWorldWhitelist,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
                     rankFloorEMinOffset, rankFloorSMinOffset,
+                    adaptiveRankFloorScalingEnabled,
+                    sRankPityEnabled, sRankPityMinHoursSinceLastSpawn, sRankPityTopPlayerCountMin,
+                    sRankPityTopLevelDelta, sRankPitySWeightMultiplier,
+                    lowLevelRankBiasEnabled, lowLevelRankBiasWindowLevels, lowLevelRankBiasStrengthPercent,
                     normalMobLevelRange, bossLevelBonus, scopePercent, levelPlayerScope, rankAnchorMode,
                     rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE);
         } catch (IOException ignored) {
@@ -1548,6 +1656,15 @@ public final class AddonFilesManager {
         private final int levelOffsetMax;
         private final int rankFloorEMinOffset;
         private final int rankFloorSMinOffset;
+        private final boolean adaptiveRankFloorScalingEnabled;
+        private final boolean sRankPityEnabled;
+        private final int sRankPityMinHoursSinceLastSpawn;
+        private final int sRankPityTopPlayerCountMin;
+        private final int sRankPityTopLevelDelta;
+        private final int sRankPitySWeightMultiplier;
+        private final boolean lowLevelRankBiasEnabled;
+        private final int lowLevelRankBiasWindowLevels;
+        private final int lowLevelRankBiasStrengthPercent;
         private final int normalMobLevelRange;
         private final int bossLevelBonus;
         private final int scopePercent;
@@ -1577,6 +1694,15 @@ public final class AddonFilesManager {
                 int levelOffsetMax,
                 int rankFloorEMinOffset,
                 int rankFloorSMinOffset,
+                boolean adaptiveRankFloorScalingEnabled,
+                boolean sRankPityEnabled,
+                int sRankPityMinHoursSinceLastSpawn,
+                int sRankPityTopPlayerCountMin,
+                int sRankPityTopLevelDelta,
+                int sRankPitySWeightMultiplier,
+                boolean lowLevelRankBiasEnabled,
+                int lowLevelRankBiasWindowLevels,
+                int lowLevelRankBiasStrengthPercent,
                 int normalMobLevelRange,
                 int bossLevelBonus,
                 int scopePercent,
@@ -1605,6 +1731,15 @@ public final class AddonFilesManager {
             this.levelOffsetMax = Math.max(this.levelOffsetMin, levelOffsetMax);
             this.rankFloorEMinOffset = Math.max(0, rankFloorEMinOffset);
             this.rankFloorSMinOffset = Math.max(this.rankFloorEMinOffset, rankFloorSMinOffset);
+            this.adaptiveRankFloorScalingEnabled = adaptiveRankFloorScalingEnabled;
+            this.sRankPityEnabled = sRankPityEnabled;
+            this.sRankPityMinHoursSinceLastSpawn = Math.max(0, sRankPityMinHoursSinceLastSpawn);
+            this.sRankPityTopPlayerCountMin = Math.max(1, sRankPityTopPlayerCountMin);
+            this.sRankPityTopLevelDelta = Math.max(0, sRankPityTopLevelDelta);
+            this.sRankPitySWeightMultiplier = Math.max(1, sRankPitySWeightMultiplier);
+            this.lowLevelRankBiasEnabled = lowLevelRankBiasEnabled;
+            this.lowLevelRankBiasWindowLevels = Math.max(1, lowLevelRankBiasWindowLevels);
+            this.lowLevelRankBiasStrengthPercent = Math.max(0, Math.min(100, lowLevelRankBiasStrengthPercent));
             this.normalMobLevelRange = Math.max(0, normalMobLevelRange);
             this.bossLevelBonus = Math.max(0, bossLevelBonus);
             this.scopePercent = clampScopePercent(scopePercent);
@@ -1621,7 +1756,11 @@ public final class AddonFilesManager {
         private static DungeonGateOptions defaults() {
                 return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
-                    "AVERAGE", "UPPER", 0, 30, 10, 110, 20, 10, 25, "ONLINE", "HIGHEST_MOB",
+                    "AVERAGE", "UPPER", 0, 30, 10, 110,
+                    true,
+                    true, 12, 3, 10, 8,
+                    true, 80, 80,
+                    20, 10, 25, "ONLINE", "HIGHEST_MOB",
                     1, 6, 13, 30, 25, 25);
         }
     }

@@ -73,6 +73,24 @@ rank_floor_e_min_offset: 10
 # Minimum enforced value: rank_floor_e_min_offset.
 rank_floor_s_min_offset: 110
 
+# If true, absolute E..S floor offsets are compressed to the current player band
+# when highest level online/overall is below the configured S floor.
+adaptive_rank_floor_scaling_enabled: true
+
+# S-rank pity boost: when enough top-level players are online and no S gate has
+# spawned for long enough, temporarily multiply S rank weight.
+s_rank_pity_enabled: true
+s_rank_pity_min_hours_since_last_spawn: 12
+s_rank_pity_top_player_count_min: 3
+s_rank_pity_top_level_delta: 10
+s_rank_pity_s_weight_multiplier: 8
+
+# Low-level rank bias: when the anchor player is below the E floor, reduce far
+# rank weights so gate ranks stay closer to that player's level.
+low_level_rank_bias_enabled: true
+low_level_rank_bias_window_levels: 80
+low_level_rank_bias_strength_percent: 80
+
 # S-rank random offset range added on top of the highest player level.
 # Example: highest=100 and rolled offset=0 => normal mob minimum starts at 100.
 # Minimum enforced value: 0.

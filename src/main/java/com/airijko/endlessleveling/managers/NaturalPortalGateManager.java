@@ -74,6 +74,7 @@ public final class NaturalPortalGateManager {
     private static final int AIR_BLOCK_ID = 0;
     private static final int WORLD_MIN_Y = 0;
     private static final int WORLD_MAX_Y = 319;
+    private static final long MILLIS_PER_HOUR = 3_600_000L;
     private static final long REMOVAL_RETRY_INTERVAL_SECONDS = 10L;
     private static final int REMOVAL_RETRY_BATCH_PER_WORLD = 32;
     private static final String S_RANK_GATE_SPAWN_SOUND_ID = "SFX_EL_S_Rank_Gate_Spawn";
@@ -88,6 +89,7 @@ public final class NaturalPortalGateManager {
     private static final Map<UUID, Set<Long>> PENDING_REMOVAL_CHUNK_LOADS = new ConcurrentHashMap<>();
     private static final Set<ActiveGate> ACTIVE_GATES = ConcurrentHashMap.newKeySet();
     private static volatile int HIGHEST_SEEN_PLAYER_LEVEL = DYNAMIC_MIN_LEVEL;
+    private static volatile long LAST_S_RANK_SPAWN_AT_MILLIS = 0L;
 
     private NaturalPortalGateManager() {
     }
@@ -383,7 +385,7 @@ public final class NaturalPortalGateManager {
                 }
 
                 GateRank gateRank = forcedRankTier == null
-                    ? resolveGateRank()
+                    ? resolveGateRank(playerRef)
                     : new GateRank(forcedRankTier, -1);
                 LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef, gateRank.tier);
                 int normalLevelMin = levelRange.normalMin;
@@ -400,6 +402,9 @@ public final class NaturalPortalGateManager {
                     }
                 }
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, gateId, normalLevelMin, normalLevelMax, bossLevel);
+                if (gateRank.tier == GateRankTier.S) {
+                    LAST_S_RANK_SPAWN_AT_MILLIS = System.currentTimeMillis();
+                }
                 if (isAnnounceOnSpawnEnabled()) {
                     announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
@@ -981,7 +986,7 @@ public final class NaturalPortalGateManager {
 
         // Floors are applied to whichever level is currently configured as the rank anchor.
         int bossLevel = clampDynamicLevel(normalMax + bossBonus);
-        int floorMin = resolveRankFloorMinForTier(rankTier);
+        int floorMin = resolveRankFloorMinForTier(rankTier, highestLevel);
         int anchorLevel = resolveAnchorLevelForFloor(anchorMode, normalMin, normalMax, bossLevel);
         if (anchorLevel < floorMin) {
             int shift = floorMin - anchorLevel;
@@ -1208,11 +1213,22 @@ public final class NaturalPortalGateManager {
         return Math.max(resolveRankFloorEMinOffset(), filesManager.getDungeonRankFloorSMinOffset());
     }
 
-    private static int resolveRankFloorMinForTier(@Nonnull GateRankTier tier) {
+    private static int resolveRankFloorMinForTier(@Nonnull GateRankTier tier, int highestLevel) {
         int eFloor = clampDynamicLevel(DYNAMIC_MIN_LEVEL + resolveRankFloorEMinOffset());
         int sFloor = clampDynamicLevel(DYNAMIC_MIN_LEVEL + resolveRankFloorSMinOffset());
         if (sFloor <= eFloor) {
             return eFloor;
+        }
+
+        int high = clampDynamicLevel(highestLevel);
+        if (isAdaptiveRankFloorScalingEnabled() && high < sFloor) {
+            // Compress configured absolute floor band [E..S] into current [1..highest] session band.
+            double scale = high / (double) sFloor;
+            eFloor = clampDynamicLevel(Math.max(DYNAMIC_MIN_LEVEL, (int) Math.round(eFloor * scale)));
+            sFloor = high;
+            if (sFloor < eFloor) {
+                sFloor = eFloor;
+            }
         }
 
         int index = switch (tier) {
@@ -1231,9 +1247,26 @@ public final class NaturalPortalGateManager {
         return clampDynamicLevel(Math.max(eFloor, Math.min(floor, sFloor)));
     }
 
+    private static boolean isAdaptiveRankFloorScalingEnabled() {
+        return filesManager == null || filesManager.isDungeonAdaptiveRankFloorScalingEnabled();
+    }
+
     @Nonnull
-    private static GateRank resolveGateRank() {
-        RankWeights weights = resolveRankWeights();
+    private static GateRank resolveGateRank(@Nonnull PlayerRef anchorPlayerRef) {
+        RankWeights baseWeights = resolveRankWeights();
+        MutableRankWeights adjustedWeights = MutableRankWeights.from(baseWeights);
+
+        int highestLevel = resolveGlobalLevelBand(anchorPlayerRef).maxLevel();
+        applySRankPityBoost(adjustedWeights, highestLevel);
+
+        int anchorLevel = resolveFallbackLevel(anchorPlayerRef);
+        applyLowLevelRankBias(adjustedWeights, anchorLevel, highestLevel);
+
+        RankWeights weights = adjustedWeights.toRankWeights();
+        if (weights.total() <= 0) {
+            weights = baseWeights.total() > 0 ? baseWeights : RankWeights.defaults();
+        }
+
         int roll = randomInt(1, weights.total());
         int threshold = weights.s();
         if (roll <= threshold) {
@@ -1261,6 +1294,106 @@ public final class NaturalPortalGateManager {
         }
 
         return new GateRank(GateRankTier.E, roll);
+    }
+
+    private static void applySRankPityBoost(@Nonnull MutableRankWeights weights, int highestLevel) {
+        if (filesManager == null || !filesManager.isDungeonSRankPityEnabled()) {
+            return;
+        }
+
+        long minHours = Math.max(0L, filesManager.getDungeonSRankPityMinHoursSinceLastSpawn());
+        if (minHours > 0L) {
+            long lastSpawnAt = LAST_S_RANK_SPAWN_AT_MILLIS;
+            if (lastSpawnAt > 0L) {
+                long elapsedMillis = Math.max(0L, System.currentTimeMillis() - lastSpawnAt);
+                long elapsedHours = elapsedMillis / MILLIS_PER_HOUR;
+                if (elapsedHours < minHours) {
+                    return;
+                }
+            }
+        }
+
+        Universe universe = Universe.get();
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (universe == null || api == null) {
+            return;
+        }
+
+        int topDelta = Math.max(0, filesManager.getDungeonSRankPityTopLevelDelta());
+        int topThresholdLevel = Math.max(DYNAMIC_MIN_LEVEL, highestLevel - topDelta);
+        int topCount = 0;
+
+        for (PlayerRef player : resolveEligiblePlayers(universe)) {
+            UUID playerUuid = player.getUuid();
+            if (playerUuid == null) {
+                continue;
+            }
+            int level = api.getPlayerLevel(playerUuid);
+            if (level >= topThresholdLevel) {
+                topCount++;
+            }
+        }
+
+        int minimumTopPlayers = Math.max(1, filesManager.getDungeonSRankPityTopPlayerCountMin());
+        if (topCount < minimumTopPlayers) {
+            return;
+        }
+
+        int multiplier = Math.max(1, filesManager.getDungeonSRankPitySWeightMultiplier());
+        weights.s = safeMultiplyWeight(weights.s, multiplier);
+    }
+
+    private static void applyLowLevelRankBias(@Nonnull MutableRankWeights weights, int anchorLevel, int highestLevel) {
+        if (filesManager == null || !filesManager.isDungeonLowLevelRankBiasEnabled()) {
+            return;
+        }
+
+        int cFloor = resolveRankFloorMinForTier(GateRankTier.C, highestLevel);
+        if (anchorLevel > cFloor) {
+            return;
+        }
+
+        int windowLevels = Math.max(1, filesManager.getDungeonLowLevelRankBiasWindowLevels());
+        double strength = Math.max(0.0,
+                Math.min(1.0, filesManager.getDungeonLowLevelRankBiasStrengthPercent() / 100.0));
+        if (strength <= 0.0) {
+            return;
+        }
+
+        for (GateRankTier tier : GateRankTier.values()) {
+            int weight = weights.get(tier);
+            if (weight <= 0) {
+                continue;
+            }
+
+            int tierFloor = resolveRankFloorMinForTier(tier, highestLevel);
+            int distance = Math.abs(tierFloor - anchorLevel);
+            double closeness = Math.max(0.0, 1.0 - (distance / (double) windowLevels));
+            double scale = (1.0 - strength) + (strength * closeness);
+            weights.set(tier, scaleWeight(weight, scale));
+        }
+    }
+
+    private static int safeMultiplyWeight(int value, int multiplier) {
+        if (value <= 0 || multiplier <= 1) {
+            return Math.max(0, value);
+        }
+        long result = (long) value * (long) multiplier;
+        return result > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) result;
+    }
+
+    private static int scaleWeight(int value, double scale) {
+        if (value <= 0) {
+            return 0;
+        }
+        if (scale <= 0.0) {
+            return 0;
+        }
+        long scaled = Math.round(value * scale);
+        if (scaled <= 0L) {
+            return 0;
+        }
+        return scaled > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) scaled;
     }
 
     @Nonnull
@@ -1382,6 +1515,57 @@ public final class NaturalPortalGateManager {
         private GateRank(@Nonnull GateRankTier tier, int roll) {
             this.tier = tier;
             this.roll = roll;
+        }
+    }
+
+    private static final class MutableRankWeights {
+        private int s;
+        private int a;
+        private int b;
+        private int c;
+        private int d;
+        private int e;
+
+        private MutableRankWeights(int s, int a, int b, int c, int d, int e) {
+            this.s = Math.max(0, s);
+            this.a = Math.max(0, a);
+            this.b = Math.max(0, b);
+            this.c = Math.max(0, c);
+            this.d = Math.max(0, d);
+            this.e = Math.max(0, e);
+        }
+
+        @Nonnull
+        private static MutableRankWeights from(@Nonnull RankWeights weights) {
+            return new MutableRankWeights(weights.s(), weights.a(), weights.b(), weights.c(), weights.d(), weights.e());
+        }
+
+        private int get(@Nonnull GateRankTier tier) {
+            return switch (tier) {
+                case S -> s;
+                case A -> a;
+                case B -> b;
+                case C -> c;
+                case D -> d;
+                case E -> e;
+            };
+        }
+
+        private void set(@Nonnull GateRankTier tier, int value) {
+            int safe = Math.max(0, value);
+            switch (tier) {
+                case S -> s = safe;
+                case A -> a = safe;
+                case B -> b = safe;
+                case C -> c = safe;
+                case D -> d = safe;
+                case E -> e = safe;
+            }
+        }
+
+        @Nonnull
+        private RankWeights toRankWeights() {
+            return new RankWeights(s, a, b, c, d, e);
         }
     }
 
