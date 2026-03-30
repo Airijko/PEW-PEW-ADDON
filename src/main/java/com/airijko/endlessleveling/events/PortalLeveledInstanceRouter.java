@@ -73,15 +73,9 @@ public final class PortalLeveledInstanceRouter {
             Map.entry("EL_MJ_Instance_D01", "MJ_D01"),
             Map.entry("EL_MJ_Instance_D02", "MJ_D02"),
             Map.entry("EL_MJ_Instance_D03", "MJ_D03"),
-            Map.entry("MJ_Instance_D01", "MJ_D01"),
-            Map.entry("MJ_Instance_D02", "MJ_D02"),
-            Map.entry("MJ_Instance_D03", "MJ_D03"),
             Map.entry("EL_Endgame_Frozen_Dungeon", "EG_Frozen"),
             Map.entry("EL_Endgame_Golem_Void", "EG_Golem"),
-            Map.entry("EL_Endgame_Swamp_Dungeon", "EG_Swamp"),
-            Map.entry("Endgame_Frozen_Dungeon", "EG_Frozen"),
-            Map.entry("Endgame_Golem_Void", "EG_Golem"),
-            Map.entry("Endgame_Swamp_Dungeon", "EG_Swamp")
+            Map.entry("EL_Endgame_Swamp_Dungeon", "EG_Swamp")
     );
 
     private static final Map<String, String> ROUTING_TO_DISPLAY = Map.of(
@@ -134,6 +128,8 @@ public final class PortalLeveledInstanceRouter {
     private static final Map<UUID, PendingDeathReturn> PLAYER_PENDING_DEATH_RETURNS = new ConcurrentHashMap<>();
     /** Player UUID -> instance world name they were blocked from entering (deferred return executed on PlayerReady). */
     private static final Map<UUID, String> PLAYER_PENDING_BLOCK_RETURNS = new ConcurrentHashMap<>();
+    /** Player UUID -> millis until custom return-portal triggers should be ignored after instance entry. */
+    private static final Map<UUID, Long> PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL = new ConcurrentHashMap<>();
 
     /** Player UUID -> routing template -> throttle-until millis to suppress duplicate spawn races. */
     private static final Map<UUID, Map<String, Long>> PLAYER_ROUTING_THROTTLES = new ConcurrentHashMap<>();
@@ -163,6 +159,7 @@ public final class PortalLeveledInstanceRouter {
     private static final int DIRECT_ENTRY_REROUTE_MAX_ATTEMPTS = 3;
     private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
     private static final int RETURN_PORTAL_MAX_RETRIES = 12;
+    private static final long RETURN_PORTAL_ENTRY_SUPPRESSION_MILLIS = 8000L;
     private static final long FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS = 1500L;
     private static final String GATE_OVERRIDE_ID_PREFIX = "elportal:gate:";
 
@@ -193,6 +190,7 @@ public final class PortalLeveledInstanceRouter {
         PLAYER_ROUTING_THROTTLES.clear();
         PLAYER_PENDING_GATE_ENTRIES.clear();
         PLAYER_PENDING_DEATH_RETURNS.clear();
+        PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL.clear();
         PLAYER_LAST_TELEPORT_REQUEST_MILLIS.clear();
         GATE_KEY_TO_INSTANCE_NAME.clear();
         GATE_INSTANCE_EXPECTATIONS.clear();
@@ -854,10 +852,24 @@ public final class PortalLeveledInstanceRouter {
                 World returnWorld = resolveReturnWorld(routingWorld, universe);
                 Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
 
+                // Ignore vanilla non-gate instance templates unless we have explicit gate-entry
+                // context. This avoids false anti-bypass handling for normal MJ/Endgame portals.
+                PendingGateEntry pending = null;
+                if (!routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
+                    pending = resolvePendingGateEntry(playerRef, directWorldTemplate);
+                }
+                if (originalTemplate && pending == null) {
+                    log(Level.INFO,
+                            "[ELPortal] Ignoring non-gate direct instance world player=%s world=%s template=%s",
+                            playerRef.getUsername(),
+                            routingName,
+                            directWorldTemplate == null ? "unknown" : directWorldTemplate);
+                    return;
+                }
+
                 // Guard against rerouting loops: if we are already in a canonical gate world,
                 // never invoke routePlayerToGateInstance again from direct-entry handling.
                 if (!routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
-                    PendingGateEntry pending = resolvePendingGateEntry(playerRef, directWorldTemplate);
                     if (pending == null) {
                         pending = resolveFallbackGateEntryForDirectWorld(directWorldTemplate);
                     }
@@ -1105,6 +1117,19 @@ public final class PortalLeveledInstanceRouter {
 
             String suffix = resolveSuffixFromWorldName(world.getName());
             if (suffix == null) {
+                return;
+            }
+
+            String worldName = world.getName();
+            String templateName = resolveTemplateNameFromWorldName(worldName);
+            if (!worldName.toLowerCase(Locale.ROOT).startsWith("el_gate_")
+                    && isOriginalTemplateName(templateName)
+                    && resolvePendingGateEntry(playerRef, templateName) == null) {
+                log(Level.INFO,
+                        "[ELPortal] PlayerReady ignoring non-gate instance world player=%s world=%s template=%s",
+                        playerRef.getUsername(),
+                        worldName,
+                        templateName == null ? "unknown" : templateName);
                 return;
             }
 
@@ -1607,6 +1632,55 @@ public final class PortalLeveledInstanceRouter {
             metadataTarget != null);
         fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
         return true;
+    }
+
+    public static boolean shouldSuppressImmediateReturnPortal(@Nonnull PlayerRef playerRef,
+                                                              @Nonnull World sourceWorld) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return false;
+        }
+
+        String worldName = sourceWorld.getName();
+        if (worldName == null || (!worldName.startsWith("instance-") && !worldName.startsWith("el_gate_"))) {
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        Long until = PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL.get(playerUuid);
+        if (until == null) {
+            return false;
+        }
+
+        if (now >= until) {
+            PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL.remove(playerUuid, until);
+            return false;
+        }
+
+        log(Level.INFO,
+                "[ELPortal] Suppressed immediate return-portal trigger player=%s source=%s remainingMs=%d",
+                playerRef.getUsername(),
+                sourceWorld.getName(),
+                until - now);
+        return true;
+    }
+
+    public static boolean shouldHandleCustomReturnPortal(@Nonnull World sourceWorld) {
+        String worldName = sourceWorld.getName();
+        if (worldName == null || worldName.isBlank()) {
+            return false;
+        }
+
+        String normalized = worldName.toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("el_gate_")) {
+            return true;
+        }
+
+        // Keep compatibility with legacy EL direct-entry worlds while excluding vanilla
+        // MajorDungeons/PortalKey instances like instance-MJ_Instance_D01-<uuid>.
+        return normalized.startsWith("instance-el_")
+                || normalized.contains("-el_mj_instance_")
+                || normalized.contains("-el_endgame_");
     }
 
     /**
@@ -3561,6 +3635,8 @@ public final class PortalLeveledInstanceRouter {
     private static void applyFixedGateSpawn(@Nonnull PlayerRef playerRef,
                                             @Nonnull World targetWorld,
                                             @Nonnull String suffix) {
+        markReturnPortalSuppression(playerRef);
+
         Transform spawnTransform = resolveWorldSpawnTransform(targetWorld, playerRef.getUuid());
         if (spawnTransform == null) {
             log(Level.INFO,
@@ -3602,6 +3678,17 @@ public final class PortalLeveledInstanceRouter {
                 queueReturnPortalPlacement(targetWorld, spawnTransform);
             }
         }
+    }
+
+    private static void markReturnPortalSuppression(@Nonnull PlayerRef playerRef) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return;
+        }
+
+        PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL.put(
+                playerUuid,
+                System.currentTimeMillis() + RETURN_PORTAL_ENTRY_SUPPRESSION_MILLIS);
     }
 
     private static boolean isOriginalTemplateName(@Nullable String templateName) {

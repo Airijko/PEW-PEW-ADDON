@@ -145,6 +145,14 @@ public final class PortalProximityManager {
 
         boolean triggered;
         if (candidate.returnPortal()) {
+            if (!PortalLeveledInstanceRouter.shouldHandleCustomReturnPortal(world)) {
+                return;
+            }
+
+            if (PortalLeveledInstanceRouter.shouldSuppressImmediateReturnPortal(playerRef, world)) {
+                return;
+            }
+
             logReturnPortalProbe(world, playerRef, candidate, now);
             triggered = PortalLeveledInstanceRouter.returnPlayerToEntryPortal(playerRef, world);
             if (!triggered) {

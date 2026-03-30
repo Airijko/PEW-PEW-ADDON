@@ -42,6 +42,10 @@ public final class PortalReturnInteractionListener {
             return;
         }
 
+        if (!PortalLeveledInstanceRouter.shouldHandleCustomReturnPortal(world)) {
+            return;
+        }
+
         String blockId = resolveBlockId(world, targetBlock);
         if (!isReturnPortalBlockId(blockId)) {
             return;
@@ -49,6 +53,10 @@ public final class PortalReturnInteractionListener {
 
         PlayerRef playerRef = store.getComponent(playerEntityRef, PlayerRef.getComponentType());
         if (playerRef == null) {
+            return;
+        }
+
+        if (PortalLeveledInstanceRouter.shouldSuppressImmediateReturnPortal(playerRef, world)) {
             return;
         }
 
