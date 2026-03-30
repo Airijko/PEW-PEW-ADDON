@@ -76,6 +76,7 @@ public final class NaturalPortalGateManager {
     private static ScheduledFuture<?> periodicTask;
     private static ScheduledFuture<?> pendingRemovalTask;
     private static final Map<UUID, Set<GateRemovalRequest>> PENDING_GATE_REMOVALS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Set<Long>> PENDING_REMOVAL_CHUNK_LOADS = new ConcurrentHashMap<>();
     private static final Set<ActiveGate> ACTIVE_GATES = ConcurrentHashMap.newKeySet();
     private static volatile int HIGHEST_SEEN_PLAYER_LEVEL = DYNAMIC_MIN_LEVEL;
 
@@ -116,6 +117,7 @@ public final class NaturalPortalGateManager {
             pendingRemovalTask = null;
         }
         PENDING_GATE_REMOVALS.clear();
+        PENDING_REMOVAL_CHUNK_LOADS.clear();
         ACTIVE_GATES.clear();
     }
 
@@ -481,23 +483,29 @@ public final class NaturalPortalGateManager {
                                            int z,
                                            boolean enqueueIfUnavailable,
                                            @Nonnull String reason) {
-        WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(x, z));
+        long chunkIndex = ChunkUtil.indexChunkFromBlock(x, z);
+        WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
         if (chunk == null) {
-            if (enqueueIfUnavailable && queuePendingRemoval(world, blockId, x, y, z)) {
-                log(Level.INFO,
-                        "[ELPortal] Gate expiry queued (chunk unavailable) world=%s block=%s at %d %d %d reason=%s",
-                        world.getName(),
-                        blockId,
-                        x,
-                        y,
-                        z,
-                        reason);
+            if (enqueueIfUnavailable) {
+                boolean queued = queuePendingRemoval(world, blockId, x, y, z);
+                triggerPendingRemovalChunkLoad(world, chunkIndex);
+                if (queued) {
+                    log(Level.INFO,
+                            "[ELPortal] Gate expiry queued (chunk unavailable) world=%s block=%s at %d %d %d reason=%s",
+                            world.getName(),
+                            blockId,
+                            x,
+                            y,
+                            z,
+                            reason);
+                }
             }
             return;
         }
 
         try {
             chunk.setBlock(x, y, z, AIR_BLOCK_ID);
+            chunk.markNeedsSaving();
             String gateId = resolveGateIdAt(world, x, y, z);
             if (isAnnounceOnDespawnEnabled()) {
                 announceGateDespawn(x, y, z, blockId);
@@ -673,8 +681,10 @@ public final class NaturalPortalGateManager {
                         break;
                     }
 
-                    WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(request.x(), request.z()));
+                    long chunkIndex = ChunkUtil.indexChunkFromBlock(request.x(), request.z());
+                    WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
                     if (chunk == null) {
+                        triggerPendingRemovalChunkLoad(world, chunkIndex);
                         continue;
                     }
 
@@ -697,6 +707,82 @@ public final class NaturalPortalGateManager {
                 }
             });
         }
+    }
+
+    private static void triggerPendingRemovalChunkLoad(@Nonnull World world, long chunkIndex) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return;
+        }
+
+        Set<Long> inFlightLoads = PENDING_REMOVAL_CHUNK_LOADS.computeIfAbsent(
+                worldUuid,
+                ignored -> ConcurrentHashMap.newKeySet());
+        if (!inFlightLoads.add(chunkIndex)) {
+            return;
+        }
+
+        world.getChunkAsync(chunkIndex).whenComplete((loadedChunk, throwable) -> {
+            world.execute(() -> {
+                try {
+                    if (throwable != null) {
+                        log(Level.FINE,
+                                "[ELPortal] Pending removal chunk load failed world=%s chunk=%d error=%s",
+                                world.getName(),
+                                chunkIndex,
+                                throwable.getMessage());
+                        return;
+                    }
+
+                    if (loadedChunk == null) {
+                        return;
+                    }
+
+                    Set<GateRemovalRequest> pending = PENDING_GATE_REMOVALS.get(worldUuid);
+                    if (pending == null || pending.isEmpty()) {
+                        return;
+                    }
+
+                    int processed = 0;
+                    List<GateRemovalRequest> done = new ArrayList<>();
+                    for (GateRemovalRequest request : new ArrayList<>(pending)) {
+                        if (processed >= REMOVAL_RETRY_BATCH_PER_WORLD) {
+                            break;
+                        }
+
+                        long requestChunk = ChunkUtil.indexChunkFromBlock(request.x(), request.z());
+                        if (requestChunk != chunkIndex) {
+                            continue;
+                        }
+
+                        attemptGateRemoval(world,
+                                request.blockId(),
+                                request.x(),
+                                request.y(),
+                                request.z(),
+                                false,
+                                "pending-async-load");
+                        done.add(request);
+                        processed++;
+                    }
+
+                    if (!done.isEmpty()) {
+                        pending.removeAll(done);
+                    }
+                    if (pending.isEmpty()) {
+                        PENDING_GATE_REMOVALS.remove(worldUuid);
+                    }
+                } finally {
+                    Set<Long> activeLoads = PENDING_REMOVAL_CHUNK_LOADS.get(worldUuid);
+                    if (activeLoads != null) {
+                        activeLoads.remove(chunkIndex);
+                        if (activeLoads.isEmpty()) {
+                            PENDING_REMOVAL_CHUNK_LOADS.remove(worldUuid);
+                        }
+                    }
+                }
+            });
+        });
     }
 
     @Nonnull
