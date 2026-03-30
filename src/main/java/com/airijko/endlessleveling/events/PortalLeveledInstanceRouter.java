@@ -129,6 +129,8 @@ public final class PortalLeveledInstanceRouter {
 
     /** Player UUID -> recently triggered gate entry context for direct-entry reroute recovery. */
     private static final Map<UUID, PendingGateEntry> PLAYER_PENDING_GATE_ENTRIES = new ConcurrentHashMap<>();
+    /** Player UUID -> pending death-return offset teleport, executed on PlayerReady. */
+    private static final Map<UUID, PendingDeathReturn> PLAYER_PENDING_DEATH_RETURNS = new ConcurrentHashMap<>();
 
     /** Player UUID -> routing template -> throttle-until millis to suppress duplicate spawn races. */
     private static final Map<UUID, Map<String, Long>> PLAYER_ROUTING_THROTTLES = new ConcurrentHashMap<>();
@@ -152,7 +154,6 @@ public final class PortalLeveledInstanceRouter {
     private static final int FALLBACK_TELEPORT_MAX_RETRIES = 8;
     private static final long DEATH_RETURN_RETRY_DELAY_MILLIS = 100L;
     private static final int DEATH_RETURN_MAX_RETRIES = 3;
-    private static final long DEATH_RETURN_INITIAL_DELAY_MILLIS = 100L;
     private static final long PENDING_GATE_ENTRY_TTL_MILLIS = 15000L;
     private static final long DIRECT_ENTRY_FALLBACK_GATE_TTL_MILLIS = 120000L;
     private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
@@ -185,6 +186,7 @@ public final class PortalLeveledInstanceRouter {
         PLAYER_ENTRY_TARGETS.clear();
         PLAYER_ROUTING_THROTTLES.clear();
         PLAYER_PENDING_GATE_ENTRIES.clear();
+        PLAYER_PENDING_DEATH_RETURNS.clear();
         PLAYER_LAST_TELEPORT_REQUEST_MILLIS.clear();
         GATE_KEY_TO_INSTANCE_NAME.clear();
         GATE_INSTANCE_EXPECTATIONS.clear();
@@ -862,11 +864,6 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        String suffix = resolveSuffixFromWorldName(world.getName());
-        if (suffix == null) {
-            return;
-        }
-
         Ref<EntityStore> ref = player.getReference();
         if (ref == null || !ref.isValid()) {
             return;
@@ -880,6 +877,13 @@ public final class PortalLeveledInstanceRouter {
             Store<EntityStore> store = ref.getStore();
             PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
             if (playerRef == null) {
+                return;
+            }
+
+            processPendingDeathReturnOnPlayerReady(playerRef, world);
+
+            String suffix = resolveSuffixFromWorldName(world.getName());
+            if (suffix == null) {
                 return;
             }
 
@@ -1610,39 +1614,71 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        Universe universe = Universe.get();
-        if (universe == null) {
+        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
             log(Level.WARNING,
-                    "[ELPortal] Death-return: universe unavailable, using fallback spawn player=%s",
+                    "[ELPortal] Death-return: missing player UUID, using fallback spawn player=%s",
                     playerRef.getUsername());
             fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
             return;
         }
 
-        World targetWorld = universe.getWorld(returnWorldName);
-        if (targetWorld == null) {
-            log(Level.WARNING,
-                    "[ELPortal] Death-return: target world unavailable, using fallback spawn player=%s returnWorld=%s",
-                    playerRef.getUsername(),
-                    returnWorldName);
-            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+        PLAYER_PENDING_DEATH_RETURNS.put(playerUuid,
+                new PendingDeathReturn(returnWorldName,
+                        offsetTransform,
+                        sourceWorld.getName(),
+                        System.currentTimeMillis()));
+
+        log(Level.INFO,
+                "[ELPortal] Death-return queued for PlayerReady player=%s world=%s base=%s offset=%s",
+                playerRef.getUsername(),
+                returnWorldName,
+                formatTransform(returnTransform),
+                formatTransform(offsetTransform));
+    }
+
+    private static void processPendingDeathReturnOnPlayerReady(@Nonnull PlayerRef playerRef,
+                                                                @Nonnull World readyWorld) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
             return;
         }
 
-        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
-        log(Level.INFO,
-                "[ELPortal] Death-return: attempting entry-offset player=%s world=%s base=%s offset=%s",
-                playerRef.getUsername(),
-                targetWorld.getName(),
-                formatTransform(returnTransform),
-                formatTransform(offsetTransform));
+        PendingDeathReturn pending = PLAYER_PENDING_DEATH_RETURNS.remove(playerUuid);
+        if (pending == null) {
+            return;
+        }
+
+        Universe universe = Universe.get();
+        World targetWorld = universe == null ? null : universe.getWorld(pending.returnWorldName());
+        if (targetWorld == null) {
+            log(Level.WARNING,
+                    "[ELPortal] Death-return PlayerReady target unavailable player=%s target=%s; using fallback",
+                    playerRef.getUsername(),
+                    pending.returnWorldName());
+            fallbackReturnPlayerToWorldSpawn(playerRef, readyWorld);
+            return;
+        }
+
+        World sourceWorld = universe == null ? null : universe.getWorld(pending.sourceWorldName());
+        if (sourceWorld == null) {
+            sourceWorld = readyWorld;
+        }
 
         log(Level.INFO,
-            "[ELPortal] Death-return: scheduling first entry-offset attempt player=%s world=%s delayMs=%d",
-            playerRef.getUsername(),
-            targetWorld.getName(),
-            DEATH_RETURN_INITIAL_DELAY_MILLIS);
-        queueDeathReturnOffsetRetry(playerRef, targetWorld, offsetTransform, sourceWorld, 1, DEATH_RETURN_INITIAL_DELAY_MILLIS);
+                "[ELPortal] Death-return executing on PlayerReady player=%s readyWorld=%s target=%s ageMs=%d",
+                playerRef.getUsername(),
+                readyWorld.getName(),
+                targetWorld.getName(),
+                System.currentTimeMillis() - pending.createdAtMillis());
+
+        queueDeathReturnOffsetRetry(playerRef,
+                targetWorld,
+                pending.offsetTransform(),
+                sourceWorld,
+                1,
+                0L);
     }
 
     private static void queueDeathReturnOffsetRetry(@Nonnull PlayerRef playerRef,
@@ -3328,6 +3364,17 @@ public final class PortalLeveledInstanceRouter {
             Objects.requireNonNull(gateIdentity, "gateIdentity");
             Objects.requireNonNull(blockId, "blockId");
             Objects.requireNonNull(routingName, "routingName");
+        }
+    }
+
+    private record PendingDeathReturn(@Nonnull String returnWorldName,
+                                      @Nonnull Transform offsetTransform,
+                                      @Nonnull String sourceWorldName,
+                                      long createdAtMillis) {
+        private PendingDeathReturn {
+            Objects.requireNonNull(returnWorldName, "returnWorldName");
+            Objects.requireNonNull(offsetTransform, "offsetTransform");
+            Objects.requireNonNull(sourceWorldName, "sourceWorldName");
         }
     }
 }

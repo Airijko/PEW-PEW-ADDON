@@ -205,6 +205,49 @@ public final class PortalInstanceDiagnostics {
                 drainReturnTransform,
                 drainReturnOverrideUuid);
 
+        Universe universe = Universe.get();
+        String resolvedReturnWorldName = null;
+        Transform resolvedReturnTransform = entityReturnPoint != null ? entityReturnPoint.getReturnPoint() : null;
+        if (entityReturnPoint != null && entityReturnPoint.getWorld() != null && universe != null) {
+            World returnWorld = universe.getWorld(entityReturnPoint.getWorld());
+            if (returnWorld != null) {
+                resolvedReturnWorldName = returnWorld.getName();
+            }
+        }
+
+        if (resolvedReturnWorldName != null && resolvedReturnTransform != null) {
+            if (pendingDeath == null) {
+                PendingDeath recovered = new PendingDeath(
+                        worldName,
+                        resolvedReturnWorldName,
+                        resolvedReturnTransform,
+                        "drain-entity-returnpoint");
+                PENDING_DEATHS.put(playerUuid, recovered);
+                pendingDeath = recovered;
+                log(Level.WARNING,
+                        "player-drain recovered missing death target player=%s world=%s returnWorld=%s returnTransform=%s",
+                        playerRef.getUsername(),
+                        worldName,
+                        resolvedReturnWorldName,
+                        formatPos(resolvedReturnTransform));
+            } else if ((pendingDeath.returnTargetWorldName == null || pendingDeath.returnTargetTransform == null)
+                    && pendingDeath.worldName.equals(worldName)) {
+                PendingDeath patched = new PendingDeath(
+                        pendingDeath.worldName,
+                        resolvedReturnWorldName,
+                        resolvedReturnTransform,
+                        "drain-entity-returnpoint");
+                PENDING_DEATHS.put(playerUuid, patched);
+                pendingDeath = patched;
+                log(Level.WARNING,
+                        "player-drain backfilled death target player=%s world=%s returnWorld=%s returnTransform=%s",
+                        playerRef.getUsername(),
+                        worldName,
+                        resolvedReturnWorldName,
+                        formatPos(resolvedReturnTransform));
+            }
+        }
+
         if (DEATH_WIPE_ON_EMPTY_ENABLED && pendingDeath != null && pendingDeath.worldName.equals(worldName)) {
             attemptDeathWipeWhenWorldEmpties(worldName, playerRef.getUsername());
         }
@@ -312,10 +355,14 @@ public final class PortalInstanceDiagnostics {
         if (universe != null && playerUuid != null) {
             playerRef = universe.getPlayer(playerUuid);
         }
-        PortalLeveledInstanceRouter.ReturnTargetDiagnostics returnDiag = null;
-        if (playerRef != null) {
-            returnDiag = PortalLeveledInstanceRouter.resolveReturnTargetDiagnostics(playerRef, world);
-        }
+            if (playerRef == null) {
+                // Kill/death command paths can race Universe lookups; use direct component fallback.
+                playerRef = player.getPlayerRef();
+            }
+            PortalLeveledInstanceRouter.ReturnTargetDiagnostics returnDiag = null;
+            if (playerRef != null) {
+                returnDiag = PortalLeveledInstanceRouter.resolveReturnTargetDiagnostics(playerRef, world);
+            }
         
         PendingDeath deathInfo = new PendingDeath(
             worldName,
