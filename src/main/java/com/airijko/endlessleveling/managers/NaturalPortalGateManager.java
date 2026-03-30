@@ -58,8 +58,11 @@ public final class NaturalPortalGateManager {
     private static final String PREFIX = "[EndlessLeveling] ";
     private static final int DYNAMIC_MIN_LEVEL = 1;
     private static final int DYNAMIC_MAX_LEVEL = 500;
+    private static final int RANK_FLOOR_STEP_COUNT = 5;
     private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET_MIN = 0;
     private static final int DEFAULT_DYNAMIC_LEVEL_OFFSET_MAX = 30;
+    private static final int DEFAULT_RANK_FLOOR_E_MIN_OFFSET = 10;
+    private static final int DEFAULT_RANK_FLOOR_S_MIN_OFFSET = 110;
     private static final int DEFAULT_NORMAL_MOB_LEVEL_RANGE = 20;
     private static final int DEFAULT_BOSS_LEVEL_BONUS = 10;
     private static final int DEFAULT_WEIGHT_S = 1;
@@ -944,18 +947,18 @@ public final class NaturalPortalGateManager {
         int normalRange = resolveNormalMobLevelRange();
         int bossBonus = resolveBossLevelBonus();
         int highestLevel = worldBand.maxLevel();
+        String anchorMode = resolveRankAnchorMode();
 
         int normalMin;
         int normalMax;
 
         if (rankTier == GateRankTier.S) {
-            // S rank starts strictly above the highest level any player has ever reached.
-            int sOffset = Math.max(1, resolveSOffset());
+            // S rank uses the configured offset above (or equal to) the highest seen level.
+            int sOffset = Math.max(0, resolveSOffset());
             normalMin = clampDynamicLevel(highestLevel + sOffset);
             normalMax = clampDynamicLevel(normalMin + normalRange);
         } else {
             int baseLevel = resolveTierAnchorLevel(DYNAMIC_MIN_LEVEL, highestLevel, rankTier);
-            String anchorMode = filesManager != null ? filesManager.getDungeonRankAnchorMode() : "HIGHEST_MOB";
             if ("LOWEST_MOB".equals(anchorMode)) {
                 // Anchor is the lowest normal mob — range extends upward.
                 normalMin = clampDynamicLevel(baseLevel);
@@ -976,9 +979,42 @@ public final class NaturalPortalGateManager {
             normalMax = normalMin;
         }
 
+        // Floors are applied to whichever level is currently configured as the rank anchor.
         int bossLevel = clampDynamicLevel(normalMax + bossBonus);
+        int floorMin = resolveRankFloorMinForTier(rankTier);
+        int anchorLevel = resolveAnchorLevelForFloor(anchorMode, normalMin, normalMax, bossLevel);
+        if (anchorLevel < floorMin) {
+            int shift = floorMin - anchorLevel;
+            normalMin = clampDynamicLevel(normalMin + shift);
+            normalMax = clampDynamicLevel(normalMax + shift);
+            if (normalMax < normalMin) {
+                normalMax = normalMin;
+            }
+            bossLevel = clampDynamicLevel(normalMax + bossBonus);
+        }
 
         return new LevelRange(normalMin, normalMax, bossLevel);
+    }
+
+    @Nonnull
+    private static String resolveRankAnchorMode() {
+        if (filesManager == null) {
+            return "HIGHEST_MOB";
+        }
+        return filesManager.getDungeonRankAnchorMode();
+    }
+
+    private static int resolveAnchorLevelForFloor(@Nonnull String anchorMode,
+                                                   int normalMin,
+                                                   int normalMax,
+                                                   int bossLevel) {
+        if ("LOWEST_MOB".equals(anchorMode)) {
+            return normalMin;
+        }
+        if ("BOSS".equals(anchorMode)) {
+            return bossLevel;
+        }
+        return normalMax;
     }
 
     @Nonnull
@@ -1156,6 +1192,43 @@ public final class NaturalPortalGateManager {
             return DEFAULT_DYNAMIC_LEVEL_OFFSET_MAX;
         }
         return Math.max(resolveLevelOffsetMin(), filesManager.getDungeonLevelOffsetMax());
+    }
+
+    private static int resolveRankFloorEMinOffset() {
+        if (filesManager == null) {
+            return DEFAULT_RANK_FLOOR_E_MIN_OFFSET;
+        }
+        return Math.max(0, filesManager.getDungeonRankFloorEMinOffset());
+    }
+
+    private static int resolveRankFloorSMinOffset() {
+        if (filesManager == null) {
+            return DEFAULT_RANK_FLOOR_S_MIN_OFFSET;
+        }
+        return Math.max(resolveRankFloorEMinOffset(), filesManager.getDungeonRankFloorSMinOffset());
+    }
+
+    private static int resolveRankFloorMinForTier(@Nonnull GateRankTier tier) {
+        int eFloor = clampDynamicLevel(DYNAMIC_MIN_LEVEL + resolveRankFloorEMinOffset());
+        int sFloor = clampDynamicLevel(DYNAMIC_MIN_LEVEL + resolveRankFloorSMinOffset());
+        if (sFloor <= eFloor) {
+            return eFloor;
+        }
+
+        int index = switch (tier) {
+            case E -> 0;
+            case D -> 1;
+            case C -> 2;
+            case B -> 3;
+            case A -> 4;
+            case S -> 5;
+            default -> 0;
+        };
+
+        double ratio = index / (double) RANK_FLOOR_STEP_COUNT;
+        int spread = sFloor - eFloor;
+        int floor = eFloor + (int) Math.round(spread * ratio);
+        return clampDynamicLevel(Math.max(eFloor, Math.min(floor, sFloor)));
     }
 
     @Nonnull

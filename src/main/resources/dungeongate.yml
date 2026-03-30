@@ -59,21 +59,25 @@ min_level_required: 1
 # -----------------------------------------------------------------------
 
 # Rank gates scale from level 1 up to the highest player level ever seen.
-# Each rank occupies a 20% slice of that span and picks a random anchor
-# within its slice on every spawn, giving a wide variety of mob levels:
-#
-#   E  ->  0% .. 20%   (easiest)   example at highest=100: mobs roughly  1-20
-#   D  -> 20% .. 40%               example at highest=100: mobs roughly 20-40
-#   C  -> 40% .. 60%               example at highest=100: mobs roughly 40-60
-#   B  -> 60% .. 80%               example at highest=100: mobs roughly 60-80
-#   A  -> 80% ..100%               example at highest=100: mobs roughly 80-100
-#   S  -> 100%+ offset  (hardest)  example at highest=100: mobs roughly 110-130
+# Minimum rank floors are measured from the selected rank anchor level.
+# E and S define the two floor endpoints, and D/C/B/A are spread evenly between.
+# This prevents very low-tier gates from spawning near level 1.
 
-# S-rank random offset range added above the highest player level.
-# Example: highest=100 and rolled offset=17 => normal mob minimum starts at 117.
+# Minimum rank floor offset for E from the selected rank anchor level.
+# Example with lowest_mob anchor: lowest=1 and value=10 => E normal mobs start at 11+.
 # Minimum enforced value: 0.
-level_offset_min: 10
-level_offset_max: 30
+rank_floor_e_min_offset: 10
+
+# Minimum rank floor offset for S from the selected rank anchor level.
+# Example with lowest_mob anchor: lowest=1 and value=110 => S normal mobs start at 111+.
+# Minimum enforced value: rank_floor_e_min_offset.
+rank_floor_s_min_offset: 110
+
+# S-rank random offset range added on top of the highest player level.
+# Example: highest=100 and rolled offset=0 => normal mob minimum starts at 100.
+# Minimum enforced value: 0.
+level_offset_min: 0
+level_offset_max: 20
 
 # Normal mob level spread size for the gate (inclusive range).
 # The anchor is the MINIMUM mob level; the max is anchor + this value.
@@ -82,7 +86,7 @@ level_offset_max: 30
 normal_mob_level_range: 20
 
 # Boss bonus added on top of the highest normal mob level.
-# Example: normal 60-80 with boss bonus 10 => boss is level 90.
+# Example: normal 60-75 with boss bonus 10 => boss is level 85.
 # Minimum enforced value: 0.
 boss_level_bonus: 10
 
@@ -95,7 +99,7 @@ level_player_scope: overall
 # lowest_mob  = the lowest normal mob level is the anchor (range grows upward).
 # highest_mob = the highest normal mob level is the anchor (range grows downward).
 # boss        = the boss level is the anchor (normal range is derived below it).
-rank_anchor_mode: highest_mob
+rank_anchor_mode: lowest_mob
 
 # -----------------------------------------------------------------------
 # Rank weighting

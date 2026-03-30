@@ -256,8 +256,16 @@ public final class AddonFilesManager {
         text.append("# Lowest and highest online player levels define the scaling span.\n");
         text.append("# Rolled rank chooses a point in that span (E near low end, S near high end).\n\n");
 
-        text.append("# S-rank random offset range added above the highest player level.\n");
-        text.append("# Example: highest=100 and rolled offset=17 => normal mob minimum starts at 117.\n");
+        text.append("# Minimum rank floors measured from the selected rank anchor level.\n");
+        text.append("# E floor keeps low ranks from spawning near level 1.\n");
+        text.append("# S floor guarantees high-end gates stay dangerous even on fresh servers.\n");
+        text.append("# All ranks between E and S are evenly distributed between these floors.\n");
+        text.append("# Minimum enforced value: 0.\n");
+        text.append("rank_floor_e_min_offset: ").append(options.rankFloorEMinOffset).append("\n");
+        text.append("rank_floor_s_min_offset: ").append(options.rankFloorSMinOffset).append("\n\n");
+
+        text.append("# S-rank random offset range added on top of the highest player level.\n");
+        text.append("# Example: highest=100 and rolled offset=0 => normal mob minimum starts at 100.\n");
         text.append("# Minimum enforced value: 0.\n");
         text.append("level_offset_min: ").append(options.levelOffsetMin).append("\n");
         text.append("level_offset_max: ").append(options.levelOffsetMax).append("\n\n");
@@ -1145,6 +1153,18 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.levelOffsetMax;
     }
 
+    public int getDungeonRankFloorEMinOffset() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().rankFloorEMinOffset
+                : dungeonGateOptions.rankFloorEMinOffset;
+    }
+
+    public int getDungeonRankFloorSMinOffset() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().rankFloorSMinOffset
+                : dungeonGateOptions.rankFloorSMinOffset;
+    }
+
     public int getDungeonNormalMobLevelRange() {
         return dungeonGateOptions == null
                 ? DungeonGateOptions.defaults().normalMobLevelRange
@@ -1328,6 +1348,20 @@ public final class AddonFilesManager {
                 levelOffsetMax = levelOffsetMin;
             }
 
+            int rankFloorEMinOffset = defaults.rankFloorEMinOffset;
+            if (root.get("rank_floor_e_min_offset") instanceof Number n) {
+                rankFloorEMinOffset = Math.max(0, n.intValue());
+            }
+
+            int rankFloorSMinOffset = defaults.rankFloorSMinOffset;
+            if (root.get("rank_floor_s_min_offset") instanceof Number n) {
+                rankFloorSMinOffset = Math.max(0, n.intValue());
+            }
+
+            if (rankFloorSMinOffset < rankFloorEMinOffset) {
+                rankFloorSMinOffset = rankFloorEMinOffset;
+            }
+
             int normalMobLevelRange = defaults.normalMobLevelRange;
             if (root.get("normal_mob_level_range") instanceof Number n) {
                 normalMobLevelRange = Math.max(0, n.intValue());
@@ -1389,6 +1423,7 @@ public final class AddonFilesManager {
                     maxSpawns, spawnIntervalMin, spawnIntervalMax, gateDuration, maxPlayers, minLevel,
                     portalWorldWhitelist,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
+                    rankFloorEMinOffset, rankFloorSMinOffset,
                     normalMobLevelRange, bossLevelBonus, scopePercent, levelPlayerScope, rankAnchorMode,
                     rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE);
         } catch (IOException ignored) {
@@ -1511,6 +1546,8 @@ public final class AddonFilesManager {
         private final String levelReferenceScope;
         private final int levelOffsetMin;
         private final int levelOffsetMax;
+        private final int rankFloorEMinOffset;
+        private final int rankFloorSMinOffset;
         private final int normalMobLevelRange;
         private final int bossLevelBonus;
         private final int scopePercent;
@@ -1538,6 +1575,8 @@ public final class AddonFilesManager {
                 @Nonnull String levelReferenceScope,
                 int levelOffsetMin,
                 int levelOffsetMax,
+                int rankFloorEMinOffset,
+                int rankFloorSMinOffset,
                 int normalMobLevelRange,
                 int bossLevelBonus,
                 int scopePercent,
@@ -1564,6 +1603,8 @@ public final class AddonFilesManager {
             this.levelReferenceScope = levelReferenceScope;
             this.levelOffsetMin = Math.max(0, levelOffsetMin);
             this.levelOffsetMax = Math.max(this.levelOffsetMin, levelOffsetMax);
+            this.rankFloorEMinOffset = Math.max(0, rankFloorEMinOffset);
+            this.rankFloorSMinOffset = Math.max(this.rankFloorEMinOffset, rankFloorSMinOffset);
             this.normalMobLevelRange = Math.max(0, normalMobLevelRange);
             this.bossLevelBonus = Math.max(0, bossLevelBonus);
             this.scopePercent = clampScopePercent(scopePercent);
@@ -1580,7 +1621,7 @@ public final class AddonFilesManager {
         private static DungeonGateOptions defaults() {
                 return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
-                    "AVERAGE", "UPPER", 0, 30, 20, 10, 25, "ONLINE", "HIGHEST_MOB",
+                    "AVERAGE", "UPPER", 0, 30, 10, 110, 20, 10, 25, "ONLINE", "HIGHEST_MOB",
                     1, 6, 13, 30, 25, 25);
         }
     }
