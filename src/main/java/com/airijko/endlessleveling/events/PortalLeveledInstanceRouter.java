@@ -36,6 +36,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -161,6 +162,7 @@ public final class PortalLeveledInstanceRouter {
     private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
     private static final int RETURN_PORTAL_MAX_RETRIES = 12;
     private static final long FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS = 1500L;
+    private static final String GATE_OVERRIDE_ID_PREFIX = "elportal:gate:";
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -296,9 +298,16 @@ public final class PortalLeveledInstanceRouter {
                     // Only do this if the world actually exists; stale entries can't register yet.
                     if (api != null && worldExists) {
                         int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
-                        api.registerMobWorldFixedLevelOverride(
-                                instanceWorldName, instanceWorldName,
-                                stored.minLevel, stored.maxLevel, bossOffset);
+                        registerGateOverrideCompat(
+                            api,
+                            gateLevelOverrideId(instanceWorldName),
+                            instanceWorldName,
+                            stored.minLevel,
+                            stored.maxLevel,
+                            bossOffset);
+
+                        // Cleanup legacy fixed key from older builds.
+                        api.removeMobWorldFixedLevelOverride(instanceWorldName);
                     }
 
                     // --- gate expectation (enables attemptRouteToExpectedWorldId fallback) ---
@@ -317,9 +326,13 @@ public final class PortalLeveledInstanceRouter {
                             // Restore pending-by-gate so the saved levels are used if
                             // a fresh gate block triggers a new spawn before any player enters.
                             int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
-                            PENDING_LEVEL_RANGES_BY_GATE.put(canonicalGateKey,
-                                    new PendingLevelProfile(stored.minLevel, stored.maxLevel,
-                                            bossOffset, stored.rankLetter));
+                                PendingLevelProfile pendingProfile = new PendingLevelProfile(
+                                    stored.minLevel,
+                                    stored.maxLevel,
+                                    bossOffset,
+                                    stored.rankLetter);
+                                PENDING_LEVEL_RANGES_BY_GATE.put(canonicalGateKey, pendingProfile);
+                                PENDING_LEVEL_RANGES_BY_GATE.putIfAbsent(legacyGateKey, pendingProfile);
                         }
                     }
 
@@ -471,10 +484,37 @@ public final class PortalLeveledInstanceRouter {
 
     public static void cleanupGateInstanceByIdentity(@Nonnull String gateIdentity,
                                                      @Nonnull String blockId) {
+        String canonicalGateIdentity = canonicalizeGateIdentity(gateIdentity);
+        String legacyGateIdentity = legacyGateIdentity(gateIdentity);
+
         String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
-        PENDING_LEVEL_RANGES_BY_GATE.remove(gateIdentity);
+        if (instanceName == null && canonicalGateIdentity != null && !canonicalGateIdentity.equals(gateIdentity)) {
+            instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(canonicalGateIdentity);
+        }
+        if (instanceName == null && legacyGateIdentity != null && !legacyGateIdentity.equals(gateIdentity)) {
+            instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(legacyGateIdentity);
+        }
+
+        removePendingRangeByGateIdentity(gateIdentity);
+        removePendingRangeByGateIdentity(canonicalGateIdentity);
+        removePendingRangeByGateIdentity(legacyGateIdentity);
+
         GATE_INSTANCE_EXPECTATIONS.remove(gateIdentity);
+        if (canonicalGateIdentity != null) {
+            GATE_INSTANCE_EXPECTATIONS.remove(canonicalGateIdentity);
+        }
+        if (legacyGateIdentity != null) {
+            GATE_INSTANCE_EXPECTATIONS.remove(legacyGateIdentity);
+        }
+
         GATE_SPAWN_IN_FLIGHT.remove(gateIdentity);
+        if (canonicalGateIdentity != null) {
+            GATE_SPAWN_IN_FLIGHT.remove(canonicalGateIdentity);
+        }
+        if (legacyGateIdentity != null) {
+            GATE_SPAWN_IN_FLIGHT.remove(legacyGateIdentity);
+        }
+
         if (instanceName == null || instanceName.isBlank()) {
             return;
         }
@@ -537,8 +577,18 @@ public final class PortalLeveledInstanceRouter {
             }
 
             if (gateIdentity != null && !gateIdentity.isBlank()) {
-                PENDING_LEVEL_RANGES_BY_GATE.put(gateIdentity, profile);
+                putPendingRangeByGateIdentity(gateIdentity, profile);
             }
+
+            log(Level.WARNING,
+                    "[ELPortal] Pending gate range captured block=%s gateId=%s template=%s range=%d-%d bossOffset=%d rank=%s",
+                    blockId,
+                    gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
+                    routingName,
+                    profile.min(),
+                    profile.max(),
+                    profile.bossLevelFromRangeMaxOffset(),
+                    profile.rankLetter());
         }
     }
 
@@ -983,43 +1033,58 @@ public final class PortalLeveledInstanceRouter {
 
                 // Instance may be unloaded while still paired to an active gate; reopen it instead of spawning a new one.
                 if (universe.isWorldLoadable(existingInstance)) {
+                    if (!PAIRED_INSTANCE_RELOADS_IN_FLIGHT.add(existingInstance)) {
+                        log(Level.WARNING,
+                                "[ELPortal] Skipping duplicate paired gate reload world=%s gateId=%s block=%s player=%s",
+                                existingInstance,
+                                gateKey,
+                                blockId,
+                                playerRef.getUsername());
+                        return true;
+                    }
+
                     CompletableFuture<World> loadFuture = universe.loadWorld(existingInstance);
                     loadFuture.thenAccept(loadedWorld -> {
-                        if (loadedWorld == null) {
-                            log(Level.WARNING,
-                                    "[ELPortal] Paired gate world load returned null; keeping mapping gateId=%s world=%s",
-                                    gateKey,
-                                    existingInstance);
-                            return;
+                        try {
+                            if (loadedWorld == null) {
+                                log(Level.WARNING,
+                                        "[ELPortal] Paired gate world load returned null; keeping mapping gateId=%s world=%s",
+                                        gateKey,
+                                        existingInstance);
+                                return;
+                            }
+
+                            enforcePersistentInstanceLifecycle(loadedWorld, "paired-instance-load");
+                            registerInstanceLevelOverride(loadedWorld.getName(), gateKey, routingName);
+
+                            Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+                            queueTeleportToInstanceSpawn(playerRef,
+                                    loadedWorld,
+                                    effectiveReturnTransform,
+                                    () -> {
+                                        clearPendingGateEntry(playerRef);
+                                        cacheResolvedInstanceWorld(gateKey,
+                                                loadedWorld.getName(),
+                                                blockId,
+                                                routingName,
+                                                "reload-paired-instance");
+                                        rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
+                                        String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
+                                        if (suffix != null) {
+                                            applyFixedGateSpawn(playerRef, loadedWorld, suffix);
+                                        }
+                                        log(Level.INFO,
+                                                "[ELPortal] Reloaded paired gate instance %s for key=%s block=%s player=%s",
+                                                existingInstance,
+                                                gateKey,
+                                                blockId,
+                                                playerRef.getUsername());
+                                    });
+                        } finally {
+                            PAIRED_INSTANCE_RELOADS_IN_FLIGHT.remove(existingInstance);
                         }
-
-                        enforcePersistentInstanceLifecycle(loadedWorld, "paired-instance-load");
-                        registerInstanceLevelOverride(loadedWorld.getName(), gateKey, routingName);
-
-                        Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
-            queueTeleportToInstanceSpawn(playerRef,
-                loadedWorld,
-                effectiveReturnTransform,
-                () -> {
-                    clearPendingGateEntry(playerRef);
-                    cacheResolvedInstanceWorld(gateKey,
-                        loadedWorld.getName(),
-                        blockId,
-                        routingName,
-                        "reload-paired-instance");
-                    rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
-                    String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
-                    if (suffix != null) {
-                    applyFixedGateSpawn(playerRef, loadedWorld, suffix);
-                    }
-                    log(Level.INFO,
-                        "[ELPortal] Reloaded paired gate instance %s for key=%s block=%s player=%s",
-                        existingInstance,
-                        gateKey,
-                        blockId,
-                        playerRef.getUsername());
-                });
                     }).exceptionally(ex -> {
+                        PAIRED_INSTANCE_RELOADS_IN_FLIGHT.remove(existingInstance);
                         Universe retryUniverse = Universe.get();
                         World racedWorld = retryUniverse == null ? null : retryUniverse.getWorld(existingInstance);
                         if (racedWorld != null) {
@@ -1952,8 +2017,16 @@ public final class PortalLeveledInstanceRouter {
         if (gateIdentity != null && !gateIdentity.isBlank()) {
             // Keep gate-scoped profiles sticky until gate cleanup so retries/races do not
             // consume the announced range before the final routed instance is established.
-            PendingLevelProfile gatePending = PENDING_LEVEL_RANGES_BY_GATE.get(gateIdentity);
+            PendingLevelProfile gatePending = resolvePendingRangeByGateIdentity(gateIdentity);
             if (gatePending != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Resolve dynamic range source=gate-pending world=%s gateId=%s range=%d-%d bossOffset=%d rank=%s",
+                        worldName,
+                        gateIdentity,
+                        gatePending.min(),
+                        gatePending.max(),
+                        gatePending.bossLevelFromRangeMaxOffset(),
+                        gatePending.rankLetter());
                 return gatePending;
             }
         }
@@ -1969,6 +2042,14 @@ public final class PortalLeveledInstanceRouter {
         if (templateName != null) {
             PendingLevelProfile pending = PENDING_LEVEL_RANGES.remove(templateName);
             if (pending != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Resolve dynamic range source=template-pending world=%s template=%s range=%d-%d bossOffset=%d rank=%s",
+                        worldName,
+                        templateName,
+                        pending.min(),
+                        pending.max(),
+                        pending.bossLevelFromRangeMaxOffset(),
+                        pending.rankLetter());
                 return pending;
             }
         }
@@ -1983,26 +2064,216 @@ public final class PortalLeveledInstanceRouter {
         String normalizedWorld = worldName.toLowerCase(Locale.ROOT);
         int start = minLevel + Math.floorMod(normalizedWorld.hashCode(), span);
         int end = Math.min(maxLevel, start + rangeSize);
+        log(Level.WARNING,
+            "[ELPortal] Resolve dynamic range source=world-hash world=%s gateId=%s template=%s range=%d-%d bossOffset=%d rank=E",
+            worldName,
+            gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
+            templateName == null || templateName.isBlank() ? "<none>" : templateName,
+            start,
+            end,
+            5);
         return new PendingLevelProfile(start, end, 5, "E");
+    }
+
+    @Nullable
+    private static PendingLevelProfile resolvePendingInstanceRange(@Nonnull String worldName,
+                                                                   @Nullable String gateIdentity,
+                                                                   @Nullable String templateHint) {
+        if (gateIdentity != null && !gateIdentity.isBlank()) {
+            PendingLevelProfile gatePending = resolvePendingRangeByGateIdentity(gateIdentity);
+            if (gatePending != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Resolve pending range source=gate-id world=%s gateId=%s range=%d-%d bossOffset=%d rank=%s",
+                        worldName,
+                        gateIdentity,
+                        gatePending.min(),
+                        gatePending.max(),
+                        gatePending.bossLevelFromRangeMaxOffset(),
+                        gatePending.rankLetter());
+                return gatePending;
+            }
+        }
+
+        String templateName = templateHint;
+        if (templateName == null || templateName.isBlank()) {
+            templateName = resolveTemplateNameFromWorldName(worldName);
+        }
+        if (templateName != null && !templateName.isBlank()) {
+            templateName = canonicalizeRoutingTemplate(templateName);
+        }
+        if (templateName != null) {
+            PendingLevelProfile templatePending = PENDING_LEVEL_RANGES.remove(templateName);
+            if (templatePending != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Resolve pending range source=template world=%s template=%s range=%d-%d bossOffset=%d rank=%s",
+                        worldName,
+                        templateName,
+                        templatePending.min(),
+                        templatePending.max(),
+                        templatePending.bossLevelFromRangeMaxOffset(),
+                        templatePending.rankLetter());
+            }
+            return templatePending;
+        }
+
+        return null;
+    }
+
+    private static void putPendingRangeByGateIdentity(@Nullable String gateIdentity,
+                                                      @Nonnull PendingLevelProfile profile) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return;
+        }
+
+        PENDING_LEVEL_RANGES_BY_GATE.put(gateIdentity, profile);
+
+        String canonical = canonicalizeGateIdentityNullable(gateIdentity);
+        if (canonical != null && !canonical.equals(gateIdentity)) {
+            PENDING_LEVEL_RANGES_BY_GATE.put(canonical, profile);
+        }
+
+        String legacy = legacyGateIdentity(gateIdentity);
+        if (legacy != null && !legacy.equals(gateIdentity)) {
+            PENDING_LEVEL_RANGES_BY_GATE.put(legacy, profile);
+        }
+    }
+
+    @Nullable
+    private static PendingLevelProfile resolvePendingRangeByGateIdentity(@Nullable String gateIdentity) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return null;
+        }
+
+        PendingLevelProfile profile = PENDING_LEVEL_RANGES_BY_GATE.get(gateIdentity);
+        if (profile != null) {
+            return profile;
+        }
+
+        String canonical = canonicalizeGateIdentityNullable(gateIdentity);
+        if (canonical != null && !canonical.equals(gateIdentity)) {
+            profile = PENDING_LEVEL_RANGES_BY_GATE.get(canonical);
+            if (profile != null) {
+                return profile;
+            }
+        }
+
+        String legacy = legacyGateIdentity(gateIdentity);
+        if (legacy != null && !legacy.equals(gateIdentity)) {
+            profile = PENDING_LEVEL_RANGES_BY_GATE.get(legacy);
+            if (profile != null) {
+                return profile;
+            }
+        }
+
+        return null;
+    }
+
+    private static void removePendingRangeByGateIdentity(@Nullable String gateIdentity) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return;
+        }
+
+        PENDING_LEVEL_RANGES_BY_GATE.remove(gateIdentity);
+
+        String canonical = canonicalizeGateIdentityNullable(gateIdentity);
+        if (canonical != null && !canonical.equals(gateIdentity)) {
+            PENDING_LEVEL_RANGES_BY_GATE.remove(canonical);
+        }
+
+        String legacy = legacyGateIdentity(gateIdentity);
+        if (legacy != null && !legacy.equals(gateIdentity)) {
+            PENDING_LEVEL_RANGES_BY_GATE.remove(legacy);
+        }
+    }
+
+    @Nullable
+    private static String canonicalizeGateIdentityNullable(@Nullable String gateIdentity) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return null;
+        }
+        return gateIdentity.startsWith("el_gate:") ? gateIdentity : ("el_gate:" + gateIdentity);
+    }
+
+    @Nullable
+    private static String legacyGateIdentity(@Nullable String gateIdentity) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return null;
+        }
+        return gateIdentity.startsWith("el_gate:")
+                ? gateIdentity.substring("el_gate:".length())
+                : gateIdentity;
     }
 
     @Nonnull
     private static LevelRange registerInstanceLevelOverride(@Nonnull String worldName,
                                                             @Nullable String gateIdentity,
                                                             @Nullable String templateHint) {
+        PendingLevelProfile pendingProfile = resolvePendingInstanceRange(worldName, gateIdentity, templateHint);
         LevelRange existingRange = ACTIVE_LEVEL_RANGES.get(worldName);
         Integer existingBossLevel = ACTIVE_BOSS_LEVELS.get(worldName);
         String existingRank = ACTIVE_RANK_LETTERS.get(worldName);
+
+        if (pendingProfile != null) {
+            int pendingBossLevel = pendingProfile.max() + pendingProfile.bossLevelFromRangeMaxOffset();
+            boolean sameAsExisting = existingRange != null
+                    && existingBossLevel != null
+                    && existingRange.min() == pendingProfile.min()
+                    && existingRange.max() == pendingProfile.max()
+                    && existingBossLevel == pendingBossLevel
+                    && Objects.equals(existingRank, pendingProfile.rankLetter());
+
+            if (!sameAsExisting) {
+                log(Level.INFO,
+                        "[ELPortal] Refreshed level override world=%s oldRange=%s oldBoss=%s oldRank=%s newRange=%d-%d newBoss=%d newRank=%s",
+                        worldName,
+                        existingRange == null ? "<none>" : (existingRange.min() + "-" + existingRange.max()),
+                        existingBossLevel == null ? "<none>" : String.valueOf(existingBossLevel),
+                        existingRank == null ? "<none>" : existingRank,
+                        pendingProfile.min(),
+                        pendingProfile.max(),
+                        pendingBossLevel,
+                        pendingProfile.rankLetter());
+            }
+
+            EndlessLevelingAPI api = EndlessLevelingAPI.get();
+            if (api != null) {
+                registerGateLevelOverride(api,
+                        worldName,
+                        pendingProfile.min(),
+                        pendingProfile.max(),
+                        pendingProfile.bossLevelFromRangeMaxOffset());
+                log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d bossOffset=%d",
+                        worldName,
+                        pendingProfile.min(),
+                        pendingProfile.max(),
+                        pendingProfile.bossLevelFromRangeMaxOffset());
+            }
+
+            LevelRange pendingRange = new LevelRange(pendingProfile.min(), pendingProfile.max());
+            ACTIVE_LEVEL_RANGES.put(worldName, pendingRange);
+            ACTIVE_BOSS_LEVELS.put(worldName, pendingBossLevel);
+            ACTIVE_RANK_LETTERS.put(worldName, pendingProfile.rankLetter());
+                log(Level.WARNING,
+                    "[ELPortal] Level override applied source=pending world=%s gateId=%s template=%s range=%d-%d boss=%d rank=%s",
+                    worldName,
+                    gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
+                    templateHint == null || templateHint.isBlank() ? "<none>" : templateHint,
+                    pendingProfile.min(),
+                    pendingProfile.max(),
+                    pendingBossLevel,
+                    pendingProfile.rankLetter());
+            return pendingRange;
+        }
+
         if (existingRange != null && existingBossLevel != null) {
             EndlessLevelingAPI api = EndlessLevelingAPI.get();
             if (api != null) {
                 int bossOffset = Math.max(0, existingBossLevel - existingRange.max());
-                api.registerMobWorldFixedLevelOverride(
-                        worldName,
-                        worldName,
-                        existingRange.min(),
-                        existingRange.max(),
-                        bossOffset);
+            registerGateLevelOverride(api,
+                worldName,
+                existingRange.min(),
+                existingRange.max(),
+                bossOffset);
                 log(Level.INFO,
                         "[ELPortal] Reused level override world=%s range=%d-%d bossOffset=%d",
                         worldName,
@@ -2013,18 +2284,26 @@ public final class PortalLeveledInstanceRouter {
             if (existingRank != null) {
                 ACTIVE_RANK_LETTERS.put(worldName, existingRank);
             }
+            log(Level.WARNING,
+                    "[ELPortal] Level override applied source=active world=%s gateId=%s template=%s range=%d-%d boss=%d rank=%s",
+                    worldName,
+                    gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
+                    templateHint == null || templateHint.isBlank() ? "<none>" : templateHint,
+                    existingRange.min(),
+                    existingRange.max(),
+                    existingBossLevel,
+                    existingRank == null ? "<none>" : existingRank);
             return existingRange;
         }
 
         PendingLevelProfile profile = resolveDynamicInstanceRange(worldName, gateIdentity, templateHint);
         EndlessLevelingAPI api = EndlessLevelingAPI.get();
         if (api != null) {
-            api.registerMobWorldFixedLevelOverride(
-                    worldName,
-                    worldName,
-                    profile.min(),
-                    profile.max(),
-                    profile.bossLevelFromRangeMaxOffset());
+            registerGateLevelOverride(api,
+                worldName,
+                profile.min(),
+                profile.max(),
+                profile.bossLevelFromRangeMaxOffset());
             log(Level.INFO, "[ELPortal] Registered level override world=%s range=%d-%d bossOffset=%d",
                     worldName, profile.min(), profile.max(), profile.bossLevelFromRangeMaxOffset());
         }
@@ -2032,6 +2311,15 @@ public final class PortalLeveledInstanceRouter {
         ACTIVE_LEVEL_RANGES.put(worldName, range);
         ACTIVE_BOSS_LEVELS.put(worldName, profile.max() + profile.bossLevelFromRangeMaxOffset());
         ACTIVE_RANK_LETTERS.put(worldName, profile.rankLetter());
+        log(Level.WARNING,
+            "[ELPortal] Level override applied source=dynamic world=%s gateId=%s template=%s range=%d-%d boss=%d rank=%s",
+            worldName,
+            gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
+            templateHint == null || templateHint.isBlank() ? "<none>" : templateHint,
+            profile.min(),
+            profile.max(),
+            profile.max() + profile.bossLevelFromRangeMaxOffset(),
+            profile.rankLetter());
         return range;
     }
 
@@ -2057,6 +2345,77 @@ public final class PortalLeveledInstanceRouter {
         ACTIVE_LEVEL_RANGES.remove(worldName);
         ACTIVE_BOSS_LEVELS.remove(worldName);
         ACTIVE_RANK_LETTERS.remove(worldName);
+        removeGateLevelOverride(worldName);
+    }
+
+    public static void removeGateLevelOverride(@Nonnull String worldName) {
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api == null || worldName.isBlank()) {
+            return;
+        }
+
+        String namespacedId = gateLevelOverrideId(worldName);
+        boolean removedNamespaced = removeGateOverrideCompat(api, namespacedId);
+        boolean removedLegacyGate = removeGateOverrideCompat(api, worldName);
+        boolean removedLegacyFixed = api.removeMobWorldFixedLevelOverride(worldName);
+        if (removedNamespaced || removedLegacyGate || removedLegacyFixed) {
+            log(Level.INFO,
+                    "[ELPortal] Removed gate level override world=%s namespaced=%s legacyGate=%s legacyFixed=%s",
+                    worldName,
+                    removedNamespaced,
+                    removedLegacyGate,
+                    removedLegacyFixed);
+        }
+    }
+
+    private static void registerGateLevelOverride(@Nonnull EndlessLevelingAPI api,
+                                                 @Nonnull String worldName,
+                                                 int minLevel,
+                                                 int maxLevel,
+                                                 int bossOffset) {
+        String namespacedId = gateLevelOverrideId(worldName);
+        registerGateOverrideCompat(api, namespacedId, worldName, minLevel, maxLevel, bossOffset);
+
+        // Cleanup legacy keys to avoid stale collisions from older builds.
+        removeGateOverrideCompat(api, worldName);
+        api.removeMobWorldFixedLevelOverride(worldName);
+    }
+
+    private static boolean registerGateOverrideCompat(@Nonnull EndlessLevelingAPI api,
+                                                      @Nonnull String id,
+                                                      @Nonnull String worldName,
+                                                      int minLevel,
+                                                      int maxLevel,
+                                                      int bossOffset) {
+        try {
+            Method method = api.getClass().getMethod(
+                    "registerMobWorldGateLevelOverride",
+                    String.class,
+                    String.class,
+                    int.class,
+                    int.class,
+                    int.class);
+            Object result = method.invoke(api, id, worldName, minLevel, maxLevel, bossOffset);
+            return result instanceof Boolean b ? b : true;
+        } catch (Exception ignored) {
+            return api.registerMobWorldFixedLevelOverride(id, worldName, minLevel, maxLevel, bossOffset);
+        }
+    }
+
+    private static boolean removeGateOverrideCompat(@Nonnull EndlessLevelingAPI api,
+                                                    @Nonnull String id) {
+        try {
+            Method method = api.getClass().getMethod("removeMobGateLevelOverride", String.class);
+            Object result = method.invoke(api, id);
+            return result instanceof Boolean b ? b : true;
+        } catch (Exception ignored) {
+            return api.removeMobWorldFixedLevelOverride(id);
+        }
+    }
+
+    @Nonnull
+    private static String gateLevelOverrideId(@Nonnull String worldName) {
+        return GATE_OVERRIDE_ID_PREFIX + worldName;
     }
 
     public static boolean isInstancePairedToActiveGate(@Nonnull String worldName) {
@@ -2158,7 +2517,7 @@ public final class PortalLeveledInstanceRouter {
         }
 
         int bossOffset = Math.max(0, bossLevel - range.max());
-        api.registerMobWorldFixedLevelOverride(worldName, worldName, range.min(), range.max(), bossOffset);
+        registerGateLevelOverride(api, worldName, range.min(), range.max(), bossOffset);
     }
 
     private static void enforcePersistentInstanceLifecycle(@Nonnull World world,

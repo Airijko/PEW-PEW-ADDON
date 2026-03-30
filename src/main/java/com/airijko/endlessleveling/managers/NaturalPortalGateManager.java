@@ -376,12 +376,29 @@ public final class NaturalPortalGateManager {
                 if (isAnnounceOnSpawnEnabled()) {
                     announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                 }
+                String expectedGroupId = gateId == null || gateId.isBlank() ? "<unknown>" : gateId;
                 log(Level.INFO,
                         "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
                         world.getName(),
                         rankedBlockId,
-                        gateId == null ? "<unknown>" : gateId,
-                        gateId == null ? "<unknown>" : gateId,
+                        expectedGroupId,
+                        expectedGroupId,
+                        isTestSpawn,
+                        x,
+                        y,
+                        z,
+                        gateRank.tier.letter(),
+                        gateRank.roll,
+                        normalLevelMin,
+                        normalLevelMax,
+                        bossLevel);
+                // Keep a warning-level twin so range parity evidence is visible even when INFO is suppressed.
+                log(Level.WARNING,
+                        "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                        world.getName(),
+                        rankedBlockId,
+                        expectedGroupId,
+                        expectedGroupId,
                         isTestSpawn,
                         x,
                         y,

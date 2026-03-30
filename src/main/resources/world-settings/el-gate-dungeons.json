@@ -26,7 +26,7 @@
       },
       "Mob_Overrides": {
         "Azaroth": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["rebirth", "frozen_domain"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {
@@ -47,7 +47,7 @@
           }
         },
         "Katherina": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["bloodthirster", "vampirism"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {
@@ -68,7 +68,7 @@
           }
         },
         "Construct_Ancient_Dark_Titan": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Scaling": {
             "Health": {
               "Base_Multiplier": 1.0,
@@ -87,7 +87,7 @@
           }
         },
         "Baron": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["blood_surge", "bloodthirster"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {
@@ -126,8 +126,30 @@
             }
           }
         },
+        "Cult_Knight_Werewolf_MiniBoss_Group": {
+          "Names": ["Cult_Knight_MiniBoss", "Cult_Werewolf_MiniBoss"],
+          "Level_From_Range_Max_Offset": 10,
+          "Augments": ["blood_surge", "blood_frenzy", "vampirism"],
+          "Allow_Random_Mob_Augments": true,
+          "Scaling": {
+            "Health": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.075
+            },
+            "Damage": {
+              "Base_Multiplier": 1.0,
+              "Per_Level": 0.06
+            },
+            "Defense": {
+              "At_Negative_Max_Difference": 0.30,
+              "At_Positive_Max_Difference": 0.9,
+              "Below_Negative_Max_Difference": 0.0,
+              "Above_Positive_Max_Difference": 0.975
+            }
+          }
+        },
         "Endgame_Dragon_Frost": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["blood_surge"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {
@@ -148,7 +170,7 @@
           }
         },
         "Endgame_Hedera": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["rebirth"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {
@@ -169,7 +191,7 @@
           }
         },
         "Endgame_Golem_Void": {
-          "Level_From_Range_Max_Offset": 5,
+          "Level_From_Range_Max_Offset": 10,
           "Augments": ["rebirth"],
           "Allow_Random_Mob_Augments": true,
           "Scaling": {

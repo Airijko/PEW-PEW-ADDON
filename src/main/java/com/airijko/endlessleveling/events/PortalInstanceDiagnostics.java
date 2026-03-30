@@ -262,10 +262,7 @@ public final class PortalInstanceDiagnostics {
         PENDING_INSTANCE_REMOVALS.remove(worldName);
 
         // Clean up the runtime level override registered at spawn time.
-        EndlessLevelingAPI api = EndlessLevelingAPI.get();
-        if (api != null) {
-            api.removeMobWorldFixedLevelOverride(worldName);
-        }
+        PortalLeveledInstanceRouter.removeGateLevelOverride(worldName);
 
         boolean explicitDeathWipe = EXPLICIT_DEATH_WIPE_REMOVALS.remove(worldName);
         if (explicitDeathWipe) {
@@ -314,10 +311,7 @@ public final class PortalInstanceDiagnostics {
             }
 
             try {
-                EndlessLevelingAPI api = EndlessLevelingAPI.get();
-                if (api != null) {
-                    api.removeMobWorldFixedLevelOverride(worldName);
-                }
+                PortalLeveledInstanceRouter.removeGateLevelOverride(worldName);
                 PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
                 PENDING_INSTANCE_REMOVALS.remove(worldName);
                 InstancesPlugin.safeRemoveInstance(worldName);
