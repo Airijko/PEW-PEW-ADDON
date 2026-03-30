@@ -50,7 +50,6 @@ public final class NaturalPortalGateManager {
 
     private static final long DEFAULT_SPAWN_INTERVAL_MINUTES = 30L;
     private static final long DEFAULT_GATE_LIFETIME_MINUTES = 30L;
-    private static final int MAX_OFFSET_BLOCKS = 96;
     private static final int PLACEMENT_ATTEMPTS = 16;
     private static final String PREFIX = "[EndlessLeveling] ";
     private static final int DYNAMIC_MIN_LEVEL = 1;
