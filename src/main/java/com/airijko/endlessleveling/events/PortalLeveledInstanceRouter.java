@@ -1351,8 +1351,9 @@ public final class PortalLeveledInstanceRouter {
     }
 
     /**
-     * Teleports player to Hytale's configured default world spawn.
-     * This uses {@link Universe#getDefaultWorld()} so world naming does not matter.
+     * Fallback return chain:
+     * 1) nearest saved bed/respawn point in default world
+     * 2) default world spawn
      */
     private static void fallbackReturnPlayerToWorldSpawn(@Nonnull PlayerRef playerRef, @Nonnull World sourceWorld) {
         try {
@@ -1365,6 +1366,29 @@ public final class PortalLeveledInstanceRouter {
             World targetWorld = universe.getDefaultWorld();
             if (targetWorld == null) {
                 targetWorld = sourceWorld;
+            }
+
+            Transform bedTransform = resolveNearestBedRespawnTransform(playerRef, targetWorld);
+            if (bedTransform != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Fallback return using nearest bed player=%s targetWorld=%s bed=%s",
+                        playerRef.getUsername(),
+                        targetWorld.getName(),
+                        formatTransform(bedTransform));
+
+                if (teleportToWorld(playerRef, targetWorld, bedTransform)) {
+                    log(Level.INFO,
+                            "[ELPortal] Fallback return to nearest bed successful player=%s world=%s bed=%s",
+                            playerRef.getUsername(),
+                            targetWorld.getName(),
+                            formatTransform(bedTransform));
+                    return;
+                }
+
+                log(Level.INFO,
+                        "[ELPortal] Fallback bed teleport deferred/failed; continuing to world spawn player=%s world=%s",
+                        playerRef.getUsername(),
+                        targetWorld.getName());
             }
 
             Transform spawnTransform = null;
@@ -1397,6 +1421,85 @@ public final class PortalLeveledInstanceRouter {
             }
         } catch (Exception ex) {
             log(Level.WARNING, "[ELPortal] Fallback teleport exception player=%s error=%s", playerRef.getUsername(), ex.getMessage());
+        }
+    }
+
+    @Nullable
+    private static Transform resolveNearestBedRespawnTransform(@Nonnull PlayerRef playerRef, @Nonnull World targetWorld) {
+        PlayerRef livePlayerRef = resolveLivePlayerRef(playerRef);
+        Ref<EntityStore> entityRef = livePlayerRef == null ? null : livePlayerRef.getReference();
+        if (entityRef == null || !entityRef.isValid()) {
+            return null;
+        }
+
+        try {
+            Store<EntityStore> store = entityRef.getStore();
+            Player playerComponent = store.getComponent(entityRef, Player.getComponentType());
+            if (playerComponent == null) {
+                return null;
+            }
+
+            Object playerConfigData = playerComponent.getClass().getMethod("getPlayerConfigData").invoke(playerComponent);
+            if (playerConfigData == null) {
+                return null;
+            }
+
+            Object perWorldData = playerConfigData.getClass()
+                    .getMethod("getPerWorldData", String.class)
+                    .invoke(playerConfigData, targetWorld.getName());
+            if (perWorldData == null) {
+                return null;
+            }
+
+            Object respawnPointsRaw = perWorldData.getClass().getMethod("getRespawnPoints").invoke(perWorldData);
+            if (respawnPointsRaw == null || !respawnPointsRaw.getClass().isArray()) {
+                return null;
+            }
+
+            int count = java.lang.reflect.Array.getLength(respawnPointsRaw);
+            if (count <= 0) {
+                return null;
+            }
+
+            Transform currentTransform = livePlayerRef.getTransform();
+            Vector3d currentPosition = currentTransform != null && currentTransform.getPosition() != null
+                    ? currentTransform.getPosition()
+                    : new Vector3d(0.0, 0.0, 0.0);
+
+            Vector3d best = null;
+            double bestDistanceSq = Double.MAX_VALUE;
+
+            for (int i = 0; i < count; i++) {
+                Object respawnPoint = java.lang.reflect.Array.get(respawnPointsRaw, i);
+                if (respawnPoint == null) {
+                    continue;
+                }
+
+                Object respawnPosRaw = respawnPoint.getClass().getMethod("getRespawnPosition").invoke(respawnPoint);
+                if (!(respawnPosRaw instanceof Vector3d respawnPos)) {
+                    continue;
+                }
+
+                double distanceSq = currentPosition.distanceSquaredTo(respawnPos.x, currentPosition.y, respawnPos.z);
+                if (distanceSq < bestDistanceSq) {
+                    bestDistanceSq = distanceSq;
+                    best = respawnPos;
+                }
+            }
+
+            if (best == null) {
+                return null;
+            }
+
+            return new Transform(best, Vector3f.ZERO);
+        } catch (Exception ex) {
+            AddonLoggingManager.log(plugin,
+                    Level.FINE,
+                    ex,
+                    "[ELPortal] Failed to resolve nearest bed fallback player=%s world=%s",
+                    playerRef.getUsername(),
+                    targetWorld.getName());
+            return null;
         }
     }
 
