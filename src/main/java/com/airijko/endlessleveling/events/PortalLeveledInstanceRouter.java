@@ -1350,17 +1350,22 @@ public final class PortalLeveledInstanceRouter {
                 return;
             }
 
-            try {
-                targetWorld.execute(retryTask);
-            } catch (Exception ex) {
-                AddonLoggingManager.log(plugin,
-                        Level.FINE,
-                        ex,
-                        "[ELPortal] Failed to queue fallback retry on target world thread player=%s world=%s",
+            if (attempt < FALLBACK_TELEPORT_MAX_RETRIES) {
+                queueFallbackTeleportRetry(playerRef, targetWorld, spawnTransform, attempt + 1);
+                log(Level.INFO,
+                        "[ELPortal] Fallback retry deferred: player world thread unavailable player=%s world=%s attempt=%d/%d",
                         playerRef.getUsername(),
-                        targetWorld.getName());
-                retryTask.run();
+                        targetWorld.getName(),
+                        attempt,
+                        FALLBACK_TELEPORT_MAX_RETRIES);
+                return;
             }
+
+            log(Level.WARNING,
+                    "[ELPortal] Fallback retry aborted: player world thread unavailable player=%s world=%s attempts=%d",
+                    playerRef.getUsername(),
+                    targetWorld.getName(),
+                    attempt);
         }, FALLBACK_TELEPORT_RETRY_DELAY_MILLIS, TimeUnit.MILLISECONDS);
     }
 
@@ -1497,17 +1502,29 @@ public final class PortalLeveledInstanceRouter {
                 return;
             }
 
-            try {
-                targetWorld.execute(retryTask);
-            } catch (Exception ex) {
-                AddonLoggingManager.log(plugin,
-                        Level.FINE,
-                        ex,
-                        "[ELPortal] Failed to queue death-return retry on target world thread player=%s world=%s",
+            if (attempt < DEATH_RETURN_MAX_RETRIES) {
+                queueDeathReturnOffsetRetry(
+                        playerRef,
+                        targetWorld,
+                        targetTransform,
+                        sourceWorld,
+                        attempt + 1,
+                        DEATH_RETURN_RETRY_DELAY_MILLIS);
+                log(Level.INFO,
+                        "[ELPortal] Death-return deferred: player world thread unavailable player=%s world=%s attempt=%d/%d",
                         playerRef.getUsername(),
-                        targetWorld.getName());
-                retryTask.run();
+                        targetWorld.getName(),
+                        attempt,
+                        DEATH_RETURN_MAX_RETRIES);
+                return;
             }
+
+            log(Level.WARNING,
+                    "[ELPortal] Death-return aborted: player world thread unavailable player=%s world=%s attempts=%d; using fallback spawn",
+                    playerRef.getUsername(),
+                    targetWorld.getName(),
+                    attempt);
+            fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
         }, delayMillis, TimeUnit.MILLISECONDS);
     }
 
