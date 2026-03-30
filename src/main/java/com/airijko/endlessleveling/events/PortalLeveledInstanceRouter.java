@@ -781,6 +781,16 @@ public final class PortalLeveledInstanceRouter {
                                 1);
                         return;
                     }
+                    // No gate context to reroute through — block entry into the non-gate-prefixed
+                    // instance world and return the player to their portal entry location.
+                    log(Level.SEVERE,
+                            "[ELPortal] Blocking direct entry into non-gate-prefixed world player=%s world=%s" +
+                            " template=%s — returning to entry location",
+                            playerRef.getUsername(),
+                            routingName,
+                            directWorldTemplate == null ? "unknown" : directWorldTemplate);
+                    teleportToReturnTarget(playerRef, new ReturnTarget(null, returnWorld.getName(), returnTransform));
+                    return;
                 }
             }
 
@@ -841,10 +851,14 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        boolean started = routePlayerToTemplate(playerRef, routingWorld, null, null, routingName, returnWorld, returnTransform);
-        if (!started) {
-            clearRoutingThrottle(playerRef, routingName);
-        }
+        // No gate context found — block template fallback that would produce a non-el_gate_ world name
+        // and return the player to wherever they portal'd from so they can try again.
+        log(Level.WARNING,
+                "[ELPortal] Blocking no-gate-context template fallback player=%s template=%s — returning player to entry location",
+                playerRef.getUsername(),
+                routingName);
+        clearRoutingThrottle(playerRef, routingName);
+        teleportToReturnTarget(playerRef, new ReturnTarget(null, returnWorld.getName(), returnTransform));
     }
 
     private static void attemptDirectEntryGateReroute(@Nonnull PlayerRef playerRef,
@@ -1360,6 +1374,25 @@ public final class PortalLeveledInstanceRouter {
                 .thenAccept(spawned -> {
                     try {
                         enforcePersistentInstanceLifecycle(spawned, "spawn-instance");
+                        // Hard enforcement: world name must carry el_gate_ prefix.
+                        // If Hytale fell back to an auto-generated "instance-<template>-<uuid>" name,
+                        // reject the teleport and return the player to their portal entry location.
+                        if (!spawned.getName().startsWith("el_gate_")) {
+                            log(Level.SEVERE,
+                                    "[ELPortal] MISMATCH: Spawned instance '%s' lacks el_gate_ prefix" +
+                                    " (template=%s gateKey=%s) — returning player to entry portal",
+                                    spawned.getName(),
+                                    routingName,
+                                    gateKey == null ? "<none>" : gateKey);
+                            UUID mismatchUuid = playerRef.getUuid();
+                            ReturnTarget mismatchEntry = mismatchUuid != null ? PLAYER_ENTRY_TARGETS.get(mismatchUuid) : null;
+                            if (mismatchEntry != null) {
+                                teleportToReturnTarget(playerRef, mismatchEntry);
+                            } else {
+                                fallbackReturnPlayerToWorldSpawn(playerRef, sourceWorld);
+                            }
+                            return; // finally block removes GATE_SPAWN_IN_FLIGHT
+                        }
                         if (gateKey != null) {
                             GATE_KEY_TO_INSTANCE_NAME.put(gateKey, spawned.getName());
                             cacheResolvedInstanceWorld(gateKey,
@@ -1783,12 +1816,28 @@ public final class PortalLeveledInstanceRouter {
                 targetWorld.getName(),
                 System.currentTimeMillis() - pending.createdAtMillis());
 
+        // We are already on the world thread (dispatched via world.execute() in onPlayerReady),
+        // so attempt the gate-offset teleport directly rather than round-tripping through SCHEDULED_EXECUTOR.
+        if (teleportToWorld(playerRef, targetWorld, pending.offsetTransform())) {
+            log(Level.INFO,
+                    "[ELPortal] Death-return: gate-offset succeeded immediately on PlayerReady player=%s world=%s",
+                    playerRef.getUsername(),
+                    targetWorld.getName());
+            return;
+        }
+
+        // First attempt failed; queue scheduled retries before escalating to bed → spawn fallback.
+        log(Level.INFO,
+                "[ELPortal] Death-return: gate-offset attempt 1 failed on PlayerReady player=%s world=%s; queuing %d retries",
+                playerRef.getUsername(),
+                targetWorld.getName(),
+                DEATH_RETURN_MAX_RETRIES - 1);
         queueDeathReturnOffsetRetry(playerRef,
                 targetWorld,
                 pending.offsetTransform(),
                 sourceWorld,
-                1,
-                0L);
+                2,
+                DEATH_RETURN_RETRY_DELAY_MILLIS);
     }
 
     private static void queueDeathReturnOffsetRetry(@Nonnull PlayerRef playerRef,
@@ -1826,8 +1875,9 @@ public final class PortalLeveledInstanceRouter {
                     return;
                 }
 
-                log(Level.WARNING,
-                        "[ELPortal] Death-return: entry-offset failed after retries player=%s world=%s attempts=%d; using fallback spawn",
+                log(Level.SEVERE,
+                        "[ELPortal] Death-return: gate-offset FAILED after all retries player=%s targetWorld=%s lastAttempt=%d" +
+                        " — escalating to bed then world-spawn fallback",
                         playerRef.getUsername(),
                         targetWorld.getName(),
                         attempt);
@@ -1855,8 +1905,9 @@ public final class PortalLeveledInstanceRouter {
                 return;
             }
 
-            log(Level.WARNING,
-                    "[ELPortal] Death-return aborted: player world thread unavailable player=%s world=%s attempts=%d; using fallback spawn",
+            log(Level.SEVERE,
+                    "[ELPortal] Death-return: gate-offset ABORTED (world thread unavailable) player=%s targetWorld=%s lastAttempt=%d" +
+                    " — escalating to bed then world-spawn fallback",
                     playerRef.getUsername(),
                     targetWorld.getName(),
                     attempt);
