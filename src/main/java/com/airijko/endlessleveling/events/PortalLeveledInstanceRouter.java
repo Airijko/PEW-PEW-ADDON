@@ -156,6 +156,8 @@ public final class PortalLeveledInstanceRouter {
     private static final int DEATH_RETURN_MAX_RETRIES = 3;
     private static final long PENDING_GATE_ENTRY_TTL_MILLIS = 15000L;
     private static final long DIRECT_ENTRY_FALLBACK_GATE_TTL_MILLIS = 120000L;
+    private static final long DIRECT_ENTRY_REROUTE_RETRY_DELAY_MILLIS = 100L;
+    private static final int DIRECT_ENTRY_REROUTE_MAX_ATTEMPTS = 3;
     private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
     private static final int RETURN_PORTAL_MAX_RETRIES = 12;
     private static final long FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS = 1500L;
@@ -709,53 +711,15 @@ public final class PortalLeveledInstanceRouter {
                         pending = resolveFallbackGateEntryForDirectWorld(directWorldTemplate);
                     }
                     if (pending != null) {
-                        String gateIdentity = pending.gateIdentity();
-                        String pairedWorldName = GATE_KEY_TO_INSTANCE_NAME.get(gateIdentity);
-                        if (pairedWorldName == null || pairedWorldName.isBlank()) {
-                            GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(gateIdentity);
-                            if (expectation != null
-                                    && expectation.expectedWorldId() != null
-                                    && !expectation.expectedWorldId().isBlank()) {
-                                pairedWorldName = expectation.expectedWorldId();
-                            }
-                        }
-
-                        boolean hasKnownPairedWorld = pairedWorldName != null && !pairedWorldName.isBlank();
-                        boolean shouldReroute = hasKnownPairedWorld && !pairedWorldName.equalsIgnoreCase(routingName);
-                        if (shouldReroute) {
-                            boolean rerouted = routePlayerToGateInstance(
-                                    playerRef,
-                                    routingWorld,
-                                    gateIdentity,
-                                    pending.blockId(),
-                                    pending.routingName(),
-                                    returnWorld,
-                                    returnTransform);
-                            if (rerouted) {
-                                log(Level.WARNING,
-                                        "[ELPortal] Direct-entry rerouted player=%s world=%s -> gateId=%s template=%s expectedWorld=%s",
-                                        playerRef.getUsername(),
-                                        routingName,
-                                        gateIdentity,
-                                        pending.routingName(),
-                                        pairedWorldName);
-                                return;
-                            }
-                        } else {
-                            GATE_KEY_TO_INSTANCE_NAME.put(gateIdentity, routingName);
-                            cacheResolvedInstanceWorld(gateIdentity,
-                                    routingName,
-                                    pending.blockId(),
-                                    pending.routingName(),
-                                    "direct-entry-accept");
-                            clearPendingGateEntry(playerRef);
-                            log(Level.INFO,
-                                    "[ELPortal] Direct-entry accepted as paired world player=%s gateId=%s world=%s template=%s",
-                                    playerRef.getUsername(),
-                                    gateIdentity,
-                                    routingName,
-                                    pending.routingName());
-                        }
+                        attemptDirectEntryGateReroute(
+                                playerRef,
+                                routingWorld,
+                                routingName,
+                                pending,
+                                returnWorld,
+                                returnTransform,
+                                1);
+                        return;
                     }
                 }
             }
@@ -805,6 +769,61 @@ public final class PortalLeveledInstanceRouter {
         if (!started) {
             clearRoutingThrottle(playerRef, routingName);
         }
+    }
+
+    private static void attemptDirectEntryGateReroute(@Nonnull PlayerRef playerRef,
+                                                      @Nonnull World sourceWorld,
+                                                      @Nonnull String sourceWorldName,
+                                                      @Nonnull PendingGateEntry pending,
+                                                      @Nonnull World returnWorld,
+                                                      @Nullable Transform returnTransform,
+                                                      int attempt) {
+        boolean rerouted = routePlayerToGateInstance(
+                playerRef,
+                sourceWorld,
+                pending.gateIdentity(),
+                pending.blockId(),
+                pending.routingName(),
+                returnWorld,
+                returnTransform);
+        if (rerouted) {
+            log(Level.WARNING,
+                    "[ELPortal] Direct-entry forced reroute player=%s world=%s -> gateId=%s template=%s attempt=%d/%d",
+                    playerRef.getUsername(),
+                    sourceWorldName,
+                    pending.gateIdentity(),
+                    pending.routingName(),
+                    attempt,
+                    DIRECT_ENTRY_REROUTE_MAX_ATTEMPTS);
+            return;
+        }
+
+        if (attempt >= DIRECT_ENTRY_REROUTE_MAX_ATTEMPTS) {
+            log(Level.SEVERE,
+                    "[ELPortal] Direct-entry reroute failed after retries player=%s world=%s gateId=%s template=%s",
+                    playerRef.getUsername(),
+                    sourceWorldName,
+                    pending.gateIdentity(),
+                    pending.routingName());
+            return;
+        }
+
+        int nextAttempt = attempt + 1;
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            Runnable retryTask = () -> attemptDirectEntryGateReroute(
+                    playerRef,
+                    sourceWorld,
+                    sourceWorldName,
+                    pending,
+                    returnWorld,
+                    returnTransform,
+                    nextAttempt);
+
+            if (executeOnPlayerWorldThread(playerRef, retryTask)) {
+                return;
+            }
+            retryTask.run();
+        }, DIRECT_ENTRY_REROUTE_RETRY_DELAY_MILLIS, TimeUnit.MILLISECONDS);
     }
 
     private static boolean isRoutingThrottled(@Nonnull PlayerRef playerRef,
