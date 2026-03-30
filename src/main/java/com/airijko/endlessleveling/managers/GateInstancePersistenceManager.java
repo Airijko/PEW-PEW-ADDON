@@ -11,7 +11,9 @@ import javax.annotation.Nullable;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,47 +43,18 @@ public final class GateInstancePersistenceManager {
 
     /**
      * Saves current gate instance mappings to disk before server shutdown.
-     * Captures the current state of GATE_KEY_TO_INSTANCE_NAME from PortalLeveledInstanceRouter.
+     * The caller (PortalLeveledInstanceRouter) builds the pre-populated list so
+     * no reflection against private router types is needed here.
      */
-    public static void saveGateInstances(@Nonnull Map<String, String> gateKeyToInstanceName,
-                                         @Nonnull Map<String, ?> activeLevelRanges) {
+    public static void saveGateInstances(@Nonnull List<StoredGateInstance> instances) {
         try {
             SAVED_INSTANCES.clear();
-            
-            for (Map.Entry<String, String> entry : gateKeyToInstanceName.entrySet()) {
-                String gateKey = entry.getKey();
-                String instanceName = entry.getValue();
-                
-                // Extract level range from activeLevelRanges (Map<String, LevelRange>)
-                // LevelRange has min/max fields
-                int minLevel = 1;
-                int maxLevel = 500;
-                Object rangeObj = activeLevelRanges.get(instanceName);
-                if (rangeObj != null) {
-                    try {
-                        // Use reflection to access min/max fields since it's a private record
-                        var minField = rangeObj.getClass().getDeclaredField("min");
-                        var maxField = rangeObj.getClass().getDeclaredField("max");
-                        minField.setAccessible(true);
-                        maxField.setAccessible(true);
-                        minLevel = minField.getInt(rangeObj);
-                        maxLevel = maxField.getInt(rangeObj);
-                    } catch (Exception ex) {
-                        // Fallback to defaults if reflection fails
-                    }
-                }
-                
-                StoredGateInstance stored = new StoredGateInstance(
-                    gateKey,
-                    instanceName,
-                    minLevel,
-                    maxLevel
-                );
-                SAVED_INSTANCES.put(gateKey, stored);
+            for (StoredGateInstance inst : instances) {
+                SAVED_INSTANCES.put(inst.gateKey, inst);
             }
-            
             writeToDisk();
-            System.out.println("[ELPortal-Persistence] Saved " + SAVED_INSTANCES.size() + " gate instance mappings to " + persistenceFile.getName());
+            System.out.println("[ELPortal-Persistence] Saved " + SAVED_INSTANCES.size()
+                    + " gate instance mappings to " + persistenceFile.getName());
         } catch (Exception ex) {
             System.err.println("[ELPortal-Persistence] Failed to save gate instances: " + ex.getMessage());
         }
@@ -133,6 +106,9 @@ public final class GateInstancePersistenceManager {
             gateObj.addProperty("instanceWorldName", instance.instanceWorldName);
             gateObj.addProperty("minLevel", instance.minLevel);
             gateObj.addProperty("maxLevel", instance.maxLevel);
+            gateObj.addProperty("bossLevel", instance.bossLevel);
+            gateObj.addProperty("rankLetter", instance.rankLetter);
+            gateObj.addProperty("blockId", instance.blockId);
             gateObj.addProperty("savedTimestamp", instance.savedTimestamp);
             gatesArray.add(gateObj);
         }
@@ -165,10 +141,15 @@ public final class GateInstancePersistenceManager {
                 String instanceWorldName = gateObj.get("instanceWorldName").getAsString();
                 int minLevel = gateObj.get("minLevel").getAsInt();
                 int maxLevel = gateObj.get("maxLevel").getAsInt();
-                long savedTimestamp = gateObj.has("savedTimestamp") ? 
-                    gateObj.get("savedTimestamp").getAsLong() : 0;
+                long savedTimestamp = gateObj.has("savedTimestamp") ?
+                        gateObj.get("savedTimestamp").getAsLong() : 0;
+                // v2 fields — default gracefully for files written before this version
+                int bossLevel = gateObj.has("bossLevel") ? gateObj.get("bossLevel").getAsInt() : maxLevel;
+                String rankLetter = gateObj.has("rankLetter") ? gateObj.get("rankLetter").getAsString() : "E";
+                String blockId = gateObj.has("blockId") ? gateObj.get("blockId").getAsString() : "";
 
-                StoredGateInstance stored = new StoredGateInstance(gateKey, instanceWorldName, minLevel, maxLevel);
+                StoredGateInstance stored = new StoredGateInstance(
+                        gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId);
                 stored.savedTimestamp = savedTimestamp;
                 SAVED_INSTANCES.put(gateKey, stored);
             }
@@ -191,13 +172,24 @@ public final class GateInstancePersistenceManager {
         public final String instanceWorldName;
         public final int minLevel;
         public final int maxLevel;
+        /** Absolute boss level (minLevel ≤ maxLevel ≤ bossLevel in normal configurations). */
+        public final int bossLevel;
+        /** Gate rank letter: E/D/C/B/A/S. */
+        public final String rankLetter;
+        /** Block type ID used for this gate (with rank suffix, e.g. "EL_MajorDungeonPortal_D01_RankB"). */
+        public final String blockId;
         public long savedTimestamp;
 
-        public StoredGateInstance(String gateKey, String instanceWorldName, int minLevel, int maxLevel) {
+        public StoredGateInstance(String gateKey, String instanceWorldName,
+                                  int minLevel, int maxLevel,
+                                  int bossLevel, String rankLetter, String blockId) {
             this.gateKey = gateKey;
             this.instanceWorldName = instanceWorldName;
             this.minLevel = minLevel;
             this.maxLevel = maxLevel;
+            this.bossLevel = bossLevel;
+            this.rankLetter = rankLetter != null ? rankLetter : "E";
+            this.blockId = blockId != null ? blockId : "";
             this.savedTimestamp = System.currentTimeMillis();
         }
     }

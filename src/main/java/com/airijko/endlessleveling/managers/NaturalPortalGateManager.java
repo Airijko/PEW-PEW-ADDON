@@ -654,6 +654,75 @@ public final class NaturalPortalGateManager {
                 && gate.z() == z);
     }
 
+    /**
+     * Restores an active gate from persistence so that {@link #resolveGateIdAt} returns the
+     * stable gate ID after a server restart.  Called by
+     * {@code PortalLeveledInstanceRouter.restoreSavedGateInstances()}.
+     *
+     * <p>Gate key formats supported:
+     * <ul>
+     *   <li>stable: {@code el_gate:<uuid>:<x>:<y>:<z>}
+     *   <li>legacy: {@code <uuid>:<x>:<y>:<z>}
+     * </ul>
+     */
+    public static void restoreActiveGate(
+            @Nonnull GateInstancePersistenceManager.StoredGateInstance stored,
+            @Nonnull Universe universe) {
+        String gateKey = stored.gateKey;
+        String coordPart;
+        if (gateKey.startsWith("el_gate:")) {
+            coordPart = gateKey.substring("el_gate:".length());
+        } else {
+            coordPart = gateKey;
+        }
+
+        // Expected: <uuid>:<x>:<y>:<z>
+        String[] parts = coordPart.split(":", 4);
+        if (parts.length < 4) {
+            log(Level.WARNING,
+                    "[ELPortal] Cannot parse gate key for restore: %s", gateKey);
+            return;
+        }
+
+        try {
+            UUID worldUuid = UUID.fromString(parts[0]);
+            int x = Integer.parseInt(parts[1]);
+            int y = Integer.parseInt(parts[2]);
+            int z = Integer.parseInt(parts[3]);
+
+            // Verify the world still exists
+            World world = universe.getWorld(worldUuid);
+            if (world == null) {
+                return;
+            }
+
+            // The canonical stable ID always uses the "el_gate:" prefix
+            String stableGateId = gateKey.startsWith("el_gate:") ? gateKey : ("el_gate:" + gateKey);
+
+            // Skip duplicates (position or ID match)
+            for (ActiveGate existing : ACTIVE_GATES) {
+                if (existing.gateId().equals(stableGateId)) {
+                    return;
+                }
+                if (existing.worldUuid().equals(worldUuid)
+                        && existing.x() == x
+                        && existing.y() == y
+                        && existing.z() == z) {
+                    return;
+                }
+            }
+
+            ACTIVE_GATES.add(new ActiveGate(stableGateId, worldUuid, stored.blockId, x, y, z));
+            log(Level.INFO,
+                    "[ELPortal] Restored active gate gateId=%s world=%s block=%s at %d %d %d",
+                    stableGateId, worldUuid, stored.blockId, x, y, z);
+        } catch (Exception ex) {
+            log(Level.WARNING,
+                    "[ELPortal] Failed to parse gate key for restore: %s error=%s",
+                    gateKey, ex.getMessage());
+        }
+    }
+
     private static void processPendingRemovals() {
         Universe universe = Universe.get();
         if (universe == null || PENDING_GATE_REMOVALS.isEmpty()) {

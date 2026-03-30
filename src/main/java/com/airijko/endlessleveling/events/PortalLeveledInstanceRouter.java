@@ -45,6 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.Set;
 import java.util.logging.Level;
+import java.util.HashMap;
 
 public final class PortalLeveledInstanceRouter {
 
@@ -175,7 +176,25 @@ public final class PortalLeveledInstanceRouter {
      */
     public static void saveGateInstances() {
         try {
-            GateInstancePersistenceManager.saveGateInstances(GATE_KEY_TO_INSTANCE_NAME, ACTIVE_LEVEL_RANGES);
+            List<GateInstancePersistenceManager.StoredGateInstance> instances = new ArrayList<>();
+            for (Map.Entry<String, String> entry : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
+                String gateKey = entry.getKey();
+                String instanceWorldName = entry.getValue();
+
+                LevelRange range = ACTIVE_LEVEL_RANGES.get(instanceWorldName);
+                Integer bossLvl = ACTIVE_BOSS_LEVELS.get(instanceWorldName);
+                String rankLtr = ACTIVE_RANK_LETTERS.getOrDefault(instanceWorldName, "E");
+                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(gateKey);
+                String blkId = exp != null && !exp.blockId().isBlank() ? exp.blockId() : "";
+
+                int min = range != null ? range.min() : 1;
+                int max = range != null ? range.max() : 500;
+                int boss = bossLvl != null ? bossLvl : max;
+
+                instances.add(new GateInstancePersistenceManager.StoredGateInstance(
+                        gateKey, instanceWorldName, min, max, boss, rankLtr, blkId));
+            }
+            GateInstancePersistenceManager.saveGateInstances(instances);
         } catch (Exception ex) {
             log(Level.WARNING, "[ELPortal] Failed to save gate instances: %s", ex.getMessage());
         }
@@ -197,29 +216,77 @@ public final class PortalLeveledInstanceRouter {
                 return;
             }
 
+            EndlessLevelingAPI api = EndlessLevelingAPI.get();
             int restored = 0;
             for (GateInstancePersistenceManager.StoredGateInstance stored : savedInstances.values()) {
                 try {
-                    // Check if the saved instance world still exists
                     World savedWorld = universe.getWorld(stored.instanceWorldName);
-                    if (savedWorld != null) {
-                        // Restore the gate-to-instance pairing
-                        GATE_KEY_TO_INSTANCE_NAME.put(stored.gateKey, stored.instanceWorldName);
-                        
-                        // Restore the level range as a LevelRange record
-                        ACTIVE_LEVEL_RANGES.put(
-                            stored.instanceWorldName,
-                            new LevelRange(stored.minLevel, stored.maxLevel)
-                        );
-                        restored++;
-                        
-                        log(Level.INFO,
-                            "[ELPortal] Restored gate %s → instance %s (levels %d-%d)",
-                            stored.gateKey, stored.instanceWorldName, stored.minLevel, stored.maxLevel);
+                    if (savedWorld == null) {
+                        continue;
                     }
+
+                    String gateKey = stored.gateKey;
+                    String instanceWorldName = stored.instanceWorldName;
+
+                    // --- pairing ---
+                    GATE_KEY_TO_INSTANCE_NAME.put(gateKey, instanceWorldName);
+                    // Register legacy-key alias so entry routing works even when
+                    // ACTIVE_GATES isn't re-populated (resolveGateIdAt returns null).
+                    // Stable key: "el_gate:<uuid>:<x>:<y>:<z>" → legacy: "<uuid>:<x>:<y>:<z>"
+                    if (gateKey.startsWith("el_gate:")) {
+                        String legacyKey = gateKey.substring("el_gate:".length());
+                        GATE_KEY_TO_INSTANCE_NAME.putIfAbsent(legacyKey, instanceWorldName);
+                    }
+
+                    // --- level data ---
+                    LevelRange range = new LevelRange(stored.minLevel, stored.maxLevel);
+                    ACTIVE_LEVEL_RANGES.put(instanceWorldName, range);
+                    ACTIVE_BOSS_LEVELS.put(instanceWorldName, stored.bossLevel);
+                    ACTIVE_RANK_LETTERS.put(instanceWorldName, stored.rankLetter);
+
+                    // Re-register the level override immediately so mobs are scaled
+                    // correctly on first entry — before cacheResolvedInstanceWorld runs.
+                    if (api != null) {
+                        int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
+                        api.registerMobWorldFixedLevelOverride(
+                                instanceWorldName, instanceWorldName,
+                                stored.minLevel, stored.maxLevel, bossOffset);
+                    }
+
+                    // --- gate expectation (enables attemptRouteToExpectedWorldId fallback) ---
+                    if (!stored.blockId.isBlank()) {
+                        String routingName = resolveRoutingName(stored.blockId);
+                        if (routingName != null) {
+                            String expectedGroupId = toInstanceGroupId(gateKey, routingName);
+                            GATE_INSTANCE_EXPECTATIONS.put(gateKey,
+                                    new GateInstanceExpectation(
+                                            stored.blockId,
+                                            routingName,
+                                            expectedGroupId,
+                                            instanceWorldName,
+                                            System.currentTimeMillis()));
+
+                            // Restore pending-by-gate so the saved levels are used if
+                            // a fresh gate block triggers a new spawn before any player enters.
+                            int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
+                            PENDING_LEVEL_RANGES_BY_GATE.put(gateKey,
+                                    new PendingLevelProfile(stored.minLevel, stored.maxLevel,
+                                            bossOffset, stored.rankLetter));
+                        }
+                    }
+
+                    // --- re-populate NaturalPortalGateManager.ACTIVE_GATES ---
+                    // so resolveGateIdAt() returns the stable ID and both sides use the same key.
+                    NaturalPortalGateManager.restoreActiveGate(stored, universe);
+
+                    restored++;
+                    log(Level.INFO,
+                            "[ELPortal] Restored gate %s \u2192 instance %s (levels %d-%d boss=%d rank=%s)",
+                            gateKey, instanceWorldName,
+                            stored.minLevel, stored.maxLevel, stored.bossLevel, stored.rankLetter);
                 } catch (Exception ex) {
                     log(Level.WARNING, "[ELPortal] Failed to restore gate instance %s: %s",
-                        stored.gateKey, ex.getMessage());
+                            stored.gateKey, ex.getMessage());
                 }
             }
 
@@ -309,6 +376,9 @@ public final class PortalLeveledInstanceRouter {
                                            int z,
                                            @Nonnull String blockId) {
         String stableGateId = NaturalPortalGateManager.resolveGateIdAt(world, x, y, z);
+        if (stableGateId == null || stableGateId.isBlank()) {
+            stableGateId = deriveStableGateIdFromWorldName(world);
+        }
         String legacyKey = buildGateKey(world, x, y, z);
         String gateIdentity = stableGateId != null && !stableGateId.isBlank() ? stableGateId : legacyKey;
         String instanceName = GATE_KEY_TO_INSTANCE_NAME.remove(gateIdentity);
@@ -461,9 +531,60 @@ public final class PortalLeveledInstanceRouter {
             return false;
         }
 
-        String gateKey = stableGateId != null && !stableGateId.isBlank()
-            ? stableGateId
-            : buildGateKey(sourceWorld, x, y, z);
+        String worldNameGateId = deriveStableGateIdFromWorldName(sourceWorld);
+        if (stableGateId != null && !stableGateId.isBlank()
+                && worldNameGateId != null
+                && !stableGateId.equals(worldNameGateId)) {
+            log(Level.WARNING,
+                    "[ELPortal] Gate identity mismatch: tracked=%s worldNameDerived=%s player=%s world=%s block=%s at %d %d %d",
+                    stableGateId,
+                    worldNameGateId,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+        }
+
+        String gateKey;
+        if (stableGateId != null && !stableGateId.isBlank()) {
+            gateKey = stableGateId;
+        } else if (worldNameGateId != null && !worldNameGateId.isBlank()) {
+            gateKey = worldNameGateId;
+            log(Level.WARNING,
+                    "[ELPortal] Gate identity recovered from world name gateId=%s player=%s world=%s block=%s at %d %d %d",
+                    gateKey,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+        } else {
+            gateKey = buildGateKey(sourceWorld, x, y, z);
+            log(Level.WARNING,
+                    "[ELPortal] Gate identity fallback: missing stable gate id; using legacy key=%s player=%s world=%s block=%s at %d %d %d",
+                    gateKey,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+                }
+
+                if (!gateKey.startsWith("el_gate:")) {
+            log(Level.WARNING,
+                    "[ELPortal] Gate identity non-canonical: stableGateId=%s player=%s world=%s block=%s at %d %d %d",
+                        gateKey,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+        }
         logGateEntryExpectation(gateKey, blockId, routingName, playerRef.getUsername());
         // Try to route to existing instance for this gate, or create new one
         boolean started = routePlayerToGateInstance(playerRef,
@@ -672,6 +793,16 @@ public final class PortalLeveledInstanceRouter {
                                                      @Nonnull String routingName,
                                                      @Nonnull World returnWorld,
                                                      @Nullable Transform returnTransform) {
+        if (!gateKey.startsWith("el_gate:")) {
+            log(Level.WARNING,
+                    "[ELPortal] Route-to-gate using non-canonical key=%s player=%s world=%s block=%s template=%s",
+                    gateKey,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    routingName);
+        }
+
         // Check if this gate already has a paired instance
         String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(gateKey);
         if (existingInstance != null) {
@@ -912,6 +1043,22 @@ public final class PortalLeveledInstanceRouter {
         
         // Use filesystem-safe deterministic group ID so InstancesPlugin can reuse on all OSes.
         String instanceGroupId = gateKey != null ? toInstanceGroupId(gateKey, routingName) : routingName;
+        if (gateKey == null || gateKey.isBlank()) {
+            log(Level.WARNING,
+                    "[ELPortal] Spawning template without gate identity player=%s source=%s template=%s instanceGroupId=%s",
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    routingName,
+                    instanceGroupId);
+        } else if (!gateKey.startsWith("el_gate:")) {
+            log(Level.WARNING,
+                    "[ELPortal] Spawning with non-canonical gate identity gateId=%s player=%s source=%s template=%s instanceGroupId=%s",
+                    gateKey,
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    routingName,
+                    instanceGroupId);
+        }
         log(Level.INFO,
             "[ELPortal] Spawning routed instance player=%s template=%s gateId=%s instanceGroupId=%s",
             playerRef.getUsername(),
@@ -1797,6 +1944,30 @@ public final class PortalLeveledInstanceRouter {
         String gateKey = anchor.gateId() != null && !anchor.gateId().isBlank()
             ? anchor.gateId()
             : buildGateKey(returnWorld, anchor.x(), anchor.y(), anchor.z());
+        if (anchor.gateId() == null || anchor.gateId().isBlank()) {
+            String worldNameGateId = deriveStableGateIdFromWorldName(returnWorld);
+            if (worldNameGateId != null && !worldNameGateId.isBlank()) {
+                gateKey = worldNameGateId;
+                log(Level.WARNING,
+                        "[ELPortal] Direct-entry backfill recovered canonical gate key=%s player=%s returnWorld=%s block=%s",
+                        gateKey,
+                        playerRef.getUsername(),
+                        returnWorld.getName(),
+                        blockId);
+            }
+
+            if (!gateKey.startsWith("el_gate:")) {
+            log(Level.WARNING,
+                    "[ELPortal] Direct-entry backfill using legacy gate key=%s player=%s returnWorld=%s block=%s anchor=%d %d %d",
+                    gateKey,
+                    playerRef.getUsername(),
+                    returnWorld.getName(),
+                    blockId,
+                    anchor.x(),
+                    anchor.y(),
+                    anchor.z());
+            }
+        }
         String existing = GATE_KEY_TO_INSTANCE_NAME.get(gateKey);
         if (Objects.equals(existing, instanceWorldName)) {
             return;
@@ -1847,6 +2018,51 @@ public final class PortalLeveledInstanceRouter {
             gateToken = "el_gate_" + gateToken;
         }
         return gateToken;
+    }
+
+    @Nullable
+    private static String deriveStableGateIdFromWorldName(@Nonnull World world) {
+        String worldName = world.getName();
+        if (worldName == null || worldName.isBlank()) {
+            return null;
+        }
+
+        String prefix = "el_gate_";
+        if (!worldName.startsWith(prefix)) {
+            return null;
+        }
+
+        int zSep = worldName.lastIndexOf('_');
+        if (zSep <= prefix.length()) {
+            return null;
+        }
+        int ySep = worldName.lastIndexOf('_', zSep - 1);
+        if (ySep <= prefix.length()) {
+            return null;
+        }
+        int xSep = worldName.lastIndexOf('_', ySep - 1);
+        if (xSep <= prefix.length()) {
+            return null;
+        }
+
+        String uuidPart = worldName.substring(prefix.length(), xSep);
+        String xPart = worldName.substring(xSep + 1, ySep);
+        String yPart = worldName.substring(ySep + 1, zSep);
+        String zPart = worldName.substring(zSep + 1);
+
+        try {
+            UUID uuid = UUID.fromString(uuidPart);
+            int x = Integer.parseInt(xPart);
+            int y = Integer.parseInt(yPart);
+            int z = Integer.parseInt(zPart);
+            return "el_gate:" + uuid + ":" + x + ":" + y + ":" + z;
+        } catch (Exception ex) {
+            log(Level.WARNING,
+                    "[ELPortal] Failed deriving stable gate id from world name=%s error=%s",
+                    worldName,
+                    ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+            return null;
+        }
     }
 
     @Nonnull
