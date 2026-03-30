@@ -10,6 +10,7 @@ import com.hypixel.hytale.builtin.instances.InstancesPlugin;
 import com.hypixel.hytale.builtin.instances.config.InstanceEntityConfig;
 import com.hypixel.hytale.builtin.instances.config.InstanceWorldConfig;
 import com.hypixel.hytale.builtin.instances.config.WorldReturnPoint;
+import com.hypixel.hytale.component.Archetype;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -24,6 +25,7 @@ import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
 import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.modules.entity.teleport.PendingTeleport;
 import com.hypixel.hytale.server.core.modules.entity.teleport.Teleport;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
@@ -130,6 +132,8 @@ public final class PortalLeveledInstanceRouter {
 
     /** Player UUID -> routing template -> throttle-until millis to suppress duplicate spawn races. */
     private static final Map<UUID, Map<String, Long>> PLAYER_ROUTING_THROTTLES = new ConcurrentHashMap<>();
+    /** Player UUID -> last time we queued any teleport component to avoid rapid teleportId churn. */
+    private static final Map<UUID, Long> PLAYER_LAST_TELEPORT_REQUEST_MILLIS = new ConcurrentHashMap<>();
 
     /** Gate key (world+xyz) -> instance world name (e.g., "uuid:120:65:-40" -> "instance-EL_MJ_Instance_D01-abc123") */
     private static final Map<String, String> GATE_KEY_TO_INSTANCE_NAME = new ConcurrentHashMap<>();
@@ -139,6 +143,8 @@ public final class PortalLeveledInstanceRouter {
     private static final Map<String, Long> GATE_SPAWN_IN_FLIGHT = new ConcurrentHashMap<>();
     /** Instance world names currently being reloaded after unload while still paired to an active gate. */
     private static final Set<String> PAIRED_INSTANCE_RELOADS_IN_FLIGHT = ConcurrentHashMap.newKeySet();
+    /** Return portal placement keys currently queued to prevent duplicate add/ready scheduling. */
+    private static final Set<String> RETURN_PORTAL_PLACEMENT_IN_FLIGHT = ConcurrentHashMap.newKeySet();
 
     private static final long ROUTING_DEDUPE_WINDOW_MILLIS = 5000L;
     private static final long GATE_SPAWN_STALE_MILLIS = 120000L;
@@ -149,6 +155,9 @@ public final class PortalLeveledInstanceRouter {
     private static final long DEATH_RETURN_INITIAL_DELAY_MILLIS = 100L;
     private static final long PENDING_GATE_ENTRY_TTL_MILLIS = 15000L;
     private static final long DIRECT_ENTRY_FALLBACK_GATE_TTL_MILLIS = 120000L;
+    private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
+    private static final int RETURN_PORTAL_MAX_RETRIES = 12;
+    private static final long FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS = 1500L;
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
@@ -176,10 +185,12 @@ public final class PortalLeveledInstanceRouter {
         PLAYER_ENTRY_TARGETS.clear();
         PLAYER_ROUTING_THROTTLES.clear();
         PLAYER_PENDING_GATE_ENTRIES.clear();
+        PLAYER_LAST_TELEPORT_REQUEST_MILLIS.clear();
         GATE_KEY_TO_INSTANCE_NAME.clear();
         GATE_INSTANCE_EXPECTATIONS.clear();
         GATE_SPAWN_IN_FLIGHT.clear();
         PAIRED_INSTANCE_RELOADS_IN_FLIGHT.clear();
+        RETURN_PORTAL_PLACEMENT_IN_FLIGHT.clear();
         filesManager = null;
         plugin = null;
     }
@@ -696,22 +707,52 @@ public final class PortalLeveledInstanceRouter {
                         pending = resolveFallbackGateEntryForDirectWorld(directWorldTemplate);
                     }
                     if (pending != null) {
-                        boolean rerouted = routePlayerToGateInstance(
-                                playerRef,
-                                routingWorld,
-                                pending.gateIdentity(),
-                                pending.blockId(),
-                                pending.routingName(),
-                                returnWorld,
-                                returnTransform);
-                        if (rerouted) {
-                            log(Level.WARNING,
-                                    "[ELPortal] Direct-entry rerouted player=%s world=%s -> gateId=%s template=%s",
-                                    playerRef.getUsername(),
+                        String gateIdentity = pending.gateIdentity();
+                        String pairedWorldName = GATE_KEY_TO_INSTANCE_NAME.get(gateIdentity);
+                        if (pairedWorldName == null || pairedWorldName.isBlank()) {
+                            GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(gateIdentity);
+                            if (expectation != null
+                                    && expectation.expectedWorldId() != null
+                                    && !expectation.expectedWorldId().isBlank()) {
+                                pairedWorldName = expectation.expectedWorldId();
+                            }
+                        }
+
+                        boolean hasKnownPairedWorld = pairedWorldName != null && !pairedWorldName.isBlank();
+                        boolean shouldReroute = hasKnownPairedWorld && !pairedWorldName.equalsIgnoreCase(routingName);
+                        if (shouldReroute) {
+                            boolean rerouted = routePlayerToGateInstance(
+                                    playerRef,
+                                    routingWorld,
+                                    gateIdentity,
+                                    pending.blockId(),
+                                    pending.routingName(),
+                                    returnWorld,
+                                    returnTransform);
+                            if (rerouted) {
+                                log(Level.WARNING,
+                                        "[ELPortal] Direct-entry rerouted player=%s world=%s -> gateId=%s template=%s expectedWorld=%s",
+                                        playerRef.getUsername(),
+                                        routingName,
+                                        gateIdentity,
+                                        pending.routingName(),
+                                        pairedWorldName);
+                                return;
+                            }
+                        } else {
+                            GATE_KEY_TO_INSTANCE_NAME.put(gateIdentity, routingName);
+                            cacheResolvedInstanceWorld(gateIdentity,
                                     routingName,
-                                    pending.gateIdentity(),
+                                    pending.blockId(),
+                                    pending.routingName(),
+                                    "direct-entry-accept");
+                            clearPendingGateEntry(playerRef);
+                            log(Level.INFO,
+                                    "[ELPortal] Direct-entry accepted as paired world player=%s gateId=%s world=%s template=%s",
+                                    playerRef.getUsername(),
+                                    gateIdentity,
+                                    routingName,
                                     pending.routingName());
-                            return;
                         }
                     }
                 }
@@ -2772,7 +2813,15 @@ public final class PortalLeveledInstanceRouter {
                 spawnTransform.getPosition().x,
                 spawnTransform.getPosition().y,
                 spawnTransform.getPosition().z);
-        teleportToWorld(playerRef, targetWorld, spawnTransform);
+        if (shouldSkipFixedSpawnTeleport(playerRef, targetWorld, spawnTransform)) {
+            log(Level.INFO,
+                    "[ELPortal] Fixed-spawn teleport suppressed player=%s world=%s suffix=%s",
+                    playerRef.getUsername(),
+                    targetWorld.getName(),
+                    suffix);
+        } else {
+            teleportToWorld(playerRef, targetWorld, spawnTransform);
+        }
         if (suffix.startsWith("EG_") || suffix.startsWith("MJ_")) {
             UUID playerUuid = playerRef.getUuid();
             if (playerUuid != null) {
@@ -2784,7 +2833,7 @@ public final class PortalLeveledInstanceRouter {
             // Original Endgame templates already spawn their own return portal; avoid duplicates.
             String templateName = resolveTemplateNameFromWorldName(targetWorld.getName());
             if (!isOriginalTemplateName(templateName)) {
-                targetWorld.execute(() -> placeReturnPortalAtSpawnIfAbsent(targetWorld, spawnTransform));
+                queueReturnPortalPlacement(targetWorld, spawnTransform);
             }
         }
     }
@@ -2802,8 +2851,39 @@ public final class PortalLeveledInstanceRouter {
         return world.getWorldConfig().getSpawnProvider().getSpawnPoint(world, playerUuid);
     }
 
-    private static void placeReturnPortalAtSpawnIfAbsent(@Nonnull World world, @Nonnull Transform spawnTransform) {
+    private static void queueReturnPortalPlacement(@Nonnull World world, @Nonnull Transform spawnTransform) {
         if (spawnTransform.getPosition() == null) {
+            return;
+        }
+
+        int x = (int) Math.floor(spawnTransform.getPosition().x);
+        int y = (int) Math.floor(spawnTransform.getPosition().y);
+        int z = (int) Math.floor(spawnTransform.getPosition().z);
+        String placementKey = world.getName() + ":" + x + ":" + y + ":" + z;
+        if (!RETURN_PORTAL_PLACEMENT_IN_FLIGHT.add(placementKey)) {
+            return;
+        }
+
+        Runnable tryPlace = () -> placeReturnPortalAtSpawnIfAbsent(world, spawnTransform, placementKey, 1);
+        try {
+            world.execute(tryPlace);
+        } catch (Exception ex) {
+            RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
+            AddonLoggingManager.log(plugin,
+                    Level.WARNING,
+                    ex,
+                    "[ELPortal] Failed to queue return portal placement world=%s key=%s",
+                    world.getName(),
+                    placementKey);
+        }
+    }
+
+    private static void placeReturnPortalAtSpawnIfAbsent(@Nonnull World world,
+                                                          @Nonnull Transform spawnTransform,
+                                                          @Nonnull String placementKey,
+                                                          int attempt) {
+        if (spawnTransform.getPosition() == null) {
+            RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
             return;
         }
 
@@ -2817,20 +2897,48 @@ public final class PortalLeveledInstanceRouter {
         }
         if (returnBlockIntId == Integer.MIN_VALUE) {
             log(Level.WARNING, "[ELPortal] Portal_Return not in asset map — cannot place return portal at (%d %d %d) world=%s", x, y, z, world.getName());
+            RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
             return;
         }
 
         WorldChunk chunk = world.getChunkIfInMemory(ChunkUtil.indexChunkFromBlock(x, z));
         if (chunk == null) {
-            log(Level.WARNING, "[ELPortal] Chunk not in memory at (%d, %d) \u2014 cannot place return portal world=%s", x, z, world.getName());
+            if (attempt >= RETURN_PORTAL_MAX_RETRIES) {
+                RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
+                log(Level.WARNING,
+                        "[ELPortal] Chunk not in memory at (%d, %d) after %d attempts - cannot place return portal world=%s",
+                        x,
+                        z,
+                        attempt,
+                        world.getName());
+                return;
+            }
+
+            int nextAttempt = attempt + 1;
+            HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                try {
+                    world.execute(() -> placeReturnPortalAtSpawnIfAbsent(world, spawnTransform, placementKey, nextAttempt));
+                } catch (Exception ex) {
+                    RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
+                    AddonLoggingManager.log(plugin,
+                            Level.WARNING,
+                            ex,
+                            "[ELPortal] Failed return portal retry world=%s key=%s attempt=%d",
+                            world.getName(),
+                            placementKey,
+                            nextAttempt);
+                }
+            }, RETURN_PORTAL_RETRY_DELAY_MILLIS, TimeUnit.MILLISECONDS);
             return;
         }
 
         if (chunk.getBlock(x, y, z) == returnBlockIntId) {
+            RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
             return;
         }
 
         chunk.setBlock(x, y, z, returnBlockIntId);
+        RETURN_PORTAL_PLACEMENT_IN_FLIGHT.remove(placementKey);
         log(Level.INFO, "[ELPortal] Placed Portal_Return at (%d, %d, %d) world=%s", x, y, z, world.getName());
     }
 
@@ -2845,7 +2953,11 @@ public final class PortalLeveledInstanceRouter {
 
         try {
             Store<EntityStore> store = entityRef.getStore();
+            if (!canQueueTeleport(livePlayerRef, entityRef, store, "teleportToWorld")) {
+                return false;
+            }
             store.addComponent(entityRef, Teleport.getComponentType(), Teleport.createForPlayer(targetWorld, targetTransform));
+            noteTeleportQueued(livePlayerRef);
             return true;
         } catch (Exception ex) {
             AddonLoggingManager.log(plugin,
@@ -2922,7 +3034,11 @@ public final class PortalLeveledInstanceRouter {
 
         try {
             Store<EntityStore> store = entityRef.getStore();
+            if (!canQueueTeleport(livePlayerRef, entityRef, store, "teleportToInstanceSpawn")) {
+                return false;
+            }
             InstancesPlugin.teleportPlayerToInstance(entityRef, store, targetWorld, overrideReturn);
+            noteTeleportQueued(livePlayerRef);
             return true;
         } catch (Exception ex) {
             AddonLoggingManager.log(plugin,
@@ -2959,6 +3075,92 @@ public final class PortalLeveledInstanceRouter {
 
         Ref<EntityStore> refreshedRef = refreshed.getReference();
         return refreshedRef != null && refreshedRef.isValid() ? refreshed : null;
+    }
+
+    private static boolean canQueueTeleport(@Nullable PlayerRef playerRef,
+                                            @Nonnull Ref<EntityStore> entityRef,
+                                            @Nonnull Store<EntityStore> store,
+                                            @Nonnull String source) {
+        try {
+            Archetype<EntityStore> archetype = store.getArchetype(entityRef);
+            if (archetype != null) {
+                if (archetype.contains(Teleport.getComponentType())) {
+                    log(Level.FINE,
+                            "[ELPortal] Teleport queue blocked: existing Teleport component source=%s player=%s",
+                            source,
+                            playerRef == null ? "unknown" : playerRef.getUsername());
+                    return false;
+                }
+
+                if (archetype.contains(PendingTeleport.getComponentType())) {
+                    log(Level.FINE,
+                            "[ELPortal] Teleport queue blocked: pending teleport in-flight source=%s player=%s",
+                            source,
+                            playerRef == null ? "unknown" : playerRef.getUsername());
+                    return false;
+                }
+            }
+
+            Player playerComponent = store.getComponent(entityRef, Player.getComponentType());
+            if (playerComponent != null && playerComponent.isWaitingForClientReady()) {
+                log(Level.FINE,
+                        "[ELPortal] Teleport queue blocked: waiting for ClientReady source=%s player=%s",
+                        source,
+                        playerRef == null ? "unknown" : playerRef.getUsername());
+                return false;
+            }
+
+            return true;
+        } catch (Exception ex) {
+            AddonLoggingManager.log(plugin,
+                    Level.FINE,
+                    ex,
+                    "[ELPortal] Teleport queue guard failed open source=%s player=%s",
+                    source,
+                    playerRef == null ? "unknown" : playerRef.getUsername());
+            return true;
+        }
+    }
+
+    private static void noteTeleportQueued(@Nullable PlayerRef playerRef) {
+        if (playerRef == null) {
+            return;
+        }
+
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid != null) {
+            PLAYER_LAST_TELEPORT_REQUEST_MILLIS.put(playerUuid, System.currentTimeMillis());
+        }
+    }
+
+    private static boolean shouldSkipFixedSpawnTeleport(@Nonnull PlayerRef playerRef,
+                                                        @Nonnull World targetWorld,
+                                                        @Nonnull Transform spawnTransform) {
+        UUID playerUuid = playerRef.getUuid();
+        long now = System.currentTimeMillis();
+        if (playerUuid != null) {
+            Long lastTeleport = PLAYER_LAST_TELEPORT_REQUEST_MILLIS.get(playerUuid);
+            if (lastTeleport != null && (now - lastTeleport) < FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS) {
+                return true;
+            }
+        }
+
+        Transform current = playerRef.getTransform();
+        if (current == null || current.getPosition() == null || spawnTransform.getPosition() == null) {
+            return false;
+        }
+
+        UUID currentWorldUuid = playerRef.getWorldUuid();
+        UUID targetWorldUuid = targetWorld.getWorldConfig() == null ? null : targetWorld.getWorldConfig().getUuid();
+        if (currentWorldUuid == null || targetWorldUuid == null || !targetWorldUuid.equals(currentWorldUuid)) {
+            return false;
+        }
+
+        double dx = current.getPosition().x - spawnTransform.getPosition().x;
+        double dy = current.getPosition().y - spawnTransform.getPosition().y;
+        double dz = current.getPosition().z - spawnTransform.getPosition().z;
+        double distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
+        return distanceSq <= 9.0;
     }
 
     private static void broadcastEntry(@Nonnull PlayerRef playerRef,
