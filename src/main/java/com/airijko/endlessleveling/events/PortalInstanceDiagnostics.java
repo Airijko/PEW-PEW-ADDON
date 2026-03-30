@@ -38,29 +38,44 @@ import java.util.logging.Level;
 
 public final class PortalInstanceDiagnostics {
 
-    private static final Map<String, InstanceDebugDefinition> INSTANCE_DEFINITIONS = Map.of(
-            "EL_MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0))),
-            "EL_MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0))),
-            "EL_MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0))),
-            "MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0))),
-            "MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0))),
-            "MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0))),
-            "EL_Endgame_Frozen_Dungeon", new InstanceDebugDefinition("Endgame Frozen Dungeon", List.of(spawn(-17.0, 104.0, 65.0))),
-            "EL_Endgame_Swamp_Dungeon", new InstanceDebugDefinition("Endgame Swamp Dungeon", List.of(spawn(4.0, 115.0, 145.0))),
-            "EL_Endgame_Golem_Void", new InstanceDebugDefinition(
-                    "Endgame Golem Void",
-                    List.of(
-                            spawn(300.0, 130.0, 0.0),
-                            spawn(212.0, 130.0, 212.0),
-                            spawn(0.0, 130.0, 300.0),
-                            spawn(-212.0, 130.0, 212.0),
-                            spawn(-300.0, 130.0, 0.0),
-                            spawn(-212.0, 130.0, -212.0),
-                            spawn(0.0, 130.0, -300.0),
-                            spawn(212.0, 130.0, -212.0)
-                    )
-            )
-    );
+        private static final Map<String, InstanceDebugDefinition> INSTANCE_DEFINITIONS = Map.ofEntries(
+            Map.entry("EL_MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0)))),
+            Map.entry("EL_MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0)))),
+            Map.entry("EL_MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0)))),
+            Map.entry("MJ_Instance_D01", new InstanceDebugDefinition("Major Dungeons I", List.of(spawn(0.0, 130.0, 0.0)))),
+            Map.entry("MJ_Instance_D02", new InstanceDebugDefinition("Major Dungeons II", List.of(spawn(500.0, 130.0, 0.0)))),
+            Map.entry("MJ_Instance_D03", new InstanceDebugDefinition("Major Dungeons III", List.of(spawn(500.0, 130.0, 0.0)))),
+            Map.entry("Endgame_Frozen_Dungeon", new InstanceDebugDefinition("Endgame Frozen Dungeon", List.of(spawn(-17.0, 104.0, 65.0)))),
+            Map.entry("Endgame_Swamp_Dungeon", new InstanceDebugDefinition("Endgame Swamp Dungeon", List.of(spawn(4.0, 115.0, 145.0)))),
+            Map.entry("Endgame_Golem_Void", new InstanceDebugDefinition(
+                "Endgame Golem Void",
+                List.of(
+                    spawn(300.0, 130.0, 0.0),
+                    spawn(212.0, 130.0, 212.0),
+                    spawn(0.0, 130.0, 300.0),
+                    spawn(-212.0, 130.0, 212.0),
+                    spawn(-300.0, 130.0, 0.0),
+                    spawn(-212.0, 130.0, -212.0),
+                    spawn(0.0, 130.0, -300.0),
+                    spawn(212.0, 130.0, -212.0)
+                )
+            )),
+            Map.entry("EL_Endgame_Frozen_Dungeon", new InstanceDebugDefinition("Endgame Frozen Dungeon", List.of(spawn(-17.0, 104.0, 65.0)))),
+            Map.entry("EL_Endgame_Swamp_Dungeon", new InstanceDebugDefinition("Endgame Swamp Dungeon", List.of(spawn(4.0, 115.0, 145.0)))),
+            Map.entry("EL_Endgame_Golem_Void", new InstanceDebugDefinition(
+                "Endgame Golem Void",
+                List.of(
+                    spawn(300.0, 130.0, 0.0),
+                    spawn(212.0, 130.0, 212.0),
+                    spawn(0.0, 130.0, 300.0),
+                    spawn(-212.0, 130.0, 212.0),
+                    spawn(-300.0, 130.0, 0.0),
+                    spawn(-212.0, 130.0, -212.0),
+                    spawn(0.0, 130.0, -300.0),
+                    spawn(212.0, 130.0, -212.0)
+                )
+            ))
+        );
 
     private static final Map<UUID, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<String> PENDING_INSTANCE_REMOVALS = ConcurrentHashMap.newKeySet();

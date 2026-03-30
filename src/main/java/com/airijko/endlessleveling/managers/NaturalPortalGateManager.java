@@ -366,6 +366,12 @@ public final class NaturalPortalGateManager {
                 chunk.setBlock(x, y, z, rankedBlockId);
                 trackActiveGate(world, rankedBlockId, x, y, z);
                 String gateId = resolveGateIdAt(world, x, y, z);
+                if (gateId == null || gateId.isBlank()) {
+                    UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+                    if (worldUuid != null) {
+                        gateId = buildStableGateId(worldUuid, x, y, z);
+                    }
+                }
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, gateId, normalLevelMin, normalLevelMax, bossLevel);
                 if (isAnnounceOnSpawnEnabled()) {
                     announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);

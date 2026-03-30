@@ -1,6 +1,6 @@
 {
   "World_Overrides": {
-    "*el_gate_*": {
+    "el_gate_*": {
       "Enable_XP": true,
       "Experience": {
         "Global_XP_Multiplier": 1.0

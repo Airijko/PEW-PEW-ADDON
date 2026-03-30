@@ -54,7 +54,7 @@ public final class AddonFilesManager {
     private static final String GATE_WORLD_SETTINGS_FILE_NAME = "zz-el-gate-dungeons.json";
     private static final String LEGACY_GATE_WORLD_SETTINGS_FILE_NAME = "el-gate-dungeons.json";
     private static final String GATE_WORLD_OVERRIDES_PATH = "World_Overrides";
-    private static final String CANONICAL_GATE_WORLD_OVERRIDE_KEY = "*el_gate_*";
+    private static final String CANONICAL_GATE_WORLD_OVERRIDE_KEY = "el_gate_*";
     private static final DateTimeFormatter ARCHIVE_TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Pattern MANIFEST_VERSION_PATTERN = Pattern.compile("\"Version\"\\s*:\\s*\"([^\"]+)\"");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -724,6 +724,7 @@ public final class AddonFilesManager {
         String lowered = key.toLowerCase(Locale.ROOT);
         return lowered.contains("el_mj_instance_")
                 || lowered.contains("el_endgame_")
+                || lowered.contains("el_gate_")
                 || CANONICAL_GATE_WORLD_OVERRIDE_KEY.equalsIgnoreCase(lowered);
     }
 
