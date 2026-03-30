@@ -11,14 +11,18 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.protocol.SoundCategory;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.asset.type.blocktype.config.BlockType;
+import com.hypixel.hytale.server.core.asset.type.soundevent.config.SoundEvent;
 import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.util.EventTitleUtil;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
+import com.hypixel.hytale.server.core.universe.world.SoundUtil;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 
@@ -69,6 +73,9 @@ public final class NaturalPortalGateManager {
     private static final int WORLD_MAX_Y = 319;
     private static final long REMOVAL_RETRY_INTERVAL_SECONDS = 10L;
     private static final int REMOVAL_RETRY_BATCH_PER_WORLD = 32;
+    private static final String S_RANK_GATE_SPAWN_SOUND_ID = "SFX_EL_S_Rank_Gate_Spawn";
+    private static final String S_RANK_DISASTER_TITLE = "WORLD DISASTER";
+    private static final String S_RANK_GATE_TITLE = "S-RANK GATE BREACH";
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
@@ -175,6 +182,20 @@ public final class NaturalPortalGateManager {
 
     @Nonnull
     public static CompletableFuture<Boolean> spawnRandomGateNearPlayer(@Nonnull Player player, boolean isTestSpawn) {
+        return spawnGateNearPlayerWithOptionalRank(player, null, isTestSpawn);
+    }
+
+    @Nonnull
+    public static CompletableFuture<Boolean> spawnGateNearPlayerWithRank(@Nonnull Player player,
+                                                                          @Nonnull GateRankTier rankTier,
+                                                                          boolean isTestSpawn) {
+        return spawnGateNearPlayerWithOptionalRank(player, rankTier, isTestSpawn);
+    }
+
+    @Nonnull
+    private static CompletableFuture<Boolean> spawnGateNearPlayerWithOptionalRank(@Nonnull Player player,
+                                                                                   @Nullable GateRankTier forcedRankTier,
+                                                                                   boolean isTestSpawn) {
         refreshConfigSnapshot();
         World world = player.getWorld();
         if (world == null) {
@@ -208,7 +229,7 @@ public final class NaturalPortalGateManager {
                 return;
             }
 
-            spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, isTestSpawn, future);
+            spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, forcedRankTier, isTestSpawn, future);
         });
         return future;
     }
@@ -283,7 +304,7 @@ public final class NaturalPortalGateManager {
                                                                           @Nonnull String blockId,
                                                                           boolean isTestSpawn) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        world.execute(() -> spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, isTestSpawn, future));
+        world.execute(() -> spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, null, isTestSpawn, future));
         return future;
     }
 
@@ -329,6 +350,7 @@ public final class NaturalPortalGateManager {
     private static void spawnInWorldNearPlayerRefOnThread(@Nonnull World world,
                                                           @Nonnull PlayerRef playerRef,
                                                           @Nonnull String blockId,
+                                                          @Nullable GateRankTier forcedRankTier,
                                                           boolean isTestSpawn,
                                                           @Nonnull CompletableFuture<Boolean> future) {
             List<Long> loadedChunkIndexes = resolveLoadedChunkIndexes(world);
@@ -357,7 +379,9 @@ public final class NaturalPortalGateManager {
                     continue;
                 }
 
-                GateRank gateRank = resolveGateRank();
+                GateRank gateRank = forcedRankTier == null
+                    ? resolveGateRank()
+                    : new GateRank(forcedRankTier, -1);
                 LevelRange levelRange = resolveLevelRangeForWorld(world, playerRef, gateRank.tier);
                 int normalLevelMin = levelRange.normalMin;
                 int normalLevelMax = levelRange.normalMax;
@@ -1300,6 +1324,29 @@ public final class NaturalPortalGateManager {
             return;
         }
 
+        if (gateRank.tier == GateRankTier.S) {
+            Message message = Message.join(
+                    Message.raw("[WORLD DISASTER] ").color("#ff5a36"),
+                    Message.raw("An S-Rank Gate has ruptured the world veil.").color("#ffd7cf"),
+                    Message.raw("\n"),
+                    Message.raw("[ALERT] ").color("#ff9a3c"),
+                    Message.raw(String.format("Catastrophic breach detected at (%d, %d, %d)", x, y, z)).color("#ffe3a8"),
+                    Message.raw("\n"),
+                    Message.raw("[THREAT] ").color("#ff5a36"),
+                    Message.raw(String.format("Hostile level range %d-%d | Boss level %d", normalLevelMin, normalLevelMax, bossLevel)).color("#fff0cf"),
+                    Message.raw("\n"),
+                    Message.raw("[ORDER] ").color("#ff9a3c"),
+                    Message.raw("All adventurers are advised to mobilize immediately.").color("#ffd7cf")
+            );
+            universe.sendMessage(message);
+            showTitleToAllPlayers(
+                    Message.raw(S_RANK_DISASTER_TITLE).color("#ff5a36"),
+                    Message.raw(String.format("%s at (%d, %d, %d)", S_RANK_GATE_TITLE, x, y, z)).color("#ffd7cf"),
+                    true);
+            playSoundToAllPlayers(S_RANK_GATE_SPAWN_SOUND_ID);
+            return;
+        }
+
         Message message = Message.join(
             Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
             Message.raw(String.format("%s RANK GATE SPAWNED!", gateRank.tier.letter())).color(gateRank.tier.color().hex()),
@@ -1314,6 +1361,86 @@ public final class NaturalPortalGateManager {
             Message.raw(String.format("Boss Level: %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
         );
         universe.sendMessage(message);
+    }
+
+    private static void showTitleToAllPlayers(@Nonnull Message titlePrimary,
+                                              @Nonnull Message titleSecondary,
+                                              boolean playSound) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        for (PlayerRef playerRef : universe.getPlayers()) {
+            if (playerRef == null || !playerRef.isValid()) {
+                continue;
+            }
+            EventTitleUtil.showEventTitleToPlayer(playerRef, titlePrimary, titleSecondary, playSound);
+        }
+    }
+
+    private static void playSoundToAllPlayers(@Nonnull String soundEventId) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        int soundIndex = resolveSoundIndex(soundEventId);
+        if (soundIndex == 0) {
+            log(Level.WARNING,
+                    "[ELPortal] Failed to play S-rank gate spawn sound; sound event id not found: %s",
+                    soundEventId);
+            return;
+        }
+
+        for (PlayerRef playerRef : universe.getPlayers()) {
+            if (playerRef == null || !playerRef.isValid()) {
+                continue;
+            }
+
+            UUID worldUuid = playerRef.getWorldUuid();
+            if (worldUuid == null) {
+                continue;
+            }
+
+            World playerWorld = universe.getWorld(worldUuid);
+            if (playerWorld == null) {
+                continue;
+            }
+
+            playerWorld.execute(() -> {
+                if (!playerRef.isValid()) {
+                    return;
+                }
+
+                Ref<EntityStore> playerEntityRef = playerRef.getReference();
+                if (playerEntityRef == null || !playerEntityRef.isValid()) {
+                    return;
+                }
+
+                try {
+                    SoundUtil.playSoundEvent2d(
+                            playerEntityRef,
+                            soundIndex,
+                            SoundCategory.SFX,
+                            playerEntityRef.getStore());
+                } catch (Exception ex) {
+                    log(Level.WARNING,
+                            "[ELPortal] Failed to play S-rank gate spawn sound for player %s: %s",
+                            playerRef.getUsername(),
+                            ex.getMessage());
+                }
+            });
+        }
+    }
+
+    private static int resolveSoundIndex(@Nullable String soundEventId) {
+        if (soundEventId == null || soundEventId.isBlank()) {
+            return 0;
+        }
+
+        int index = SoundEvent.getAssetMap().getIndex(soundEventId);
+        return index == Integer.MIN_VALUE ? 0 : index;
     }
 
     private static void announceGateDespawn(int x, int y, int z, @Nonnull String blockId) {

@@ -132,6 +132,8 @@ public final class PortalLeveledInstanceRouter {
     private static final Map<UUID, PendingGateEntry> PLAYER_PENDING_GATE_ENTRIES = new ConcurrentHashMap<>();
     /** Player UUID -> pending death-return offset teleport, executed on PlayerReady. */
     private static final Map<UUID, PendingDeathReturn> PLAYER_PENDING_DEATH_RETURNS = new ConcurrentHashMap<>();
+    /** Player UUID -> instance world name they were blocked from entering (deferred return executed on PlayerReady). */
+    private static final Map<UUID, String> PLAYER_PENDING_BLOCK_RETURNS = new ConcurrentHashMap<>();
 
     /** Player UUID -> routing template -> throttle-until millis to suppress duplicate spawn races. */
     private static final Map<UUID, Map<String, Long>> PLAYER_ROUTING_THROTTLES = new ConcurrentHashMap<>();
@@ -851,7 +853,6 @@ public final class PortalLeveledInstanceRouter {
             if (universe != null) {
                 World returnWorld = resolveReturnWorld(routingWorld, universe);
                 Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
-                rememberEntryTarget(playerRef, returnWorld, returnTransform);
 
                 // Guard against rerouting loops: if we are already in a canonical gate world,
                 // never invoke routePlayerToGateInstance again from direct-entry handling.
@@ -861,6 +862,8 @@ public final class PortalLeveledInstanceRouter {
                         pending = resolveFallbackGateEntryForDirectWorld(directWorldTemplate);
                     }
                     if (pending != null) {
+                        // Gate reroute: update the saved return target now that we have the context.
+                        rememberEntryTarget(playerRef, returnWorld, returnTransform);
                         attemptDirectEntryGateReroute(
                                 playerRef,
                                 routingWorld,
@@ -873,15 +876,28 @@ public final class PortalLeveledInstanceRouter {
                     }
                     // No gate context to reroute through — block entry into the non-gate-prefixed
                     // instance world and return the player to their portal entry location.
+                    // Do NOT call rememberEntryTarget here: the player still has a valid saved
+                    // entry target from when they originally went through the gate, and overwriting
+                    // it with instance-world coordinates (or a null transform mid-transition) would
+                    // destroy the return point we need.  Defer the actual teleport to onPlayerReady
+                    // so it fires after isWaitingForClientReady is cleared and the entity ref is live.
                     log(Level.SEVERE,
                             "[ELPortal] Blocking direct entry into non-gate-prefixed world player=%s world=%s" +
-                            " template=%s — returning to entry location",
+                            " template=%s — queuing deferred return to entry location",
                             playerRef.getUsername(),
                             routingName,
                             directWorldTemplate == null ? "unknown" : directWorldTemplate);
-                    teleportToReturnTarget(playerRef, new ReturnTarget(null, returnWorld.getName(), returnTransform));
+                    UUID blockPlayerUuid = playerRef.getUuid();
+                    if (blockPlayerUuid != null) {
+                        PLAYER_PENDING_BLOCK_RETURNS.put(blockPlayerUuid, routingName);
+                        // Apply a short grace period so the proximity scanner cannot race
+                        // returnPlayerToEntryPortal before onPlayerReady fires.
+                        PortalProximityManager.markPlayerEnterInstance(blockPlayerUuid);
+                    }
                     return;
                 }
+                // Normal el_gate_-prefixed direct-entry: remember the return target now.
+                rememberEntryTarget(playerRef, returnWorld, returnTransform);
             }
 
             enforcePersistentInstanceLifecycle(routingWorld, "direct-entry");
@@ -1080,6 +1096,12 @@ public final class PortalLeveledInstanceRouter {
             }
 
             processPendingDeathReturnOnPlayerReady(playerRef, world);
+
+            // If the player was blocked from entering a non-gate-prefixed instance world,
+            // return them to their original entry location now that the entity ref is live.
+            if (processPendingBlockReturnOnPlayerReady(playerRef, world)) {
+                return;  // Skip applyFixedGateSpawn — player is being sent back out.
+            }
 
             String suffix = resolveSuffixFromWorldName(world.getName());
             if (suffix == null) {
@@ -1871,6 +1893,51 @@ public final class PortalLeveledInstanceRouter {
                 formatTransform(offsetTransform));
     }
 
+    /**
+     * If the player was blocked from entering a non-gate-prefixed instance world, this fires on
+     * PlayerReady (post-ClientReady) to perform the deferred return teleport with a live entity ref.
+     *
+     * @return true when a pending block return was found and acted upon (caller should skip
+     *         applyFixedGateSpawn to avoid re-anchoring the player inside the instance)
+     */
+    private static boolean processPendingBlockReturnOnPlayerReady(@Nonnull PlayerRef playerRef,
+                                                                   @Nonnull World readyWorld) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return false;
+        }
+
+        String blockedWorldName = PLAYER_PENDING_BLOCK_RETURNS.remove(playerUuid);
+        if (blockedWorldName == null) {
+            return false;
+        }
+
+        // Verify this PlayerReady fired for the same world we blocked (worlds match case-insensitively).
+        if (!readyWorld.getName().equalsIgnoreCase(blockedWorldName)) {
+            log(Level.WARNING,
+                    "[ELPortal] Block-return: PlayerReady world mismatch player=%s expected=%s ready=%s \u2014 discarding",
+                    playerRef.getUsername(), blockedWorldName, readyWorld.getName());
+            return false;
+        }
+
+        log(Level.INFO,
+                "[ELPortal] Block-return: executing deferred return player=%s world=%s",
+                playerRef.getUsername(), readyWorld.getName());
+
+        // Re-apply the grace period to prevent the proximity scanner from consuming the saved
+        // entry target concurrently while we are in the middle of teleporting the player out.
+        PortalProximityManager.markPlayerEnterInstance(playerUuid);
+
+        boolean returned = returnPlayerToEntryPortal(playerRef, readyWorld);
+        if (!returned) {
+            log(Level.WARNING,
+                    "[ELPortal] Block-return: returnPlayerToEntryPortal failed player=%s world=%s \u2014 using spawn fallback",
+                    playerRef.getUsername(), readyWorld.getName());
+            fallbackReturnPlayerToWorldSpawn(playerRef, readyWorld);
+        }
+        return true;
+    }
+
     private static void processPendingDeathReturnOnPlayerReady(@Nonnull PlayerRef playerRef,
                                                                 @Nonnull World readyWorld) {
         UUID playerUuid = playerRef.getUuid();
@@ -2045,9 +2112,24 @@ public final class PortalLeveledInstanceRouter {
 
     private static void rememberEntryTarget(@Nonnull PlayerRef playerRef,
                                             @Nonnull World world,
-                                            @Nonnull Transform transform) {
+                                            @Nullable Transform transform) {
         UUID playerUuid = playerRef.getUuid();
         if (playerUuid == null) {
+            return;
+        }
+        if (transform == null) {
+            // playerRef.getTransform() can return null mid-transition; never overwrite a valid
+            // saved target with a null-transform entry that would silently fail on use.
+            ReturnTarget existing = PLAYER_ENTRY_TARGETS.get(playerUuid);
+            if (existing != null && existing.returnTransform() != null) {
+                log(Level.FINE,
+                        "[ELPortal] rememberEntryTarget: null transform player=%s world=%s — preserving existing valid target",
+                        playerRef.getUsername(), world.getName());
+                return;
+            }
+            log(Level.WARNING,
+                    "[ELPortal] rememberEntryTarget: null transform player=%s world=%s — no existing target to preserve, skipping store",
+                    playerRef.getUsername(), world.getName());
             return;
         }
         PLAYER_ENTRY_TARGETS.put(playerUuid, new ReturnTarget(null, world.getName(), transform));

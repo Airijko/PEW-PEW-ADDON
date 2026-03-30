@@ -15,6 +15,7 @@ public final class GateCommand extends AbstractCommand {
         this.addAliases("g", "elgate");
         this.addSubCommand(new PortalGiveCommand());
         this.addSubCommand(new PortalGateTestCommand());
+        this.addSubCommand(new PortalWaveTestCommand());
         this.addSubCommand(new PortalBlockAdminCommand());
         this.addSubCommand(new PortalReturnPosCommand());
         this.addSubCommand(new ClearElDungeonsCommand());
@@ -24,7 +25,7 @@ public final class GateCommand extends AbstractCommand {
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-                "Usage: /gate <give|test|blocks|returnpos|deleteinstances> ...")
+                "Usage: /gate <give|spawn|wave|blocks|returnpos|deleteinstances> ...")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
