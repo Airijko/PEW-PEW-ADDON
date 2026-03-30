@@ -619,6 +619,20 @@ public final class PortalLeveledInstanceRouter {
                 }
 
                 String canonicalGateKey = canonicalizeGateIdentity(gateKey);
+                String nearbyCanonicalKey = resolveNearbyCanonicalGateIdentity(sourceWorld, blockId, x, y, z, canonicalGateKey);
+                if (nearbyCanonicalKey != null && !nearbyCanonicalKey.equals(canonicalGateKey)) {
+                    log(Level.WARNING,
+                        "[ELPortal] Canonical gate key snapped to nearby tracked gate: original=%s snapped=%s player=%s world=%s block=%s at %d %d %d",
+                        canonicalGateKey,
+                        nearbyCanonicalKey,
+                        playerRef.getUsername(),
+                        sourceWorld.getName(),
+                        blockId,
+                        x,
+                        y,
+                        z);
+                    canonicalGateKey = nearbyCanonicalKey;
+                }
                 if (!canonicalGateKey.equals(gateKey)) {
                     log(Level.WARNING,
                             "[ELPortal] Canonicalized gate identity: original=%s canonical=%s player=%s world=%s block=%s at %d %d %d",
@@ -942,6 +956,38 @@ public final class PortalLeveledInstanceRouter {
                         playerRef.getUsername());
                 });
                     }).exceptionally(ex -> {
+                        Universe retryUniverse = Universe.get();
+                        World racedWorld = retryUniverse == null ? null : retryUniverse.getWorld(existingInstance);
+                        if (racedWorld != null) {
+                            enforcePersistentInstanceLifecycle(racedWorld, "paired-instance-race-recover");
+                            registerInstanceLevelOverride(racedWorld.getName(), gateKey, routingName);
+
+                            Transform effectiveReturnTransform = returnTransform != null ? returnTransform : playerRef.getTransform();
+                            queueTeleportToInstanceSpawn(playerRef,
+                                    racedWorld,
+                                    effectiveReturnTransform,
+                                    () -> {
+                                        clearPendingGateEntry(playerRef);
+                                        cacheResolvedInstanceWorld(gateKey,
+                                                racedWorld.getName(),
+                                                blockId,
+                                                routingName,
+                                                "paired-instance-race-recover");
+                                        rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
+                                        String suffix = resolveSuffixFromWorldName(racedWorld.getName());
+                                        if (suffix != null) {
+                                            applyFixedGateSpawn(playerRef, racedWorld, suffix);
+                                        }
+                                        log(Level.WARNING,
+                                                "[ELPortal] Recovered paired-instance reload race world=%s key=%s block=%s player=%s",
+                                                existingInstance,
+                                                gateKey,
+                                                blockId,
+                                                playerRef.getUsername());
+                                    });
+                            return null;
+                        }
+
                         AddonLoggingManager.log(plugin,
                                 Level.WARNING,
                                 ex,
@@ -2286,6 +2332,79 @@ public final class PortalLeveledInstanceRouter {
     }
 
     @Nullable
+    private static String resolveNearbyCanonicalGateIdentity(@Nonnull World sourceWorld,
+                                                             @Nonnull String blockId,
+                                                             int x,
+                                                             int y,
+                                                             int z,
+                                                             @Nonnull String fallbackGateIdentity) {
+        UUID worldUuid = sourceWorld.getWorldConfig() == null ? null : sourceWorld.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return null;
+        }
+
+        String blockBase = stripRankSuffix(blockId);
+        String bestGateIdentity = null;
+        int bestDistance = Integer.MAX_VALUE;
+
+        for (Map.Entry<String, String> entry : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
+            String rawGateId = entry.getKey();
+            if (rawGateId == null || rawGateId.isBlank()) {
+                continue;
+            }
+
+            String gateId = canonicalizeGateIdentity(rawGateId);
+            String[] parts = gateId.split(":");
+            if (parts.length != 5 || !"el_gate".equals(parts[0])) {
+                continue;
+            }
+
+            UUID gateWorldUuid;
+            int gx;
+            int gy;
+            int gz;
+            try {
+                gateWorldUuid = UUID.fromString(parts[1]);
+                gx = Integer.parseInt(parts[2]);
+                gy = Integer.parseInt(parts[3]);
+                gz = Integer.parseInt(parts[4]);
+            } catch (Exception ignored) {
+                continue;
+            }
+
+            if (!worldUuid.equals(gateWorldUuid)) {
+                continue;
+            }
+
+            GateInstanceExpectation expectation = GATE_INSTANCE_EXPECTATIONS.get(gateId);
+            if (expectation != null) {
+                String expectedBlockBase = stripRankSuffix(expectation.blockId());
+                if (!expectedBlockBase.equals(blockBase)) {
+                    continue;
+                }
+            }
+
+            int dx = gx - x;
+            int dy = gy - y;
+            int dz = gz - z;
+            int distance = dx * dx + dy * dy + dz * dz;
+            if (distance > 4) {
+                continue;
+            }
+
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestGateIdentity = gateId;
+            }
+        }
+
+        if (bestGateIdentity != null) {
+            return bestGateIdentity;
+        }
+        return fallbackGateIdentity;
+    }
+
+    @Nullable
     private static String recoverCanonicalGateIdentity(@Nonnull World sourceWorld,
                                                        @Nonnull String blockId,
                                                        int x,
@@ -2718,7 +2837,8 @@ public final class PortalLeveledInstanceRouter {
     private static boolean teleportToWorld(@Nonnull PlayerRef playerRef,
                                            @Nonnull World targetWorld,
                                            @Nonnull Transform targetTransform) {
-        Ref<EntityStore> entityRef = playerRef.getReference();
+        PlayerRef livePlayerRef = resolveLivePlayerRef(playerRef);
+        Ref<EntityStore> entityRef = livePlayerRef == null ? null : livePlayerRef.getReference();
         if (entityRef == null || !entityRef.isValid()) {
             return false;
         }
@@ -2793,7 +2913,8 @@ public final class PortalLeveledInstanceRouter {
     private static boolean teleportToInstanceSpawn(@Nonnull PlayerRef playerRef,
                                                    @Nonnull World targetWorld,
                                                    @Nullable Transform overrideReturn) {
-        Ref<EntityStore> entityRef = playerRef.getReference();
+        PlayerRef livePlayerRef = resolveLivePlayerRef(playerRef);
+        Ref<EntityStore> entityRef = livePlayerRef == null ? null : livePlayerRef.getReference();
         if (entityRef == null || !entityRef.isValid()) {
             log(Level.WARNING, "[ELPortal] Missing/invalid player reference for %s", playerRef.getUsername());
             return false;
@@ -2812,6 +2933,32 @@ public final class PortalLeveledInstanceRouter {
                     targetWorld.getName());
             return false;
         }
+    }
+
+    @Nullable
+    private static PlayerRef resolveLivePlayerRef(@Nonnull PlayerRef playerRef) {
+        Ref<EntityStore> reference = playerRef.getReference();
+        if (reference != null && reference.isValid()) {
+            return playerRef;
+        }
+
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return null;
+        }
+
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return null;
+        }
+
+        PlayerRef refreshed = universe.getPlayer(playerUuid);
+        if (refreshed == null) {
+            return null;
+        }
+
+        Ref<EntityStore> refreshedRef = refreshed.getReference();
+        return refreshedRef != null && refreshedRef.isValid() ? refreshed : null;
     }
 
     private static void broadcastEntry(@Nonnull PlayerRef playerRef,

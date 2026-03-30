@@ -231,11 +231,15 @@ public final class PortalInstanceDiagnostics {
         }
 
         // Keep level metadata if this world is still paired to an active gate.
-        // The world can be unloaded while empty and later reloaded for the same gate.
+        // Do not auto-reload here: RemoveWorldEvent fires while world teardown/delete is still
+        // in progress, and immediate reload can race deletion on Windows (AccessDenied) and
+        // create duplicate instance lifecycle events.
         if (!explicitDeathWipe && !PortalLeveledInstanceRouter.isInstancePairedToActiveGate(worldName)) {
             PortalLeveledInstanceRouter.clearActiveInstanceRange(worldName);
         } else if (!explicitDeathWipe) {
-            PortalLeveledInstanceRouter.reloadPairedInstanceIfPossible(worldName, "world-removed-while-gate-active");
+            log(Level.INFO,
+                    "world-remove world=%s preserved paired gate mapping/levels; reload deferred until next gate entry",
+                    worldName);
         }
 
         log(Level.INFO,
