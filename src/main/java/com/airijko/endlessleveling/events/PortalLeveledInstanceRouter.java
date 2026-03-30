@@ -396,33 +396,43 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
+        String canonicalGateIdentity = canonicalizeGateIdentity(gateIdentity);
+        String legacyGateIdentity = legacyGateIdentity(canonicalGateIdentity);
+
         String routingName = resolveRoutingName(blockId);
         if (routingName == null) {
             return;
         }
 
-        String expectedGroupId = buildExpectedGroupId(gateIdentity, routingName);
+        String expectedGroupId = buildExpectedGroupId(canonicalGateIdentity, routingName);
 
         // If a saved pairing already exists for this gate key, reuse the known instance world
         // name as expectedWorldId so we don't clobber the restored mapping with a fake group-ID
         // string. Without this, a post-restart gate detection would reset expectedWorldId to the
         // el_gate_..._x_y_z format, causing a spurious "mismatch" rotation on first re-entry.
-        String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(gateIdentity);
+        String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(canonicalGateIdentity);
+        if ((existingInstance == null || existingInstance.isBlank())
+                && legacyGateIdentity != null
+                && !legacyGateIdentity.equals(canonicalGateIdentity)) {
+            existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(legacyGateIdentity);
+        }
         String expectedWorldId = (existingInstance != null && !existingInstance.isBlank())
             ? existingInstance
             : null;
 
-        GATE_INSTANCE_EXPECTATIONS.put(
-                gateIdentity,
-                new GateInstanceExpectation(
-                        blockId,
-                        routingName,
-                        expectedGroupId,
-                        expectedWorldId,
-                        System.currentTimeMillis()));
+        GateInstanceExpectation expectation = new GateInstanceExpectation(
+                blockId,
+                routingName,
+                expectedGroupId,
+                expectedWorldId,
+                System.currentTimeMillis());
+        GATE_INSTANCE_EXPECTATIONS.put(canonicalGateIdentity, expectation);
+        if (legacyGateIdentity != null && !legacyGateIdentity.equals(canonicalGateIdentity)) {
+            GATE_INSTANCE_EXPECTATIONS.put(legacyGateIdentity, expectation);
+        }
         log(Level.INFO,
                 "[ELPortal] Gate expectation cached gateId=%s block=%s template=%s expectedGroupId=%s expectedWorldId=%s",
-                gateIdentity,
+                canonicalGateIdentity,
                 blockId,
                 routingName,
                 expectedGroupId,
@@ -431,7 +441,7 @@ public final class PortalLeveledInstanceRouter {
         // Emit a warning-level twin log so this is visible even when addon INFO logs are suppressed.
         log(Level.WARNING,
                 "[ELPortal] Gate expectation cached gateId=%s block=%s template=%s expectedGroupId=%s expectedWorldId=%s",
-                gateIdentity,
+            canonicalGateIdentity,
                 blockId,
                 routingName,
                 expectedGroupId,
@@ -812,6 +822,22 @@ public final class PortalLeveledInstanceRouter {
         Transform returnTransform = resolveReturnTransform(routingWorld, playerRef);
 
         if (isRoutingThrottled(playerRef, routingName, routingWorld.getName(), "routing-world-add")) {
+            return;
+        }
+
+        PendingGateEntry pendingGateEntry = resolvePendingGateEntry(playerRef, routingName);
+        if (pendingGateEntry != null) {
+            boolean started = routePlayerToGateInstance(
+                    playerRef,
+                    routingWorld,
+                    pendingGateEntry.gateIdentity(),
+                    pendingGateEntry.blockId(),
+                    pendingGateEntry.routingName(),
+                    returnWorld,
+                    returnTransform);
+            if (!started) {
+                clearRoutingThrottle(playerRef, routingName);
+            }
             return;
         }
 
