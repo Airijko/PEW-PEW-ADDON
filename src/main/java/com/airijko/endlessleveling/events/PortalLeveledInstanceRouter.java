@@ -177,14 +177,26 @@ public final class PortalLeveledInstanceRouter {
     public static void saveGateInstances() {
         try {
             List<GateInstancePersistenceManager.StoredGateInstance> instances = new ArrayList<>();
+            Set<String> savedCanonicalKeys = new java.util.HashSet<>();
             for (Map.Entry<String, String> entry : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
                 String gateKey = entry.getKey();
                 String instanceWorldName = entry.getValue();
 
+                // Always persist under the canonical key to prevent legacy-key drift.
+                // Skip this entry if we already saved a canonical form for this key.
+                String canonicalKey = gateKey.startsWith("el_gate:") ? gateKey : ("el_gate:" + gateKey);
+                if (!savedCanonicalKeys.add(canonicalKey)) {
+                    continue;
+                }
+
                 LevelRange range = ACTIVE_LEVEL_RANGES.get(instanceWorldName);
                 Integer bossLvl = ACTIVE_BOSS_LEVELS.get(instanceWorldName);
                 String rankLtr = ACTIVE_RANK_LETTERS.getOrDefault(instanceWorldName, "E");
-                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(gateKey);
+                // Look up blockId under both canonical and legacy key.
+                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(canonicalKey);
+                if (exp == null) {
+                    exp = GATE_INSTANCE_EXPECTATIONS.get(gateKey);
+                }
                 String blkId = exp != null && !exp.blockId().isBlank() ? exp.blockId() : "";
 
                 int min = range != null ? range.min() : 1;
@@ -192,7 +204,7 @@ public final class PortalLeveledInstanceRouter {
                 int boss = bossLvl != null ? bossLvl : max;
 
                 instances.add(new GateInstancePersistenceManager.StoredGateInstance(
-                        gateKey, instanceWorldName, min, max, boss, rankLtr, blkId));
+                        canonicalKey, instanceWorldName, min, max, boss, rankLtr, blkId));
             }
             GateInstancePersistenceManager.saveGateInstances(instances);
         } catch (Exception ex) {
@@ -220,23 +232,29 @@ public final class PortalLeveledInstanceRouter {
             int restored = 0;
             for (GateInstancePersistenceManager.StoredGateInstance stored : savedInstances.values()) {
                 try {
-                    World savedWorld = universe.getWorld(stored.instanceWorldName);
-                    if (savedWorld == null) {
-                        continue;
-                    }
-
                     String gateKey = stored.gateKey;
                     String instanceWorldName = stored.instanceWorldName;
 
-                    // --- pairing ---
-                    GATE_KEY_TO_INSTANCE_NAME.put(gateKey, instanceWorldName);
-                    // Register legacy-key alias so entry routing works even when
-                    // ACTIVE_GATES isn't re-populated (resolveGateIdAt returns null).
-                    // Stable key: "el_gate:<uuid>:<x>:<y>:<z>" → legacy: "<uuid>:<x>:<y>:<z>"
-                    if (gateKey.startsWith("el_gate:")) {
-                        String legacyKey = gateKey.substring("el_gate:".length());
-                        GATE_KEY_TO_INSTANCE_NAME.putIfAbsent(legacyKey, instanceWorldName);
+                    // The instance world is rarely loaded at startup — accept either loaded
+                    // or loadable. For stale entries where the world no longer exists, still
+                    // restore expectations so registerGateExpectedInstance finds them and doesn't
+                    // default to using fake group IDs.
+                    boolean worldExists = universe.getWorld(instanceWorldName) != null
+                            || universe.isWorldLoadable(instanceWorldName);
+                    if (!worldExists) {
+                        log(Level.WARNING,
+                                "[ELPortal] Restoring expectations for stale gate %s (instance world %s not loadable)",
+                                gateKey, instanceWorldName);
                     }
+
+                    // --- pairing ---
+                    // Always store under BOTH the canonical (el_gate:...) and legacy key so
+                    // registerGateExpectedInstance (canonical lookup) and backfill (legacy lookup)
+                    // both find the correct world regardless of which key format was saved.
+                    String canonicalGateKey = gateKey.startsWith("el_gate:") ? gateKey : ("el_gate:" + gateKey);
+                    String legacyGateKey = gateKey.startsWith("el_gate:") ? gateKey.substring("el_gate:".length()) : gateKey;
+                    GATE_KEY_TO_INSTANCE_NAME.put(canonicalGateKey, instanceWorldName);
+                    GATE_KEY_TO_INSTANCE_NAME.putIfAbsent(legacyGateKey, instanceWorldName);
 
                     // --- level data ---
                     LevelRange range = new LevelRange(stored.minLevel, stored.maxLevel);
@@ -246,7 +264,8 @@ public final class PortalLeveledInstanceRouter {
 
                     // Re-register the level override immediately so mobs are scaled
                     // correctly on first entry — before cacheResolvedInstanceWorld runs.
-                    if (api != null) {
+                    // Only do this if the world actually exists; stale entries can't register yet.
+                    if (api != null && worldExists) {
                         int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
                         api.registerMobWorldFixedLevelOverride(
                                 instanceWorldName, instanceWorldName,
@@ -257,8 +276,8 @@ public final class PortalLeveledInstanceRouter {
                     if (!stored.blockId.isBlank()) {
                         String routingName = resolveRoutingName(stored.blockId);
                         if (routingName != null) {
-                            String expectedGroupId = toInstanceGroupId(gateKey, routingName);
-                            GATE_INSTANCE_EXPECTATIONS.put(gateKey,
+                            String expectedGroupId = toInstanceGroupId(canonicalGateKey, routingName);
+                            GATE_INSTANCE_EXPECTATIONS.put(canonicalGateKey,
                                     new GateInstanceExpectation(
                                             stored.blockId,
                                             routingName,
@@ -269,7 +288,7 @@ public final class PortalLeveledInstanceRouter {
                             // Restore pending-by-gate so the saved levels are used if
                             // a fresh gate block triggers a new spawn before any player enters.
                             int bossOffset = Math.max(0, stored.bossLevel - stored.maxLevel);
-                            PENDING_LEVEL_RANGES_BY_GATE.put(gateKey,
+                            PENDING_LEVEL_RANGES_BY_GATE.put(canonicalGateKey,
                                     new PendingLevelProfile(stored.minLevel, stored.maxLevel,
                                             bossOffset, stored.rankLetter));
                         }
@@ -282,7 +301,7 @@ public final class PortalLeveledInstanceRouter {
                     restored++;
                     log(Level.INFO,
                             "[ELPortal] Restored gate %s \u2192 instance %s (levels %d-%d boss=%d rank=%s)",
-                            gateKey, instanceWorldName,
+                            canonicalGateKey, instanceWorldName,
                             stored.minLevel, stored.maxLevel, stored.bossLevel, stored.rankLetter);
                 } catch (Exception ex) {
                     log(Level.WARNING, "[ELPortal] Failed to restore gate instance %s: %s",
@@ -341,21 +360,31 @@ public final class PortalLeveledInstanceRouter {
         }
 
         String expectedGroupId = toInstanceGroupId(gateIdentity, routingName);
+
+        // If a saved pairing already exists for this gate key, reuse the known instance world
+        // name as expectedWorldId so we don't clobber the restored mapping with a fake group-ID
+        // string. Without this, a post-restart gate detection would reset expectedWorldId to the
+        // el_gate_..._x_y_z format, causing a spurious "mismatch" rotation on first re-entry.
+        String existingInstance = GATE_KEY_TO_INSTANCE_NAME.get(gateIdentity);
+        String expectedWorldId = (existingInstance != null && !existingInstance.isBlank())
+                ? existingInstance
+                : expectedGroupId;
+
         GATE_INSTANCE_EXPECTATIONS.put(
                 gateIdentity,
                 new GateInstanceExpectation(
                         blockId,
                         routingName,
-                expectedGroupId,
-                expectedGroupId,
+                        expectedGroupId,
+                        expectedWorldId,
                         System.currentTimeMillis()));
         log(Level.INFO,
                 "[ELPortal] Gate expectation cached gateId=%s block=%s template=%s expectedGroupId=%s expectedWorldId=%s",
                 gateIdentity,
                 blockId,
                 routingName,
-            expectedGroupId,
-            expectedGroupId);
+                expectedGroupId,
+                expectedWorldId);
 
         // Emit a warning-level twin log so this is visible even when addon INFO logs are suppressed.
         log(Level.WARNING,
@@ -364,7 +393,7 @@ public final class PortalLeveledInstanceRouter {
                 blockId,
                 routingName,
                 expectedGroupId,
-                expectedGroupId);
+                expectedWorldId);
     }
 
     /**

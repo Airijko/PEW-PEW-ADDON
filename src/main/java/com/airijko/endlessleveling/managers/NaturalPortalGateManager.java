@@ -690,11 +690,10 @@ public final class NaturalPortalGateManager {
             int y = Integer.parseInt(parts[2]);
             int z = Integer.parseInt(parts[3]);
 
-            // Verify the world still exists
-            World world = universe.getWorld(worldUuid);
-            if (world == null) {
-                return;
-            }
+            // Do not gate on universe.getWorld(worldUuid) here: this method is called during plugin
+            // startup, before any world has been added to the universe, so that call always returns
+            // null and would silently skip every restore.  We trust the saved gate data; if the gate
+            // world was deleted the stale ACTIVE_GATES entry is harmless.
 
             // The canonical stable ID always uses the "el_gate:" prefix
             String stableGateId = gateKey.startsWith("el_gate:") ? gateKey : ("el_gate:" + gateKey);
