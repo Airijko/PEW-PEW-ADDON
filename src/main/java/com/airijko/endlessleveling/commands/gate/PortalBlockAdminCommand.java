@@ -1,5 +1,6 @@
 package com.airijko.endlessleveling.commands.gate;
 
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -521,6 +522,10 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     return;
                 }
 
+                // Kick players, remove the paired instance, and clear disk entry first.
+                PortalBlockHit anchor = nearest.anchor();
+                NaturalPortalGateManager.forceRemoveGateAt(world, anchor.x(), anchor.y(), anchor.z(), anchor.blockId());
+
                 int removed = 0;
                 for (PortalBlockHit block : nearest.blocks()) {
                     if (removePortalBlock(world, block)) {
@@ -528,7 +533,6 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     }
                 }
 
-                PortalBlockHit anchor = nearest.anchor();
                 if (removed > 0) {
                     ctx.sendMessage(Message.raw("Removed portal structure: " + nearest.displayBlockId()
                             + " @ " + anchor.x() + ", " + anchor.y() + ", " + anchor.z()
@@ -596,6 +600,18 @@ public class PortalBlockAdminCommand extends AbstractCommand {
 
                 context.sendMessage(Message.raw("Starting all-chunks portal cleanup (this may take a moment)...")
                         .color("#ffcc66"));
+
+                // Kick players and tear down instances for every tracked gate in this world
+                // before the block sweep clears the portal block markers.
+                List<PortalStructure> structures = scanPortalStructures(world);
+                for (PortalStructure structure : structures) {
+                    PortalBlockHit anchor = structure.anchor();
+                    NaturalPortalGateManager.forceRemoveGateAt(world, anchor.x(), anchor.y(), anchor.z(), anchor.blockId());
+                }
+                if (!structures.isEmpty()) {
+                    context.sendMessage(Message.raw("Removed " + structures.size() + " tracked gate instance(s) and kicked players.")
+                            .color("#ffbb44"));
+                }
 
                 CompletableFuture.runAsync(() -> {
                     AtomicInteger removed = new AtomicInteger();

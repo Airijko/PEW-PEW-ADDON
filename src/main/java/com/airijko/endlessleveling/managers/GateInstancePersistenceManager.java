@@ -84,6 +84,28 @@ public final class GateInstancePersistenceManager {
     }
 
     /**
+     * Removes a single gate instance mapping by gate key and persists to disk.
+     * Tries both the canonical ("el_gate:...") and legacy ("<uuid>:...") forms.
+     */
+    public static void removeGateInstance(@Nonnull String gateKey) {
+        boolean removed = SAVED_INSTANCES.remove(gateKey) != null;
+        // Also try the alternate key form so callers don't have to pre-canonicalize.
+        String altKey = gateKey.startsWith("el_gate:")
+                ? gateKey.substring("el_gate:".length())
+                : "el_gate:" + gateKey;
+        removed |= SAVED_INSTANCES.remove(altKey) != null;
+        try {
+            writeToDisk();
+            if (removed) {
+                System.out.println("[ELPortal-Persistence] Removed gate instance mapping for " + gateKey);
+            }
+        } catch (Exception ex) {
+            System.err.println("[ELPortal-Persistence] Failed to persist after removing gate " + gateKey
+                    + ": " + ex.getMessage());
+        }
+    }
+
+    /**
      * Clears all saved instances (useful for complete reset).
      */
     public static void clearSavedInstances() {

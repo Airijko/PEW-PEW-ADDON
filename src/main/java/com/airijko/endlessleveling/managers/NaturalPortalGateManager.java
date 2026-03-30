@@ -678,6 +678,43 @@ public final class NaturalPortalGateManager {
     }
 
     /**
+     * Admin-force-remove: kicks all players from the associated instance, cleans up
+     * router maps, clears the disk entry, and untracks the gate.
+     * Safe to call from the world thread (e.g. inside a command executor).
+     *
+     * @param world   the world the gate block lives in
+     * @param x       gate anchor X
+     * @param y       gate anchor Y
+     * @param z       gate anchor Z
+     * @param blockId the block type ID of the gate anchor block
+     */
+    public static void forceRemoveGateAt(@Nonnull World world,
+                                         int x, int y, int z,
+                                         @Nonnull String blockId) {
+        String gateId = resolveGateIdAt(world, x, y, z);
+        if (gateId != null && !gateId.isBlank()) {
+            // Kick any players inside the instance before tearing it down.
+            String instanceName = PortalLeveledInstanceRouter.resolveInstanceNameForGate(gateId);
+            if (instanceName != null && !instanceName.isBlank()) {
+                PortalLeveledInstanceRouter.kickPlayersFromGateInstance(instanceName);
+            }
+            // cleanupGateInstanceByIdentity removes router maps, calls safeRemoveInstance,
+            // and also removes the disk entry (via GateInstancePersistenceManager).
+            PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(gateId, blockId);
+        } else {
+            // No tracked gate ID — fall back to coordinate-based cleanup.
+            PortalLeveledInstanceRouter.cleanupGateInstance(world, x, y, z, blockId);
+        }
+        untrackActiveGate(world, x, y, z);
+        log(Level.INFO,
+                "[ELPortal] Admin force-removed gate world=%s block=%s at %d %d %d gateId=%s",
+                world.getName(),
+                blockId,
+                x, y, z,
+                gateId != null ? gateId : "<untracked>");
+    }
+
+    /**
      * Restores an active gate from persistence so that {@link #resolveGateIdAt} returns the
      * stable gate ID after a server restart.  Called by
      * {@code PortalLeveledInstanceRouter.restoreSavedGateInstances()}.

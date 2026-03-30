@@ -551,6 +551,96 @@ public final class PortalLeveledInstanceRouter {
         ACTIVE_LEVEL_RANGES.remove(instanceName);
         ACTIVE_BOSS_LEVELS.remove(instanceName);
         ACTIVE_RANK_LETTERS.remove(instanceName);
+        // Remove from disk persistence so stale entries don't survive restarts.
+        GateInstancePersistenceManager.removeGateInstance(gateIdentity);
+        if (canonicalGateIdentity != null && !canonicalGateIdentity.equals(gateIdentity)) {
+            GateInstancePersistenceManager.removeGateInstance(canonicalGateIdentity);
+        }
+        if (legacyGateIdentity != null && !legacyGateIdentity.equals(gateIdentity)) {
+            GateInstancePersistenceManager.removeGateInstance(legacyGateIdentity);
+        }
+    }
+
+    /**
+     * Returns the currently paired instance world name for a gate identity without removing it.
+     * Tries the provided key, then the canonical and legacy forms.
+     */
+    @Nullable
+    public static String resolveInstanceNameForGate(@Nonnull String gateIdentity) {
+        String name = GATE_KEY_TO_INSTANCE_NAME.get(gateIdentity);
+        if (name == null) {
+            String canonical = canonicalizeGateIdentity(gateIdentity);
+            name = GATE_KEY_TO_INSTANCE_NAME.get(canonical);
+        }
+        if (name == null) {
+            String legacy = legacyGateIdentity(gateIdentity);
+            if (legacy != null) {
+                name = GATE_KEY_TO_INSTANCE_NAME.get(legacy);
+            }
+        }
+        return name;
+    }
+
+    /**
+     * Kicks every player currently inside {@code instanceWorldName} back to their saved entry
+     * portal location (or world spawn as fallback). Safe to call on any thread; teleports are
+     * dispatched via the target world's executor.
+     */
+    public static void kickPlayersFromGateInstance(@Nonnull String instanceWorldName) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+        World instanceWorld = universe.getWorld(instanceWorldName);
+        if (instanceWorld == null) {
+            return;
+        }
+        List<Player> players = instanceWorld.getPlayers();
+        if (players == null || players.isEmpty()) {
+            return;
+        }
+        World returnWorld = universe.getDefaultWorld();
+        for (Player player : players) {
+            try {
+                Ref<EntityStore> entityRef = player.getReference();
+                if (entityRef == null || !entityRef.isValid()) {
+                    continue;
+                }
+                Store<EntityStore> store = entityRef.getStore();
+                PlayerRef playerRef = store.getComponent(entityRef, PlayerRef.getComponentType());
+                if (playerRef == null) {
+                    continue;
+                }
+                UUID playerUuid = playerRef.getUuid();
+                ReturnTarget entry = playerUuid != null ? PLAYER_ENTRY_TARGETS.get(playerUuid) : null;
+                if (entry != null && teleportToReturnTarget(playerRef, entry)) {
+                    if (playerUuid != null) {
+                        PLAYER_ENTRY_TARGETS.remove(playerUuid);
+                    }
+                    log(Level.INFO,
+                            "[ELPortal] Kicked player %s from deleted instance %s → saved entry portal",
+                            playerRef.getUsername(),
+                            instanceWorldName);
+                } else if (returnWorld != null) {
+                    teleportPlayerToReturnWorld(playerRef, returnWorld);
+                    log(Level.INFO,
+                            "[ELPortal] Kicked player %s from deleted instance %s → default world",
+                            playerRef.getUsername(),
+                            instanceWorldName);
+                } else {
+                    fallbackReturnPlayerToWorldSpawn(playerRef, instanceWorld);
+                    log(Level.WARNING,
+                            "[ELPortal] Kicked player %s from deleted instance %s → world spawn fallback (no return world)",
+                            playerRef.getUsername(),
+                            instanceWorldName);
+                }
+            } catch (Exception ex) {
+                log(Level.WARNING,
+                        "[ELPortal] Failed to kick player from deleted instance %s: %s",
+                        instanceWorldName,
+                        ex.getMessage());
+            }
+        }
     }
 
     @Nonnull
