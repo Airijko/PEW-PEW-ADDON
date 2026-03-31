@@ -43,6 +43,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.HashSet;
+import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -160,11 +162,16 @@ public final class PortalLeveledInstanceRouter {
     private static final long RETURN_PORTAL_RETRY_DELAY_MILLIS = 150L;
     private static final int RETURN_PORTAL_MAX_RETRIES = 12;
     private static final long RETURN_PORTAL_ENTRY_SUPPRESSION_MILLIS = 8000L;
+    private static final long MANAGED_ENTRY_CONTEXT_TTL_MILLIS = 15000L;
     private static final long FIXED_SPAWN_TELEPORT_COOLDOWN_MILLIS = 1500L;
     private static final String GATE_OVERRIDE_ID_PREFIX = "elportal:gate:";
+    private static final String ENDLESS_LEVELING_PREFIX = "[EndlessLeveling] ";
 
     /** Player UUID → latest known entry target used for custom return portal fallback. */
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
+    /** Player UUID -> instance world names they are locked out from after death. */
+    private static final Map<UUID, Set<String>> PLAYER_DEATH_REENTRY_LOCKS = new ConcurrentHashMap<>();
+    private static volatile boolean DEBUG_PREVENT_ENTER = false;
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
@@ -178,6 +185,67 @@ public final class PortalLeveledInstanceRouter {
 
     public static void setFilesManager(@Nullable AddonFilesManager manager) {
         filesManager = manager;
+    }
+
+    public static void setDebugPreventEnter(boolean enabled) {
+        DEBUG_PREVENT_ENTER = enabled;
+        log(Level.WARNING,
+                "[ELPortal] Debug prevent-enter is now %s",
+                enabled ? "ENABLED" : "DISABLED");
+    }
+
+    public static boolean isDebugPreventEnterEnabled() {
+        return DEBUG_PREVENT_ENTER;
+    }
+
+    public static void markPlayerDeathReentryLock(@Nonnull UUID playerUuid,
+                                                   @Nonnull String instanceWorldName) {
+        if (instanceWorldName.isBlank()) {
+            return;
+        }
+
+        PLAYER_DEATH_REENTRY_LOCKS.compute(playerUuid, (ignored, existing) -> {
+            Set<String> next = existing == null ? new HashSet<>() : new HashSet<>(existing);
+            next.add(instanceWorldName);
+            return next;
+        });
+
+        log(Level.INFO,
+                "[ELPortal] Death re-entry lock set player=%s instance=%s",
+                playerUuid,
+                instanceWorldName);
+
+        // Persist the updated death-lock list immediately so crashes don't lose it.
+        for (Map.Entry<String, String> e : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
+            if (instanceWorldName.equals(e.getValue()) && e.getKey().startsWith("el_gate:")) {
+                persistGateInstanceImmediate(e.getKey(), instanceWorldName, null);
+                break;
+            }
+        }
+    }
+
+    public static void clearDeathReentryLocksForInstance(@Nonnull String instanceWorldName) {
+        if (instanceWorldName.isBlank()) {
+            return;
+        }
+
+        for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_LOCKS.entrySet()) {
+            Set<String> locks = entry.getValue();
+            if (locks == null || locks.isEmpty()) {
+                continue;
+            }
+
+            Set<String> next = new HashSet<>(locks);
+            if (!next.remove(instanceWorldName)) {
+                continue;
+            }
+
+            if (next.isEmpty()) {
+                PLAYER_DEATH_REENTRY_LOCKS.remove(entry.getKey(), locks);
+            } else {
+                PLAYER_DEATH_REENTRY_LOCKS.put(entry.getKey(), next);
+            }
+        }
     }
 
     public static void shutdown() {
@@ -220,26 +288,151 @@ public final class PortalLeveledInstanceRouter {
                     continue;
                 }
 
+                String legacyKey = canonicalKey.startsWith("el_gate:")
+                        ? canonicalKey.substring("el_gate:".length())
+                        : canonicalKey;
+
+                GateInstancePersistenceManager.StoredGateInstance existingSaved =
+                        GateInstancePersistenceManager.getSavedInstance(canonicalKey);
+                if (existingSaved == null && !legacyKey.equals(canonicalKey)) {
+                    existingSaved = GateInstancePersistenceManager.getSavedInstance(legacyKey);
+                }
+
                 LevelRange range = ACTIVE_LEVEL_RANGES.get(instanceWorldName);
                 Integer bossLvl = ACTIVE_BOSS_LEVELS.get(instanceWorldName);
-                String rankLtr = ACTIVE_RANK_LETTERS.getOrDefault(instanceWorldName, "E");
-                // Look up blockId under both canonical and legacy key.
-                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(canonicalKey);
-                if (exp == null) {
-                    exp = GATE_INSTANCE_EXPECTATIONS.get(gateKey);
-                }
-                String blkId = exp != null && !exp.blockId().isBlank() ? exp.blockId() : "";
+                String rankLtr = ACTIVE_RANK_LETTERS.get(instanceWorldName);
 
-                int min = range != null ? range.min() : 1;
-                int max = range != null ? range.max() : 500;
-                int boss = bossLvl != null ? bossLvl : max;
+                // Look up blockId under canonical, legacy, active-gate, then persisted fallback.
+                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(canonicalKey);
+                if (exp == null && !legacyKey.equals(canonicalKey)) {
+                    exp = GATE_INSTANCE_EXPECTATIONS.get(legacyKey);
+                }
+
+                String blkId = exp != null && !exp.blockId().isBlank() ? exp.blockId() : "";
+                if (blkId.isBlank()) {
+                    String activeBlockId = NaturalPortalGateManager.resolveGateBlockId(canonicalKey);
+                    if ((activeBlockId == null || activeBlockId.isBlank()) && !legacyKey.equals(canonicalKey)) {
+                        activeBlockId = NaturalPortalGateManager.resolveGateBlockId(legacyKey);
+                    }
+                    if (activeBlockId != null && !activeBlockId.isBlank()) {
+                        blkId = activeBlockId;
+                    }
+                }
+                if (blkId.isBlank() && existingSaved != null && existingSaved.blockId != null && !existingSaved.blockId.isBlank()) {
+                    blkId = existingSaved.blockId;
+                }
+                if (blkId.isBlank()) {
+                    log(Level.WARNING,
+                            "[ELPortal] Skipping persistence for gateId=%s instance=%s due to unresolved blockId",
+                            canonicalKey,
+                            instanceWorldName);
+                    continue;
+                }
+
+                int min = range != null
+                        ? range.min()
+                        : (existingSaved != null ? existingSaved.minLevel : 1);
+                int max = range != null
+                        ? range.max()
+                        : (existingSaved != null ? existingSaved.maxLevel : 500);
+                int boss = bossLvl != null
+                        ? bossLvl
+                        : (existingSaved != null ? existingSaved.bossLevel : max);
+                if (rankLtr == null || rankLtr.isBlank()) {
+                    rankLtr = existingSaved != null && existingSaved.rankLetter != null && !existingSaved.rankLetter.isBlank()
+                            ? existingSaved.rankLetter
+                            : "E";
+                }
+
+                List<String> deathLockedPlayerUuids = getDeathLockedPlayerUuidsForInstance(instanceWorldName);
+                if (deathLockedPlayerUuids.isEmpty() && existingSaved != null && existingSaved.deathLockedPlayerUuids != null) {
+                    deathLockedPlayerUuids = existingSaved.deathLockedPlayerUuids;
+                }
 
                 instances.add(new GateInstancePersistenceManager.StoredGateInstance(
-                        canonicalKey, instanceWorldName, min, max, boss, rankLtr, blkId));
+                        canonicalKey,
+                        instanceWorldName,
+                        min,
+                        max,
+                        boss,
+                        rankLtr,
+                        blkId,
+                        deathLockedPlayerUuids));
             }
             GateInstancePersistenceManager.saveGateInstances(instances);
         } catch (Exception ex) {
             log(Level.WARNING, "[ELPortal] Failed to save gate instances: %s", ex.getMessage());
+        }
+    }
+
+    /**
+     * Immediately persists a single gate-to-instance pairing to disk (write-through).
+     * Uses the same blockId / level fallback chain as the full saveGateInstances() sweep.
+     * Call this whenever a gate pairing is created or updated to ensure crash-safe persistence.
+     */
+    private static void persistGateInstanceImmediate(@Nonnull String gateKey,
+                                                     @Nonnull String instanceWorldName,
+                                                     @Nullable String blockIdHint) {
+        try {
+            String canonicalKey = gateKey.startsWith("el_gate:") ? gateKey : ("el_gate:" + gateKey);
+            String legacyKey = canonicalKey.substring("el_gate:".length());
+
+            GateInstancePersistenceManager.StoredGateInstance existingSaved =
+                    GateInstancePersistenceManager.getSavedInstance(canonicalKey);
+            if (existingSaved == null) {
+                existingSaved = GateInstancePersistenceManager.getSavedInstance(legacyKey);
+            }
+
+            LevelRange range   = ACTIVE_LEVEL_RANGES.get(instanceWorldName);
+            Integer bossLvl    = ACTIVE_BOSS_LEVELS.get(instanceWorldName);
+            String rankLtr     = ACTIVE_RANK_LETTERS.get(instanceWorldName);
+
+            // blockId: hint → expectation map → active-gate tracking → persisted fallback
+            String blkId = blockIdHint != null && !blockIdHint.isBlank() ? blockIdHint : "";
+            if (blkId.isBlank()) {
+                GateInstanceExpectation exp = GATE_INSTANCE_EXPECTATIONS.get(canonicalKey);
+                if (exp == null) exp = GATE_INSTANCE_EXPECTATIONS.get(legacyKey);
+                if (exp != null && !exp.blockId().isBlank()) blkId = exp.blockId();
+            }
+            if (blkId.isBlank()) {
+                String activeBlockId = NaturalPortalGateManager.resolveGateBlockId(canonicalKey);
+                if (activeBlockId == null || activeBlockId.isBlank()) {
+                    activeBlockId = NaturalPortalGateManager.resolveGateBlockId(legacyKey);
+                }
+                if (activeBlockId != null && !activeBlockId.isBlank()) {
+                    blkId = activeBlockId;
+                }
+            }
+            if (blkId.isBlank() && existingSaved != null && existingSaved.blockId != null && !existingSaved.blockId.isBlank()) {
+                blkId = existingSaved.blockId;
+            }
+            if (blkId.isBlank()) {
+                log(Level.WARNING,
+                        "[ELPortal] Skipping immediate persistence for gateId=%s instance=%s due to unresolved blockId",
+                        canonicalKey, instanceWorldName);
+                return;
+            }
+
+            int min  = range   != null ? range.min() : (existingSaved != null ? existingSaved.minLevel  : 1);
+            int max  = range   != null ? range.max() : (existingSaved != null ? existingSaved.maxLevel  : 500);
+            int boss = bossLvl != null ? bossLvl     : (existingSaved != null ? existingSaved.bossLevel : max);
+            if (rankLtr == null || rankLtr.isBlank()) {
+                rankLtr = existingSaved != null && existingSaved.rankLetter != null && !existingSaved.rankLetter.isBlank()
+                        ? existingSaved.rankLetter : "E";
+            }
+
+            List<String> deathLockedUuids = getDeathLockedPlayerUuidsForInstance(instanceWorldName);
+            if (deathLockedUuids.isEmpty() && existingSaved != null && existingSaved.deathLockedPlayerUuids != null) {
+                deathLockedUuids = existingSaved.deathLockedPlayerUuids;
+            }
+
+            GateInstancePersistenceManager.StoredGateInstance inst =
+                    new GateInstancePersistenceManager.StoredGateInstance(
+                            canonicalKey, instanceWorldName, min, max, boss, rankLtr, blkId, deathLockedUuids);
+            GateInstancePersistenceManager.upsertGateInstance(inst);
+        } catch (Exception ex) {
+            log(Level.WARNING, "[ELPortal] Failed immediate gate instance persistence gateId=%s: %s",
+                    gateKey, ex.getMessage());
         }
     }
 
@@ -292,6 +485,20 @@ public final class PortalLeveledInstanceRouter {
                     ACTIVE_LEVEL_RANGES.put(instanceWorldName, range);
                     ACTIVE_BOSS_LEVELS.put(instanceWorldName, stored.bossLevel);
                     ACTIVE_RANK_LETTERS.put(instanceWorldName, stored.rankLetter);
+
+                    if (stored.deathLockedPlayerUuids != null && !stored.deathLockedPlayerUuids.isEmpty()) {
+                        for (String playerUuidString : stored.deathLockedPlayerUuids) {
+                            try {
+                                UUID playerUuid = UUID.fromString(playerUuidString);
+                                markPlayerDeathReentryLock(playerUuid, instanceWorldName);
+                            } catch (Exception ignored) {
+                                log(Level.FINE,
+                                        "[ELPortal] Skipped invalid death lock UUID '%s' for instance=%s",
+                                        playerUuidString,
+                                        instanceWorldName);
+                            }
+                        }
+                    }
 
                     // Re-register the level override immediately so mobs are scaled
                     // correctly on first entry — before cacheResolvedInstanceWorld runs.
@@ -526,6 +733,13 @@ public final class PortalLeveledInstanceRouter {
         }
 
         if (instanceName == null || instanceName.isBlank()) {
+            GateInstancePersistenceManager.removeGateInstance(gateIdentity);
+            if (canonicalGateIdentity != null && !canonicalGateIdentity.equals(gateIdentity)) {
+                GateInstancePersistenceManager.removeGateInstance(canonicalGateIdentity);
+            }
+            if (legacyGateIdentity != null && !legacyGateIdentity.equals(gateIdentity)) {
+                GateInstancePersistenceManager.removeGateInstance(legacyGateIdentity);
+            }
             return;
         }
 
@@ -672,7 +886,7 @@ public final class PortalLeveledInstanceRouter {
             // Template-level pending data is a legacy fallback for flows that do not
             // carry a stable gate identity. Keep ranked profiles scoped to gate-id
             // entries so they cannot bleed into non-gate instance routing.
-            if ((gateIdentity == null || gateIdentity.isBlank()) || "E".equals(rankLetter)) {
+            if (gateIdentity == null || gateIdentity.isBlank()) {
                 PENDING_LEVEL_RANGES.put(routingName, profile);
             }
 
@@ -726,6 +940,19 @@ public final class PortalLeveledInstanceRouter {
                                                int y,
                                                int z,
                                                @Nullable String stableGateId) {
+        if (isDebugPreventEnterEnabled()) {
+            playerRef.sendMessage(Message.raw("[Gate Debug] Entry blocked (prevententer=true)").color("#ff6666"));
+            log(Level.WARNING,
+                    "[ELPortal] Debug prevented gate entry player=%s world=%s block=%s at %d %d %d",
+                    playerRef.getUsername(),
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+            return false;
+        }
+
         String routingName = resolveRoutingName(blockId);
         if (routingName == null) {
             log(Level.WARNING,
@@ -836,16 +1063,37 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        if (routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
-            clearPendingGateEntry(playerRef);
-        }
-
         // Some portals add players directly into generated instance worlds like
         // "instance-EL_MJ_Instance_D03-<uuid>", bypassing the routing aliases.
         String directWorldSuffix = resolveSuffixFromWorldName(routingName);
         if (directWorldSuffix != null && !isRoutingTemplateWorldName(routingName)) {
             String directWorldTemplate = resolveTemplateNameFromWorldName(routingName);
             boolean originalTemplate = isOriginalTemplateName(directWorldTemplate);
+            boolean gatePrefixedWorld = routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_");
+
+            if (isDebugPreventEnterEnabled()) {
+                log(Level.WARNING,
+                        "[ELPortal] Debug prevented direct-entry world access player=%s world=%s template=%s",
+                        playerRef.getUsername(),
+                        routingName,
+                        directWorldTemplate == null ? "unknown" : directWorldTemplate);
+                playerRef.sendMessage(Message.raw("[Gate Debug] Entry blocked (prevententer=true)").color("#ff6666"));
+                queueBlockedDirectEntryReturn(playerRef, routingName);
+                return;
+            }
+
+            PendingGateEntry pending = resolvePendingGateEntry(playerRef, directWorldTemplate);
+            if (gatePrefixedWorld
+                    && pending == null
+                    && !hasRecentManagedEntryContext(playerRef)) {
+                log(Level.SEVERE,
+                        "[ELPortal] Blocking unmanaged direct entry into gate world player=%s world=%s template=%s",
+                        playerRef.getUsername(),
+                        routingName,
+                        directWorldTemplate == null ? "unknown" : directWorldTemplate);
+                queueBlockedDirectEntryReturn(playerRef, routingName);
+                return;
+            }
 
             Universe universe = Universe.get();
             if (universe != null) {
@@ -854,10 +1102,6 @@ public final class PortalLeveledInstanceRouter {
 
                 // Ignore vanilla non-gate instance templates unless we have explicit gate-entry
                 // context. This avoids false anti-bypass handling for normal MJ/Endgame portals.
-                PendingGateEntry pending = null;
-                if (!routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
-                    pending = resolvePendingGateEntry(playerRef, directWorldTemplate);
-                }
                 if (originalTemplate && pending == null) {
                     log(Level.INFO,
                             "[ELPortal] Ignoring non-gate direct instance world player=%s world=%s template=%s",
@@ -869,7 +1113,7 @@ public final class PortalLeveledInstanceRouter {
 
                 // Guard against rerouting loops: if we are already in a canonical gate world,
                 // never invoke routePlayerToGateInstance again from direct-entry handling.
-                if (!routingName.toLowerCase(Locale.ROOT).startsWith("el_gate_")) {
+                if (!gatePrefixedWorld) {
                     if (pending == null) {
                         pending = resolveFallbackGateEntryForDirectWorld(directWorldTemplate);
                     }
@@ -899,13 +1143,7 @@ public final class PortalLeveledInstanceRouter {
                             playerRef.getUsername(),
                             routingName,
                             directWorldTemplate == null ? "unknown" : directWorldTemplate);
-                    UUID blockPlayerUuid = playerRef.getUuid();
-                    if (blockPlayerUuid != null) {
-                        PLAYER_PENDING_BLOCK_RETURNS.put(blockPlayerUuid, routingName);
-                        // Apply a short grace period so the proximity scanner cannot race
-                        // returnPlayerToEntryPortal before onPlayerReady fires.
-                        PortalProximityManager.markPlayerEnterInstance(blockPlayerUuid);
-                    }
+                    queueBlockedDirectEntryReturn(playerRef, routingName);
                     return;
                 }
                 // Normal el_gate_-prefixed direct-entry: remember the return target now.
@@ -1390,6 +1628,7 @@ public final class PortalLeveledInstanceRouter {
                         blockId,
                         routingName,
                         "expected-world-loaded");
+                persistGateInstanceImmediate(gateKey, loadedWorld.getName(), blockId);
                 rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
                 String suffix = resolveSuffixFromWorldName(loadedWorld.getName());
                 if (suffix != null) {
@@ -1435,6 +1674,7 @@ public final class PortalLeveledInstanceRouter {
                                 blockId,
                                 routingName,
                                 "expected-world-reload");
+                            persistGateInstanceImmediate(gateKey, reloadedWorld.getName(), blockId);
                                 rememberEntryTarget(playerRef, returnWorld, effectiveReturnTransform);
                                 String suffix = resolveSuffixFromWorldName(reloadedWorld.getName());
                                 if (suffix != null) {
@@ -1544,6 +1784,9 @@ public final class PortalLeveledInstanceRouter {
                         }
 
                         LevelRange range = registerInstanceLevelOverride(spawned.getName(), gateKey, routingName);
+                        if (gateKey != null) {
+                            persistGateInstanceImmediate(gateKey, spawned.getName(), gateBlockId);
+                        }
                         String suffix = ROUTING_TO_SUFFIX.get(routingName);
                         queueTeleportToInstanceSpawn(playerRef,
                             spawned,
@@ -2377,25 +2620,48 @@ public final class PortalLeveledInstanceRouter {
             }
         }
 
-        // Fallback: deterministic hash so the range is at least stable for the world's lifetime.
-        int minLevel = DYNAMIC_MIN_LEVEL;
-        int maxLevel = Math.max(minLevel, DYNAMIC_MAX_LEVEL);
-        int rangeSize = Math.max(0, DYNAMIC_RANGE_SIZE);
-        int maxStart = Math.max(minLevel, maxLevel - rangeSize);
-        int span = Math.max(1, (maxStart - minLevel) + 1);
-
-        String normalizedWorld = worldName.toLowerCase(Locale.ROOT);
-        int start = minLevel + Math.floorMod(normalizedWorld.hashCode(), span);
-        int end = Math.min(maxLevel, start + rangeSize);
+        // Fallback: when pending data is missing, derive a safe E-tier profile from
+        // current dungeon gate config instead of world-name hashing.
+        int start = clampDynamicLevel(DYNAMIC_MIN_LEVEL + resolveFallbackRankFloorEMinOffset());
+        int end = clampDynamicLevel(start + resolveFallbackNormalMobLevelRange());
+        if (end < start) {
+            end = start;
+        }
+        int bossOffset = Math.max(0, resolveFallbackBossLevelBonus());
         log(Level.WARNING,
-            "[ELPortal] Resolve dynamic range source=world-hash world=%s gateId=%s template=%s range=%d-%d bossOffset=%d rank=E",
+            "[ELPortal] Resolve dynamic range source=config-fallback world=%s gateId=%s template=%s range=%d-%d bossOffset=%d rank=E",
             worldName,
             gateIdentity == null || gateIdentity.isBlank() ? "<none>" : gateIdentity,
             templateName == null || templateName.isBlank() ? "<none>" : templateName,
             start,
             end,
-            5);
-        return new PendingLevelProfile(start, end, 5, "E");
+            bossOffset);
+        return new PendingLevelProfile(start, end, bossOffset, "E");
+    }
+
+    private static int resolveFallbackNormalMobLevelRange() {
+        if (filesManager == null) {
+            return DYNAMIC_RANGE_SIZE;
+        }
+        return Math.max(0, filesManager.getDungeonNormalMobLevelRange());
+    }
+
+    private static int resolveFallbackBossLevelBonus() {
+        if (filesManager == null) {
+            return 5;
+        }
+        return Math.max(0, filesManager.getDungeonBossLevelBonus());
+    }
+
+    private static int resolveFallbackRankFloorEMinOffset() {
+        if (filesManager == null) {
+            return 10;
+        }
+        return Math.max(0, filesManager.getDungeonRankFloorEMinOffset());
+    }
+
+    private static int clampDynamicLevel(int value) {
+        return Math.max(DYNAMIC_MIN_LEVEL, Math.min(DYNAMIC_MAX_LEVEL, value));
     }
 
     @Nullable
@@ -2978,10 +3244,8 @@ public final class PortalLeveledInstanceRouter {
                 y,
                 z);
 
-        String gateKey = anchor.gateId() != null && !anchor.gateId().isBlank()
-            ? anchor.gateId()
-            : buildGateKey(returnWorld, anchor.x(), anchor.y(), anchor.z());
-        if (anchor.gateId() == null || anchor.gateId().isBlank()) {
+        String gateKey = anchor.gateId();
+        if (gateKey == null || gateKey.isBlank()) {
             String worldNameGateId = deriveStableGateIdFromWorldName(returnWorld);
             if (worldNameGateId != null && !worldNameGateId.isBlank()) {
                 gateKey = worldNameGateId;
@@ -2992,8 +3256,21 @@ public final class PortalLeveledInstanceRouter {
                         returnWorld.getName(),
                         blockId);
             }
+        }
+        if (gateKey == null || gateKey.isBlank()) {
+            log(Level.WARNING,
+                    "[ELPortal] Skipping direct-entry backfill: no tracked gate identity for player=%s instance=%s returnWorld=%s block=%s anchor=%d %d %d",
+                    playerRef.getUsername(),
+                    instanceWorldName,
+                    returnWorld.getName(),
+                    blockId,
+                    anchor.x(),
+                    anchor.y(),
+                    anchor.z());
+            return;
+        }
 
-            if (!gateKey.startsWith("el_gate:")) {
+        if (!gateKey.startsWith("el_gate:")) {
             log(Level.WARNING,
                     "[ELPortal] Direct-entry backfill using legacy gate key=%s player=%s returnWorld=%s block=%s anchor=%d %d %d",
                     gateKey,
@@ -3003,7 +3280,6 @@ public final class PortalLeveledInstanceRouter {
                     anchor.x(),
                     anchor.y(),
                     anchor.z());
-            }
         }
 
         gateKey = canonicalizeGateIdentity(gateKey);
@@ -3026,6 +3302,7 @@ public final class PortalLeveledInstanceRouter {
                 blockId,
                 canonicalTemplate,
                 "direct-entry-backfill");
+        persistGateInstanceImmediate(gateKey, instanceWorldName, blockId);
         log(Level.INFO,
                 "[ELPortal] Backfilled gate pairing key=%s block=%s -> %s (template=%s player=%s)",
                 gateKey,
@@ -3878,6 +4155,31 @@ public final class PortalLeveledInstanceRouter {
     private static boolean teleportToInstanceSpawn(@Nonnull PlayerRef playerRef,
                                                    @Nonnull World targetWorld,
                                                    @Nullable Transform overrideReturn) {
+        if (isDebugPreventEnterEnabled()) {
+            playerRef.sendMessage(Message.raw("[Gate Debug] Entry blocked (prevententer=true)").color("#ff6666"));
+            log(Level.WARNING,
+                    "[ELPortal] Debug prevented teleport to instance player=%s targetWorld=%s",
+                    playerRef.getUsername(),
+                    targetWorld.getName());
+            return false;
+        }
+
+        DeathReentryDecision deathReentryDecision = evaluateDeathReentry(playerRef, targetWorld);
+        if (deathReentryDecision.blocked()) {
+            playerRef.sendMessage(Message.raw(ENDLESS_LEVELING_PREFIX + "You cannot re-enter this gate after dying.").color("#ff6666"));
+            log(Level.WARNING,
+                "[ELPortal] Death re-entry denied player=%s targetWorld=%s",
+                playerRef.getUsername(),
+                targetWorld.getName());
+            return false;
+        }
+
+        if (deathReentryDecision.allowedByConfig()) {
+            playerRef.sendMessage(Message.raw(
+                    ENDLESS_LEVELING_PREFIX + "Re-entry after death is enabled (allow_reentry_after_death: true).")
+                    .color("#6cff78"));
+        }
+
         PlayerRef livePlayerRef = resolveLivePlayerRef(playerRef);
         Ref<EntityStore> entityRef = livePlayerRef == null ? null : livePlayerRef.getReference();
         if (entityRef == null || !entityRef.isValid()) {
@@ -3986,6 +4288,62 @@ public final class PortalLeveledInstanceRouter {
         }
     }
 
+    private static void queueBlockedDirectEntryReturn(@Nonnull PlayerRef playerRef,
+                                                      @Nonnull String blockedWorldName) {
+        UUID blockPlayerUuid = playerRef.getUuid();
+        if (blockPlayerUuid == null) {
+            return;
+        }
+
+        PLAYER_PENDING_BLOCK_RETURNS.put(blockPlayerUuid, blockedWorldName);
+        // Apply a short grace period so the proximity scanner cannot race
+        // returnPlayerToEntryPortal before onPlayerReady fires.
+        PortalProximityManager.markPlayerEnterInstance(blockPlayerUuid);
+    }
+
+    private static boolean hasRecentManagedEntryContext(@Nonnull PlayerRef playerRef) {
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return false;
+        }
+
+        Long lastQueued = PLAYER_LAST_TELEPORT_REQUEST_MILLIS.get(playerUuid);
+        if (lastQueued == null) {
+            return false;
+        }
+
+        return (System.currentTimeMillis() - lastQueued) <= MANAGED_ENTRY_CONTEXT_TTL_MILLIS;
+    }
+
+    @Nonnull
+    private static DeathReentryDecision evaluateDeathReentry(@Nonnull PlayerRef playerRef,
+                                                             @Nonnull World targetWorld) {
+        if (filesManager == null) {
+            return DeathReentryDecision.allow();
+        }
+
+        UUID playerUuid = playerRef.getUuid();
+        if (playerUuid == null) {
+            return DeathReentryDecision.allow();
+        }
+
+        Set<String> locks = PLAYER_DEATH_REENTRY_LOCKS.get(playerUuid);
+        if (locks == null || locks.isEmpty()) {
+            return DeathReentryDecision.allow();
+        }
+
+        String targetWorldName = targetWorld.getName();
+        if (targetWorldName == null || !locks.contains(targetWorldName)) {
+            return DeathReentryDecision.allow();
+        }
+
+        if (filesManager.allowDungeonReentryAfterDeath()) {
+            return DeathReentryDecision.allowByConfig();
+        }
+
+        return DeathReentryDecision.block();
+    }
+
     private static boolean shouldSkipFixedSpawnTeleport(@Nonnull PlayerRef playerRef,
                                                         @Nonnull World targetWorld,
                                                         @Nonnull Transform spawnTransform) {
@@ -4034,6 +4392,43 @@ public final class PortalLeveledInstanceRouter {
         AddonLoggingManager.log(plugin, level, message, args);
     }
 
+    @Nonnull
+    private static List<String> getDeathLockedPlayerUuidsForInstance(@Nonnull String instanceWorldName) {
+        if (instanceWorldName.isBlank()) {
+            return List.of();
+        }
+
+        List<String> playerUuids = new ArrayList<>();
+        for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_LOCKS.entrySet()) {
+            Set<String> lockedInstances = entry.getValue();
+            if (lockedInstances == null || !lockedInstances.contains(instanceWorldName)) {
+                continue;
+            }
+            playerUuids.add(entry.getKey().toString());
+        }
+
+        Collections.sort(playerUuids);
+        return playerUuids;
+    }
+
+    private record DeathReentryDecision(boolean blocked,
+                                        boolean allowedByConfig) {
+        @Nonnull
+        private static DeathReentryDecision allow() {
+            return new DeathReentryDecision(false, false);
+        }
+
+        @Nonnull
+        private static DeathReentryDecision allowByConfig() {
+            return new DeathReentryDecision(false, true);
+        }
+
+        @Nonnull
+        private static DeathReentryDecision block() {
+            return new DeathReentryDecision(true, false);
+        }
+    }
+
     private record LevelRange(int min, int max) {
     }
 
@@ -4069,6 +4464,7 @@ public final class PortalLeveledInstanceRouter {
             Objects.requireNonNull(worldName, "worldName");
         }
     }
+
 
     private record PendingGateEntry(@Nonnull String gateIdentity,
                                     @Nonnull String blockId,

@@ -1,5 +1,7 @@
 package com.airijko.endlessleveling.commands.gate;
 
+import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
+import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -447,8 +449,53 @@ public class PortalBlockAdminCommand extends AbstractCommand {
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             return runInPlayerWorld(context, (ctx, player, world) -> {
                 List<PortalStructure> structures = sortStructuresForDisplay(scanPortalStructures(world));
+
+                UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+                List<ParsedGateIdentity> persistedUnloaded = new ArrayList<>();
+                int persistedTotalForWorld = 0;
+                int persistedLoadedForWorld = 0;
+
+                if (worldUuid != null) {
+                    Set<String> loadedGateKeys = new HashSet<>();
+                    for (PortalStructure structure : structures) {
+                        PortalBlockHit anchor = structure.anchor();
+                        String gateId = NaturalPortalGateManager.resolveGateIdAt(world, anchor.x(), anchor.y(), anchor.z());
+                        if (gateId == null || gateId.isBlank()) {
+                            gateId = "el_gate:" + worldUuid + ":" + anchor.x() + ":" + anchor.y() + ":" + anchor.z();
+                        }
+                        loadedGateKeys.add(canonicalizeGateKey(gateId));
+                    }
+
+                    for (GateInstancePersistenceManager.StoredGateInstance stored
+                            : GateInstancePersistenceManager.listSavedInstancesById()) {
+                        ParsedGateIdentity parsed = parseGateIdentity(stored.gateKey);
+                        if (parsed == null || !worldUuid.equals(parsed.worldUuid())) {
+                            continue;
+                        }
+
+                        persistedTotalForWorld++;
+                        String canonicalStoredGateKey = canonicalizeGateKey(stored.gateKey);
+                        if (loadedGateKeys.contains(canonicalStoredGateKey)) {
+                            persistedLoadedForWorld++;
+                        } else {
+                            persistedUnloaded.add(parsed);
+                        }
+                    }
+                }
+
                 if (structures.isEmpty()) {
                     ctx.sendMessage(Message.raw("No portal blocks found in loaded chunks.").color("#ffcc66"));
+                    if (persistedTotalForWorld > 0) {
+                        ctx.sendMessage(Message.raw("Persisted gates for this world: " + persistedTotalForWorld
+                                        + " (loaded=" + persistedLoadedForWorld
+                                        + ", unloaded=" + persistedUnloaded.size() + ")")
+                                .color("#ffbb44"));
+                        if (!persistedUnloaded.isEmpty()) {
+                            ctx.sendMessage(Message.raw("Unloaded persisted gate coords: "
+                                            + formatPersistedGateCoords(persistedUnloaded))
+                                    .color("#ffbb44"));
+                        }
+                    }
                     return;
                 }
 
@@ -479,6 +526,18 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                 if (structures.size() > shown) {
                     ctx.sendMessage(Message.raw("...and " + (structures.size() - shown) + " more (truncated)")
                             .color("#ffcc66"));
+                }
+
+                if (persistedTotalForWorld > 0) {
+                    ctx.sendMessage(Message.raw("Persisted gates for this world: " + persistedTotalForWorld
+                                    + " (loaded=" + persistedLoadedForWorld
+                                    + ", unloaded=" + persistedUnloaded.size() + ")")
+                            .color("#ffbb44"));
+                    if (!persistedUnloaded.isEmpty()) {
+                        ctx.sendMessage(Message.raw("Unloaded persisted gate coords: "
+                                        + formatPersistedGateCoords(persistedUnloaded))
+                                .color("#ffbb44"));
+                    }
                 }
             });
         }
@@ -598,9 +657,25 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     return;
                 }
 
-                context.sendMessage(Message.raw("Starting all-chunks portal cleanup (this may take a moment)...")
+                context.sendMessage(Message.raw("Running remove-all portal cleanup across all known chunks...")
                         .color("#ffcc66"));
 
+                // Remove any persisted gate-instance associations for this world first.
+                // This also tears down paired instances and kicks players from those instances.
+                int persistenceCleanupCount = 0;
+                for (GateInstancePersistenceManager.StoredGateInstance stored
+                    : GateInstancePersistenceManager.listSavedInstancesById()) {
+                    ParsedGateIdentity parsed = parseGateIdentity(stored.gateKey);
+                    if (parsed == null || !worldUuid.equals(parsed.worldUuid())) {
+                    continue;
+                    }
+
+                    String blockId = stored.blockId == null || stored.blockId.isBlank()
+                        ? "<unknown>"
+                        : stored.blockId;
+                    PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(stored.gateKey, blockId);
+                    persistenceCleanupCount++;
+                }
                 // Kick players and tear down instances for every tracked gate in this world
                 // before the block sweep clears the portal block markers.
                 List<PortalStructure> structures = scanPortalStructures(world);
@@ -608,14 +683,13 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     PortalBlockHit anchor = structure.anchor();
                     NaturalPortalGateManager.forceRemoveGateAt(world, anchor.x(), anchor.y(), anchor.z(), anchor.blockId());
                 }
-                if (!structures.isEmpty()) {
-                    context.sendMessage(Message.raw("Removed " + structures.size() + " tracked gate instance(s) and kicked players.")
-                            .color("#ffbb44"));
-                }
+                final int persistedCleanupCount = persistenceCleanupCount;
+                int trackedCleanupCount = structures.size();
 
                 CompletableFuture.runAsync(() -> {
                     AtomicInteger removed = new AtomicInteger();
                     AtomicInteger sweptChunks = new AtomicInteger();
+                    List<Long> queuedChunkIndexes = new ArrayList<>();
 
                     for (long chunkIndex : chunkIndexes) {
                         int removedInChunk = world.getNonTickingChunkAsync(chunkIndex)
@@ -630,6 +704,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
 
                         if (removedInChunk == Integer.MIN_VALUE) {
                             addPendingChunk(worldUuid, chunkIndex);
+                            queuedChunkIndexes.add(chunkIndex);
                             continue;
                         }
 
@@ -639,16 +714,32 @@ public class PortalBlockAdminCommand extends AbstractCommand {
 
                     world.execute(() -> {
                         int pendingTotal = pendingChunkCount(worldUuid);
+                        int queuedNow = queuedChunkIndexes.size();
+                        context.sendMessage(Message.raw("Remove-all cleanup complete:")
+                            .color("#6cff78"));
+                        context.sendMessage(Message.raw("- Persisted gate-instance associations removed: "
+                                + persistedCleanupCount)
+                            .color("#ffbb44"));
+                        context.sendMessage(Message.raw("- Tracked gate instances removed: "
+                                + trackedCleanupCount + " (players kicked)")
+                            .color("#ffbb44"));
+                        context.sendMessage(Message.raw("- Portal blocks removed: " + removed.get()
+                                + " across " + sweptChunks.get() + " chunk(s)")
+                            .color("#6cff78"));
+
                         if (pendingTotal > 0) {
-                            context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
-                                            + sweptChunks.get() + " chunk(s). Pending retries for " + pendingTotal
-                                            + " chunk(s) until they are available.")
-                                    .color("#ffcc66"));
-                        } else {
-                            context.sendMessage(Message.raw("Removed " + removed.get() + " portal block(s) across "
-                                            + sweptChunks.get() + " chunk(s).")
-                                    .color("#6cff78"));
+                            context.sendMessage(Message.raw("- Pending retries: " + pendingTotal
+                                    + " chunk(s) still unavailable")
+                                .color("#ffcc66"));
                         }
+
+                        if (queuedNow > 0) {
+                            context.sendMessage(Message.raw("- Deferred portal deletion queued for " + queuedNow
+                                    + " chunk(s). Portal block coords: "
+                                            + formatQueuedChunkCoords(queuedChunkIndexes))
+                                    .color("#ffbb44"));
+                        }
+
                         future.complete(null);
                     });
                 });
@@ -686,5 +777,95 @@ public class PortalBlockAdminCommand extends AbstractCommand {
             }
             return best;
         }
+    }
+
+    @Nullable
+    private static ParsedGateIdentity parseGateIdentity(@Nullable String gateKey) {
+        if (gateKey == null || gateKey.isBlank()) {
+            return null;
+        }
+
+        String normalized = gateKey.startsWith("el_gate:")
+                ? gateKey.substring("el_gate:".length())
+                : gateKey;
+        String[] parts = normalized.split(":", 4);
+        if (parts.length < 4) {
+            return null;
+        }
+
+        try {
+            UUID worldUuid = UUID.fromString(parts[0]);
+            int x = Integer.parseInt(parts[1]);
+            int y = Integer.parseInt(parts[2]);
+            int z = Integer.parseInt(parts[3]);
+            return new ParsedGateIdentity(worldUuid, x, y, z);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    @Nonnull
+    private static String formatQueuedChunkCoords(@Nonnull List<Long> chunkIndexes) {
+        if (chunkIndexes.isEmpty()) {
+            return "<none>";
+        }
+
+        List<Long> sorted = new ArrayList<>(chunkIndexes);
+        sorted.sort(Long::compareTo);
+
+        int limit = Math.min(10, sorted.size());
+        List<String> parts = new ArrayList<>(limit + 1);
+        for (int i = 0; i < limit; i++) {
+            long chunkIndex = sorted.get(i);
+            int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
+            int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
+            int blockX = chunkX << 5;
+            int blockZ = chunkZ << 5;
+            parts.add("[" + blockX + "," + blockZ + "]");
+        }
+
+        if (sorted.size() > limit) {
+            parts.add("... +" + (sorted.size() - limit) + " more");
+        }
+        return String.join(" ", parts);
+    }
+
+    @Nonnull
+    private static String formatPersistedGateCoords(@Nonnull List<ParsedGateIdentity> gates) {
+        if (gates.isEmpty()) {
+            return "<none>";
+        }
+
+        List<ParsedGateIdentity> sorted = new ArrayList<>(gates);
+        sorted.sort((left, right) -> {
+            int xCompare = Integer.compare(left.x(), right.x());
+            if (xCompare != 0) {
+                return xCompare;
+            }
+            int yCompare = Integer.compare(left.y(), right.y());
+            if (yCompare != 0) {
+                return yCompare;
+            }
+            return Integer.compare(left.z(), right.z());
+        });
+
+        int limit = Math.min(10, sorted.size());
+        List<String> parts = new ArrayList<>(limit + 1);
+        for (int i = 0; i < limit; i++) {
+            ParsedGateIdentity gate = sorted.get(i);
+            parts.add("[" + gate.x() + "," + gate.y() + "," + gate.z() + "]");
+        }
+        if (sorted.size() > limit) {
+            parts.add("... +" + (sorted.size() - limit) + " more");
+        }
+        return String.join(" ", parts);
+    }
+
+    @Nonnull
+    private static String canonicalizeGateKey(@Nonnull String gateKey) {
+        return gateKey.startsWith("el_gate:") ? gateKey : "el_gate:" + gateKey;
+    }
+
+    private record ParsedGateIdentity(@Nonnull UUID worldUuid, int x, int y, int z) {
     }
 }

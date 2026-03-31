@@ -30,6 +30,7 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -202,6 +203,22 @@ public final class NaturalPortalGateManager {
                                                                                    @Nullable GateRankTier forcedRankTier,
                                                                                    boolean isTestSpawn) {
         refreshConfigSnapshot();
+        int minLevelRequired = resolveMinLevelRequired();
+        int playerLevel = resolvePlayerLevel(player.getUuid());
+        if (playerLevel < minLevelRequired) {
+            player.sendMessage(Message.raw(String.format(
+                    Locale.ROOT,
+                    "You must be level %d or higher to spawn a gate (your level: %d).",
+                    minLevelRequired,
+                    playerLevel)).color("#ff6666"));
+            log(Level.INFO,
+                    "[ELPortal] Manual spawn blocked: player=%s level=%d min_level_required=%d",
+                    player.getDisplayName(),
+                    playerLevel,
+                    minLevelRequired);
+            return CompletableFuture.completedFuture(false);
+        }
+
         World world = player.getWorld();
         if (world == null) {
             return CompletableFuture.completedFuture(false);
@@ -275,10 +292,11 @@ public final class NaturalPortalGateManager {
             }
 
             int maxConcurrentSpawns = resolveMaxConcurrentSpawns();
-            if (maxConcurrentSpawns >= 0 && ACTIVE_GATES.size() >= maxConcurrentSpawns) {
+            int trackedGateCount = resolveTrackedGateCountForSpawnCap();
+            if (maxConcurrentSpawns >= 0 && trackedGateCount >= maxConcurrentSpawns) {
                 log(Level.INFO,
                         "[ELPortal] Spawn skipped: active gates=%d reached max_concurrent_spawns=%d",
-                        ACTIVE_GATES.size(),
+                        trackedGateCount,
                         maxConcurrentSpawns);
                 return;
             }
@@ -316,6 +334,7 @@ public final class NaturalPortalGateManager {
     @Nonnull
     private static List<PlayerRef> resolveEligiblePlayers(@Nonnull Universe universe) {
         List<PlayerRef> eligiblePlayers = new ArrayList<>();
+        int minLevelRequired = resolveMinLevelRequired();
         for (PlayerRef player : universe.getPlayers()) {
             if (player == null) {
                 continue;
@@ -327,11 +346,41 @@ public final class NaturalPortalGateManager {
             }
 
             World world = universe.getWorld(worldUuid);
-            if (world != null && isPortalWorldAllowed(world)) {
+            if (world != null
+                    && isPortalWorldAllowed(world)
+                    && isPlayerLevelEligibleForGate(player, minLevelRequired)) {
                 eligiblePlayers.add(player);
             }
         }
         return eligiblePlayers;
+    }
+
+    private static boolean isPlayerLevelEligibleForGate(@Nonnull PlayerRef playerRef, int minLevelRequired) {
+        if (minLevelRequired <= 1) {
+            return true;
+        }
+
+        int playerLevel = resolvePlayerLevel(playerRef.getUuid());
+        return playerLevel >= minLevelRequired;
+    }
+
+    private static int resolveMinLevelRequired() {
+        if (filesManager == null) {
+            return 1;
+        }
+        return Math.max(1, filesManager.getDungeonMinLevelRequired());
+    }
+
+    private static int resolvePlayerLevel(@Nullable UUID playerUuid) {
+        if (playerUuid == null) {
+            return 0;
+        }
+
+        EndlessLevelingAPI api = EndlessLevelingAPI.get();
+        if (api == null) {
+            return 0;
+        }
+        return Math.max(0, api.getPlayerLevel(playerUuid));
     }
 
     private static boolean isPortalWorldAllowed(@Nonnull World world) {
@@ -686,6 +735,34 @@ public final class NaturalPortalGateManager {
                 return gate.gateId();
             }
         }
+        return null;
+    }
+
+    @Nullable
+    public static String resolveGateBlockId(@Nonnull String gateIdentity) {
+        if (gateIdentity.isBlank()) {
+            return null;
+        }
+
+        String canonicalGateIdentity = gateIdentity.startsWith("el_gate:")
+                ? gateIdentity
+                : "el_gate:" + gateIdentity;
+        String legacyGateIdentity = canonicalGateIdentity.startsWith("el_gate:")
+                ? canonicalGateIdentity.substring("el_gate:".length())
+                : canonicalGateIdentity;
+
+        for (ActiveGate gate : ACTIVE_GATES) {
+            String gateId = gate.gateId();
+            if (gateId.equals(canonicalGateIdentity) || gateId.equals(legacyGateIdentity)) {
+                return gate.blockId();
+            }
+
+            String canonicalGateId = gateId.startsWith("el_gate:") ? gateId : "el_gate:" + gateId;
+            if (canonicalGateId.equals(canonicalGateIdentity)) {
+                return gate.blockId();
+            }
+        }
+
         return null;
     }
 
@@ -1466,6 +1543,32 @@ public final class NaturalPortalGateManager {
             return -1;
         }
         return Math.max(1, value);
+    }
+
+    private static int resolveTrackedGateCountForSpawnCap() {
+        Set<String> gateKeys = new HashSet<>();
+
+        for (ActiveGate gate : ACTIVE_GATES) {
+            if (gate == null || gate.gateId() == null || gate.gateId().isBlank()) {
+                continue;
+            }
+            gateKeys.add(canonicalizeGateKey(gate.gateId()));
+        }
+
+        for (GateInstancePersistenceManager.StoredGateInstance stored
+                : GateInstancePersistenceManager.listSavedInstancesById()) {
+            if (stored == null || stored.gateKey == null || stored.gateKey.isBlank()) {
+                continue;
+            }
+            gateKeys.add(canonicalizeGateKey(stored.gateKey));
+        }
+
+        return gateKeys.size();
+    }
+
+    @Nonnull
+    private static String canonicalizeGateKey(@Nonnull String gateKey) {
+        return gateKey.startsWith("el_gate:") ? gateKey : "el_gate:" + gateKey;
     }
 
     @Nonnull

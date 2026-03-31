@@ -259,6 +259,8 @@ public final class PortalInstanceDiagnostics {
             return;
         }
 
+        PortalLeveledInstanceRouter.clearDeathReentryLocksForInstance(worldName);
+
         PENDING_INSTANCE_REMOVALS.remove(worldName);
 
         // Clean up the runtime level override registered at spawn time.
@@ -366,6 +368,7 @@ public final class PortalInstanceDiagnostics {
         );
         if (playerUuid != null) {
             PENDING_DEATHS.put(playerUuid, deathInfo);
+            PortalLeveledInstanceRouter.markPlayerDeathReentryLock(playerUuid, worldName);
         }
         
         log(Level.INFO,

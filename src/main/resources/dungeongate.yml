@@ -44,7 +44,7 @@ gate_duration_minutes: 45
 
 # Whether players who die inside a dungeon instance are allowed to re-enter it.
 # false = locked out for that run (recommended for challenge content).
-allow_reentry_after_death: false
+allow_reentry_after_death: true
 
 # Maximum number of players allowed inside one gate instance at a time.
 # Set to -1 for no limit.
