@@ -171,6 +171,8 @@ public final class PortalLeveledInstanceRouter {
     private static final Map<UUID, ReturnTarget> PLAYER_ENTRY_TARGETS = new ConcurrentHashMap<>();
     /** Player UUID -> instance world names they are locked out from after death. */
     private static final Map<UUID, Set<String>> PLAYER_DEATH_REENTRY_LOCKS = new ConcurrentHashMap<>();
+    /** Player UUID -> canonical gate identities they are permanently locked out from after death. */
+    private static final Map<UUID, Set<String>> PLAYER_DEATH_REENTRY_GATE_LOCKS = new ConcurrentHashMap<>();
     private static volatile boolean DEBUG_PREVENT_ENTER = false;
 
     private static JavaPlugin plugin;
@@ -215,6 +217,20 @@ public final class PortalLeveledInstanceRouter {
                 playerUuid,
                 instanceWorldName);
 
+        String gateIdentity = findGateIdentityForInstanceWorld(instanceWorldName);
+        if (gateIdentity != null && !gateIdentity.isBlank()) {
+            String canonicalGateIdentity = canonicalizeGateIdentity(gateIdentity);
+            PLAYER_DEATH_REENTRY_GATE_LOCKS.compute(playerUuid, (ignored, existing) -> {
+                Set<String> next = existing == null ? new HashSet<>() : new HashSet<>(existing);
+                next.add(canonicalGateIdentity);
+                return next;
+            });
+
+            // Persist immediately so a crash cannot drop this death lock.
+            persistGateInstanceImmediate(canonicalGateIdentity, instanceWorldName, null);
+            return;
+        }
+
         // Persist the updated death-lock list immediately so crashes don't lose it.
         for (Map.Entry<String, String> e : GATE_KEY_TO_INSTANCE_NAME.entrySet()) {
             if (instanceWorldName.equals(e.getValue()) && e.getKey().startsWith("el_gate:")) {
@@ -229,6 +245,8 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
+        // Keep canonical gate locks intact for permanent lockout semantics.
+        // This only clears legacy world-name locks.
         for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_LOCKS.entrySet()) {
             Set<String> locks = entry.getValue();
             if (locks == null || locks.isEmpty()) {
@@ -260,6 +278,8 @@ public final class PortalLeveledInstanceRouter {
         PLAYER_PENDING_DEATH_RETURNS.clear();
         PLAYER_RETURN_PORTAL_SUPPRESSION_UNTIL.clear();
         PLAYER_LAST_TELEPORT_REQUEST_MILLIS.clear();
+        PLAYER_DEATH_REENTRY_LOCKS.clear();
+        PLAYER_DEATH_REENTRY_GATE_LOCKS.clear();
         GATE_KEY_TO_INSTANCE_NAME.clear();
         GATE_INSTANCE_EXPECTATIONS.clear();
         GATE_SPAWN_IN_FLIGHT.clear();
@@ -344,7 +364,7 @@ public final class PortalLeveledInstanceRouter {
                             : "E";
                 }
 
-                List<String> deathLockedPlayerUuids = getDeathLockedPlayerUuidsForInstance(instanceWorldName);
+                List<String> deathLockedPlayerUuids = getDeathLockedPlayerUuidsForGate(canonicalKey, instanceWorldName);
                 if (deathLockedPlayerUuids.isEmpty() && existingSaved != null && existingSaved.deathLockedPlayerUuids != null) {
                     deathLockedPlayerUuids = existingSaved.deathLockedPlayerUuids;
                 }
@@ -421,7 +441,7 @@ public final class PortalLeveledInstanceRouter {
                         ? existingSaved.rankLetter : "E";
             }
 
-            List<String> deathLockedUuids = getDeathLockedPlayerUuidsForInstance(instanceWorldName);
+            List<String> deathLockedUuids = getDeathLockedPlayerUuidsForGate(canonicalKey, instanceWorldName);
             if (deathLockedUuids.isEmpty() && existingSaved != null && existingSaved.deathLockedPlayerUuids != null) {
                 deathLockedUuids = existingSaved.deathLockedPlayerUuids;
             }
@@ -2164,8 +2184,14 @@ public final class PortalLeveledInstanceRouter {
         return null;
     }
 
-    /** Blocks to push the player backward from the portal entrance after a death return teleport. */
-    private static final double DEATH_RETURN_OFFSET_BLOCKS = 5.0;
+    /** Minimum blocks to push players away from the gate entry when returning. */
+    private static final double RETURN_OFFSET_MIN_BLOCKS = 5.0;
+    /** Maximum blocks to probe away from gate entry when nearby tiles are blocked. */
+    private static final double RETURN_OFFSET_MAX_BLOCKS = 15.0;
+    /** Integer step size for probing offset return positions between min and max. */
+    private static final int RETURN_OFFSET_STEP_BLOCKS = 1;
+    /** Simple shared air-id assumption used throughout this addon for clearance checks. */
+    private static final int AIR_BLOCK_ID = 0;
 
         /**
          * Tries to return the player near their portal entry (offset backwards) after death.
@@ -2186,7 +2212,11 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        Transform offsetTransform = computeDeathReturnOffset(returnTransform);
+        Universe universe = Universe.get();
+        World targetReturnWorld = universe == null ? null : universe.getWorld(returnWorldName);
+        Transform offsetTransform = targetReturnWorld != null
+            ? computeReturnOffsetWithClearance(targetReturnWorld, returnTransform)
+            : computeFallbackReturnOffset(returnTransform, RETURN_OFFSET_MIN_BLOCKS);
         UUID playerUuid = playerRef.getUuid();
         if (playerUuid == null) {
             log(Level.WARNING,
@@ -2198,12 +2228,12 @@ public final class PortalLeveledInstanceRouter {
 
         PLAYER_PENDING_DEATH_RETURNS.put(playerUuid,
                 new PendingDeathReturn(returnWorldName,
-                        offsetTransform,
+                    returnTransform,
                         sourceWorld.getName(),
                         System.currentTimeMillis()));
 
         log(Level.INFO,
-                "[ELPortal] Death-return queued for PlayerReady player=%s world=%s base=%s offset=%s",
+                "[ELPortal] Death-return queued for PlayerReady player=%s world=%s base=%s offsetPlan=%s",
                 playerRef.getUsername(),
                 returnWorldName,
                 formatTransform(returnTransform),
@@ -2290,9 +2320,11 @@ public final class PortalLeveledInstanceRouter {
                 targetWorld.getName(),
                 System.currentTimeMillis() - pending.createdAtMillis());
 
+        Transform offsetTransform = computeReturnOffsetWithClearance(targetWorld, pending.returnTransform());
+
         // We are already on the world thread (dispatched via world.execute() in onPlayerReady),
         // so attempt the gate-offset teleport directly rather than round-tripping through SCHEDULED_EXECUTOR.
-        if (teleportToWorld(playerRef, targetWorld, pending.offsetTransform())) {
+        if (teleportToWorld(playerRef, targetWorld, offsetTransform)) {
             log(Level.INFO,
                     "[ELPortal] Death-return: gate-offset succeeded immediately on PlayerReady player=%s world=%s",
                     playerRef.getUsername(),
@@ -2308,7 +2340,7 @@ public final class PortalLeveledInstanceRouter {
                 DEATH_RETURN_MAX_RETRIES - 1);
         queueDeathReturnOffsetRetry(playerRef,
                 targetWorld,
-                pending.offsetTransform(),
+            offsetTransform,
                 sourceWorld,
                 2,
                 DEATH_RETURN_RETRY_DELAY_MILLIS);
@@ -2390,29 +2422,86 @@ public final class PortalLeveledInstanceRouter {
     }
 
     /**
-     * Computes a Transform offset behind the player's facing direction at the time they entered
-     * the portal, so they do not re-enter it on respawn.
+     * Computes an offset return transform with world clearance checks.
+     * Scans from 5 to 15 blocks backward from entry and picks the first safe 2-block-high spot.
      */
     @Nonnull
-    private static Transform computeDeathReturnOffset(@Nonnull Transform entryTransform) {
+    private static Transform computeReturnOffsetWithClearance(@Nonnull World world,
+                                                              @Nonnull Transform entryTransform) {
+        Vector3d pos = entryTransform.getPosition();
+        Vector3f rot = entryTransform.getRotation();
+
+        double backwardX;
+        double backwardZ;
+        float yaw = rot.getYaw();
+        if (!Float.isNaN(yaw)) {
+            backwardX = Math.sin(yaw);
+            backwardZ = Math.cos(yaw);
+        } else {
+            backwardX = 0.0;
+            backwardZ = 1.0;
+        }
+
+        int baseBlockY = (int) Math.floor(pos.y);
+        for (int distance = (int) RETURN_OFFSET_MIN_BLOCKS; distance <= (int) RETURN_OFFSET_MAX_BLOCKS; distance += RETURN_OFFSET_STEP_BLOCKS) {
+            double candidateX = pos.x + (backwardX * distance);
+            double candidateZ = pos.z + (backwardZ * distance);
+
+            int blockX = (int) Math.floor(candidateX);
+            int blockZ = (int) Math.floor(candidateZ);
+
+            // Probe a few Y variants to handle minor terrain/portal-frame height differences.
+            int[] yCandidates = new int[] {baseBlockY, baseBlockY + 1, baseBlockY - 1, baseBlockY + 2, baseBlockY - 2};
+            for (int candidateY : yCandidates) {
+                if (!isSafeReturnStandingSpot(world, blockX, candidateY, blockZ)) {
+                    continue;
+                }
+
+                return new Transform(
+                        new Vector3d(candidateX, candidateY, candidateZ),
+                        rot);
+            }
+        }
+
+        // No clear spot found in 5..15 range; keep old behavior and let retry/fallback chain handle it.
+        return computeFallbackReturnOffset(entryTransform, RETURN_OFFSET_MIN_BLOCKS);
+    }
+
+    @Nonnull
+    private static Transform computeFallbackReturnOffset(@Nonnull Transform entryTransform,
+                                                         double distance) {
         Vector3d pos = entryTransform.getPosition();
         Vector3f rot = entryTransform.getRotation();
 
         double offsetX = 0.0;
         double offsetZ = 0.0;
-
         float yaw = rot.getYaw();
         if (!Float.isNaN(yaw)) {
-            // The player was facing TOWARD the portal; move them in the opposite direction.
-            // Hytale forward: dx = -sin(yaw), dz = -cos(yaw) → backward: +sin(yaw), +cos(yaw)
-            offsetX = Math.sin(yaw) * DEATH_RETURN_OFFSET_BLOCKS;
-            offsetZ = Math.cos(yaw) * DEATH_RETURN_OFFSET_BLOCKS;
+            offsetX = Math.sin(yaw) * distance;
+            offsetZ = Math.cos(yaw) * distance;
         } else {
-            // No valid yaw — apply a fixed +Z offset as a safe fallback
-            offsetZ = DEATH_RETURN_OFFSET_BLOCKS;
+            offsetZ = distance;
         }
 
         return new Transform(new Vector3d(pos.x + offsetX, pos.y, pos.z + offsetZ), rot);
+    }
+
+    private static boolean isSafeReturnStandingSpot(@Nonnull World world,
+                                                    int blockX,
+                                                    int blockY,
+                                                    int blockZ) {
+        long chunkIndex = ChunkUtil.indexChunkFromBlock(blockX, blockZ);
+        WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
+        if (chunk == null) {
+            return false;
+        }
+
+        int footBlock = chunk.getBlock(blockX, blockY, blockZ);
+        int headBlock = chunk.getBlock(blockX, blockY + 1, blockZ);
+        int supportBlock = chunk.getBlock(blockX, blockY - 1, blockZ);
+        return footBlock == AIR_BLOCK_ID
+                && headBlock == AIR_BLOCK_ID
+                && supportBlock != AIR_BLOCK_ID;
     }
 
     @Nonnull
@@ -2487,7 +2576,12 @@ public final class PortalLeveledInstanceRouter {
                     target.worldName());
         }
 
-        return world != null && teleportToWorld(playerRef, world, target.returnTransform());
+        if (world == null) {
+            return false;
+        }
+
+        Transform adjustedReturn = computeReturnOffsetWithClearance(world, target.returnTransform());
+        return teleportToWorld(playerRef, world, adjustedReturn);
     }
 
     @Nullable
@@ -4327,13 +4421,31 @@ public final class PortalLeveledInstanceRouter {
             return DeathReentryDecision.allow();
         }
 
-        Set<String> locks = PLAYER_DEATH_REENTRY_LOCKS.get(playerUuid);
-        if (locks == null || locks.isEmpty()) {
+        String targetWorldName = targetWorld.getName();
+        if (targetWorldName == null) {
             return DeathReentryDecision.allow();
         }
 
-        String targetWorldName = targetWorld.getName();
-        if (targetWorldName == null || !locks.contains(targetWorldName)) {
+        String targetGateIdentity = findGateIdentityForInstanceWorld(targetWorldName);
+        String canonicalTargetGateIdentity = targetGateIdentity == null || targetGateIdentity.isBlank()
+                ? null
+                : canonicalizeGateIdentity(targetGateIdentity);
+
+        boolean gateLocked = false;
+        Set<String> gateLocks = PLAYER_DEATH_REENTRY_GATE_LOCKS.get(playerUuid);
+        if (gateLocks != null && !gateLocks.isEmpty()
+                && canonicalTargetGateIdentity != null
+                && gateLocks.contains(canonicalTargetGateIdentity)) {
+            gateLocked = true;
+        }
+
+        boolean worldLocked = false;
+        Set<String> worldLocks = PLAYER_DEATH_REENTRY_LOCKS.get(playerUuid);
+        if (worldLocks != null && !worldLocks.isEmpty() && worldLocks.contains(targetWorldName)) {
+            worldLocked = true;
+        }
+
+        if (!gateLocked && !worldLocked) {
             return DeathReentryDecision.allow();
         }
 
@@ -4393,19 +4505,38 @@ public final class PortalLeveledInstanceRouter {
     }
 
     @Nonnull
-    private static List<String> getDeathLockedPlayerUuidsForInstance(@Nonnull String instanceWorldName) {
-        if (instanceWorldName.isBlank()) {
+    private static List<String> getDeathLockedPlayerUuidsForGate(@Nonnull String gateIdentity,
+                                                                  @Nonnull String instanceWorldName) {
+        if (gateIdentity.isBlank() && instanceWorldName.isBlank()) {
             return List.of();
         }
 
-        List<String> playerUuids = new ArrayList<>();
-        for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_LOCKS.entrySet()) {
-            Set<String> lockedInstances = entry.getValue();
-            if (lockedInstances == null || !lockedInstances.contains(instanceWorldName)) {
-                continue;
+        String canonicalGateIdentity = gateIdentity.isBlank()
+                ? null
+                : canonicalizeGateIdentity(gateIdentity);
+
+        Set<String> playerUuidSet = new HashSet<>();
+        if (canonicalGateIdentity != null) {
+            for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_GATE_LOCKS.entrySet()) {
+                Set<String> gateLocks = entry.getValue();
+                if (gateLocks == null || gateLocks.isEmpty() || !gateLocks.contains(canonicalGateIdentity)) {
+                    continue;
+                }
+                playerUuidSet.add(entry.getKey().toString());
             }
-            playerUuids.add(entry.getKey().toString());
         }
+
+        if (!instanceWorldName.isBlank()) {
+            for (Map.Entry<UUID, Set<String>> entry : PLAYER_DEATH_REENTRY_LOCKS.entrySet()) {
+                Set<String> lockedInstances = entry.getValue();
+                if (lockedInstances == null || !lockedInstances.contains(instanceWorldName)) {
+                    continue;
+                }
+                playerUuidSet.add(entry.getKey().toString());
+            }
+        }
+
+        List<String> playerUuids = new ArrayList<>(playerUuidSet);
 
         Collections.sort(playerUuids);
         return playerUuids;
@@ -4478,12 +4609,12 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private record PendingDeathReturn(@Nonnull String returnWorldName,
-                                      @Nonnull Transform offsetTransform,
+                                      @Nonnull Transform returnTransform,
                                       @Nonnull String sourceWorldName,
                                       long createdAtMillis) {
         private PendingDeathReturn {
             Objects.requireNonNull(returnWorldName, "returnWorldName");
-            Objects.requireNonNull(offsetTransform, "offsetTransform");
+            Objects.requireNonNull(returnTransform, "returnTransform");
             Objects.requireNonNull(sourceWorldName, "sourceWorldName");
         }
     }
