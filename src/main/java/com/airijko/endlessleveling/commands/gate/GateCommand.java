@@ -11,11 +11,11 @@ import java.util.concurrent.CompletableFuture;
 public final class GateCommand extends AbstractCommand {
 
     public GateCommand() {
-        super("gate", "Root command for EL gate test/admin tools");
+        super("gate", "Root command for EL gate admin tools");
         this.addAliases("g", "elgate");
         this.addSubCommand(new PortalGiveCommand());
         this.addSubCommand(new PortalGateTestCommand());
-        this.addSubCommand(new PortalWaveTestCommand());
+        this.addSubCommand(new PortalWaveCommand());
         this.addSubCommand(new PortalBlockAdminCommand());
         this.addSubCommand(new PortalReturnPosCommand());
         this.addSubCommand(new ClearElDungeonsCommand());

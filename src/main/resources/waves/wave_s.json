@@ -1,0 +1,25 @@
+{
+  "_comment": "S-rank wave pool. Apex aberrant and broodmother assault. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "apex_horde",
+      "mobs": [
+        "Zombie_Aberrant",
+        "Zombie_Aberrant_Big",
+        "Skeleton_Burnt_Praetorian"
+      ]
+    },
+    {
+      "id": "final_siege",
+      "mobs": [
+        "Zombie_Aberrant_Big",
+        "Zombie_Aberrant",
+        "Scarak_Broodmother"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Goblin_Duke",
+    "Zombie_Aberrant_Big"
+  ]
+}

@@ -1,7 +1,7 @@
 package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.enums.GateRankTier;
-import com.airijko.endlessleveling.managers.TestMobWaveManager;
+import com.airijko.endlessleveling.managers.MobWaveManager;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.server.core.Message;
@@ -20,20 +20,21 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
-public final class PortalWaveTestCommand extends AbstractCommand {
+public final class PortalWaveCommand extends AbstractCommand {
 
-    public PortalWaveTestCommand() {
-        super("wave", "Run barebones mob wave tests around your player");
-        this.addAliases("waves", "wavetest", "mobwave");
+    public PortalWaveCommand() {
+        super("wave", "Run barebones mob waves around your player");
+        this.addAliases("waves");
         this.addSubCommand(new StartWaveSubCommand());
         this.addSubCommand(new StopWaveSubCommand());
+        this.addSubCommand(new SkipWaveSubCommand());
         this.addSubCommand(new StatusWaveSubCommand());
     }
 
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /gate wave <start <rank>|stop|status> (rank: S A B C D E)").color("#ffcc66"));
+        context.sendMessage(Message.raw("Usage: /gate wave <start <rank>|stop|skip|status> (rank: S A B C D E)").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 
@@ -103,7 +104,7 @@ public final class PortalWaveTestCommand extends AbstractCommand {
                 this.withRequiredArg("rank", "Wave rank tier (S/A/B/C/D/E)", Objects.requireNonNull(ArgTypes.STRING));
 
         private StartWaveSubCommand() {
-            super("start", "Start a barebones test wave sequence");
+            super("start", "Start a wave sequence");
         }
 
         @Nullable
@@ -116,14 +117,14 @@ public final class PortalWaveTestCommand extends AbstractCommand {
                     return;
                 }
 
-                TestMobWaveManager.StartResult result = TestMobWaveManager.startForPlayer(playerRef, tier);
+                MobWaveManager.StartResult result = MobWaveManager.startForPlayer(playerRef, tier);
                 if (!result.started) {
                     ctx.sendMessage(Message.raw(result.message).color("#ff6666"));
                     return;
                 }
                 String rankLetter = result.rankTier == null ? tier.letter() : result.rankTier.letter();
 
-                ctx.sendMessage(Message.raw("Started wave test.").color("#6cff78"));
+                ctx.sendMessage(Message.raw("Started wave sequence.").color("#6cff78"));
                 ctx.sendMessage(Message.raw(
                                 "Rank=" + rankLetter
                                         + " role=" + result.roleName
@@ -138,27 +139,28 @@ public final class PortalWaveTestCommand extends AbstractCommand {
 
     private static final class StopWaveSubCommand extends AbstractCommand {
         private StopWaveSubCommand() {
-            super("stop", "Stop an active test wave sequence");
+            super("stop", "Stop an active wave sequence");
+            this.addAliases("end");
         }
 
         @Nullable
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
-                TestMobWaveManager.StopResult result = TestMobWaveManager.stopForPlayer(playerRef);
+                MobWaveManager.StopResult result = MobWaveManager.stopForPlayer(playerRef);
                 if (!result.stopped) {
-                    ctx.sendMessage(Message.raw("No active wave test for you.").color("#ffcc66"));
+                    ctx.sendMessage(Message.raw("No active waves for you.").color("#ffcc66"));
                     return;
                 }
 
-                ctx.sendMessage(Message.raw("Stopped active wave test for role " + result.roleName + ".").color("#6cff78"));
+                ctx.sendMessage(Message.raw("Stopped active wave for role " + result.roleName + ".").color("#6cff78"));
             });
         }
     }
 
     private static final class StatusWaveSubCommand extends AbstractCommand {
         private StatusWaveSubCommand() {
-            super("status", "Show your current wave test status");
+            super("status", "Show your current wave status");
             this.addAliases("info");
         }
 
@@ -166,20 +168,51 @@ public final class PortalWaveTestCommand extends AbstractCommand {
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
-                TestMobWaveManager.StatusResult status = TestMobWaveManager.getStatus(playerRef);
+                MobWaveManager.StatusResult status = MobWaveManager.getStatus(playerRef);
                 if (status == null) {
-                    ctx.sendMessage(Message.raw("No active wave test for you.").color("#ffcc66"));
+                    ctx.sendMessage(Message.raw("No active waves for you.").color("#ffcc66"));
                     return;
                 }
 
                 ctx.sendMessage(Message.raw(
-                                "Active wave test: rank=" + status.rankTier.letter()
+                                "Active wave: rank=" + status.rankTier.letter()
                                         + " role=" + status.roleName
                                         + " waves=" + status.waves
                                         + " mobsPerWave=" + status.mobsPerWave
                                         + " interval=" + status.intervalSeconds + "s"
                                         + " baseLevelRange=" + status.levelMin + "-" + status.levelMax)
                         .color("#8fd3ff"));
+            });
+        }
+    }
+
+    private static final class SkipWaveSubCommand extends AbstractCommand {
+        private SkipWaveSubCommand() {
+            super("skip", "Kill current wave mobs and advance to next wave (debug)");
+            this.addAliases("next");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
+                MobWaveManager.SkipResult result = MobWaveManager.skipWaveForPlayer(playerRef);
+                if (!result.skipped) {
+                    ctx.sendMessage(Message.raw("No active waves for you.").color("#ffcc66"));
+                    return;
+                }
+
+                if (result.completed) {
+                    ctx.sendMessage(Message.raw(
+                            "Skipped final wave. Killed " + result.killed + " mob(s) and finished the sequence.")
+                            .color("#6cff78"));
+                    return;
+                }
+
+                ctx.sendMessage(Message.raw(
+                        "Skipped wave: killed " + result.killed + " mob(s). Advanced to wave "
+                                + result.nextWave + "/" + result.totalWaves + ".")
+                        .color("#6cff78"));
             });
         }
     }

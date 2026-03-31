@@ -1,0 +1,25 @@
+{
+  "_comment": "B-rank wave pool. Aberrant horde and elite praetorians. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "aberrant_horde",
+      "mobs": [
+        "Zombie_Aberrant_Small",
+        "Zombie_Aberrant_Big",
+        "Skeleton_Burnt_Soldier"
+      ]
+    },
+    {
+      "id": "elite_praetorian",
+      "mobs": [
+        "Skeleton_Burnt_Praetorian",
+        "Zombie_Aberrant_Small",
+        "Skeleton_Frost_Fighter"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Goblin_Duke",
+    "Zombie_Aberrant_Big"
+  ]
+}

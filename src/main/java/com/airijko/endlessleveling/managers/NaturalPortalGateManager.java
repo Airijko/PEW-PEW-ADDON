@@ -95,6 +95,11 @@ public final class NaturalPortalGateManager {
     private NaturalPortalGateManager() {
     }
 
+    @Nullable
+    public static AddonFilesManager getFilesManager() {
+        return filesManager;
+    }
+
         public static void initialize(@Nonnull JavaPlugin owner, @Nullable AddonFilesManager manager) {
         plugin = owner;
         filesManager = manager;

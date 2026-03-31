@@ -1,0 +1,25 @@
+{
+  "_comment": "E-rank wave pool. Basic undead. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "undead_front",
+      "mobs": [
+        "Zombie",
+        "Skeleton_Fighter",
+        "Skeleton_Archer"
+      ]
+    },
+    {
+      "id": "dungeon_guard",
+      "mobs": [
+        "Dungeon_Skeleton_Sand_Soldier",
+        "Dungeon_Skeleton_Sand_Archer",
+        "Skeleton_Soldier"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Goblin_Ogre",
+    "Scarak_Seeker"
+  ]
+}

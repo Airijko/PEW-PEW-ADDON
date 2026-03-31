@@ -1,0 +1,25 @@
+{
+  "_comment": "D-rank wave pool. Burnt skeletons and scarak fighters. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "burnt_squad",
+      "mobs": [
+        "Skeleton_Burnt_Soldier",
+        "Skeleton_Burnt_Archer",
+        "Skeleton_Burnt_Lancer"
+      ]
+    },
+    {
+      "id": "scarak_swarm",
+      "mobs": [
+        "Scarak_Fighter",
+        "Scarak_Seeker",
+        "Skeleton_Frost_Fighter"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Goblin_Ogre",
+    "Scarak_Broodmother"
+  ]
+}

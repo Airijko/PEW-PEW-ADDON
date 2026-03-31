@@ -35,6 +35,7 @@ import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
+import com.airijko.endlessleveling.managers.MobWaveManager;
 import com.hypixel.hytale.server.core.event.events.player.AddPlayerToWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.DrainPlayerFromWorldEvent;
 import com.hypixel.hytale.server.core.event.events.player.PlayerInteractEvent;
@@ -107,6 +108,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        MobWaveManager.shutdown();
         PortalLeveledInstanceRouter.saveGateInstances();
         NaturalPortalGateManager.shutdown();
         PortalProximityManager.shutdown();

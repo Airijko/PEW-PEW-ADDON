@@ -1,8 +1,12 @@
 package com.airijko.endlessleveling.managers;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.enums.GateRankTier;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
@@ -10,6 +14,7 @@ import com.hypixel.hytale.server.core.plugin.PluginManager;
 import org.yaml.snakeyaml.Yaml;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -68,6 +73,7 @@ public final class AddonFilesManager {
     private final File passivesFolder;
     private final File configFile;
     private final File dungeonGateFile;
+    private final File wavesFolder;
     private final File conquerorExampleAugmentFile;
     private final File berzerkerExamplePassiveFile;
     private final File humanExampleRaceFile;
@@ -92,6 +98,7 @@ public final class AddonFilesManager {
         this.passivesFolder = new File(pluginFolder, "passives");
         this.configFile = new File(pluginFolder, "config.yml");
         this.dungeonGateFile = new File(pluginFolder, "dungeongate.yml");
+        this.wavesFolder = new File(pluginFolder, "waves");
         this.conquerorExampleAugmentFile = new File(augmentsFolder, "conqueror_example.yml");
         this.berzerkerExamplePassiveFile = new File(passivesFolder, "berzerker_example.yml");
         this.humanExampleRaceFile = new File(racesFolder, "human_example.yml");
@@ -142,6 +149,8 @@ public final class AddonFilesManager {
                 AddonVersionRegistry.BUILTIN_PASSIVES_VERSION,
                 contentOptions.mergePassivesWithCore,
                 contentOptions.examplesEnabled);
+
+        seedWavesDirectory();
     }
 
     private void syncConfigIfNeeded() {
@@ -298,6 +307,17 @@ public final class AddonFilesManager {
         text.append("# Minimum enforced value: 0.\n");
         text.append("boss_level_bonus: ").append(options.bossLevelBonus).append("\n\n");
 
+        text.append("# Wave mobs per rank used by /gate wave start <rank>.\n");
+        text.append("# Default progression: E=5 and each tier doubles (D=10, C=20, B=40, A=80, S=160).\n");
+        text.append("# Minimum enforced value: 1.\n");
+        text.append("wave_mob_count_by_rank:\n");
+        text.append("  E: ").append(options.waveMobCountE).append("\n");
+        text.append("  D: ").append(options.waveMobCountD).append("\n");
+        text.append("  C: ").append(options.waveMobCountC).append("\n");
+        text.append("  B: ").append(options.waveMobCountB).append("\n");
+        text.append("  A: ").append(options.waveMobCountA).append("\n");
+        text.append("  S: ").append(options.waveMobCountS).append("\n\n");
+
         text.append("# Which players are considered when determining the highest-level player ceiling.\n");
         text.append("# online  = only players currently online (high-water mark: remembered until restart).\n");
         text.append("# overall = all players ever seen (online and offline data).\n");
@@ -452,6 +472,7 @@ public final class AddonFilesManager {
             Files.createDirectories(classesFolder.toPath());
             Files.createDirectories(augmentsFolder.toPath());
             Files.createDirectories(passivesFolder.toPath());
+            Files.createDirectories(wavesFolder.toPath());
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to create EndlessLevelingAddon folders", exception);
         }
@@ -1243,6 +1264,90 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.bossLevelBonus;
     }
 
+    /**
+     * Seeds default wave pool JSON files into the waves/ folder for any rank that
+     * does not yet have a config file. Existing files are never overwritten.
+     */
+    private void seedWavesDirectory() {
+        for (GateRankTier rank : GateRankTier.values()) {
+            String fileName = "wave_" + rank.letter().toLowerCase(Locale.ROOT) + ".json";
+            File target = new File(wavesFolder, fileName);
+            copyResourceToFile("waves/" + fileName, target, true);
+        }
+    }
+
+    /**
+     * Loads the wave pool configuration for the given gate rank from the waves/ directory.
+     * Returns {@code null} if the file is absent, empty, or cannot be parsed.
+     */
+    @Nullable
+    public WavePoolConfig loadWavePoolConfig(@Nonnull GateRankTier rankTier) {
+        String fileName = "wave_" + rankTier.letter().toLowerCase(Locale.ROOT) + ".json";
+        File waveFile = new File(wavesFolder, fileName);
+        if (!waveFile.isFile()) {
+            return null;
+        }
+
+        try {
+            String content = Files.readString(waveFile.toPath());
+            JsonObject root = GSON.fromJson(content, JsonObject.class);
+            if (root == null) {
+                return null;
+            }
+
+            List<WavePoolConfig.Pool> pools = new ArrayList<>();
+            if (root.has("pools") && root.get("pools").isJsonArray()) {
+                for (JsonElement poolElem : root.getAsJsonArray("pools")) {
+                    if (!poolElem.isJsonObject()) {
+                        continue;
+                    }
+                    JsonObject poolObj = poolElem.getAsJsonObject();
+                    String id = poolObj.has("id") ? poolObj.get("id").getAsString() : "pool";
+                    List<String> mobs = new ArrayList<>();
+                    if (poolObj.has("mobs") && poolObj.get("mobs").isJsonArray()) {
+                        for (JsonElement mobElem : poolObj.getAsJsonArray("mobs")) {
+                            String mobId = mobElem.getAsString().trim();
+                            if (!mobId.isBlank()) {
+                                mobs.add(mobId);
+                            }
+                        }
+                    }
+                    if (!mobs.isEmpty()) {
+                        pools.add(new WavePoolConfig.Pool(id, mobs));
+                    }
+                }
+            }
+
+            List<String> bossPool = new ArrayList<>();
+            if (root.has("boss_pool") && root.get("boss_pool").isJsonArray()) {
+                for (JsonElement bossElem : root.getAsJsonArray("boss_pool")) {
+                    String bossId = bossElem.getAsString().trim();
+                    if (!bossId.isBlank()) {
+                        bossPool.add(bossId);
+                    }
+                }
+            }
+
+            WavePoolConfig config = new WavePoolConfig(pools, bossPool);
+            return config.isEmpty() ? null : config;
+        } catch (Exception exception) {
+            log(Level.WARNING, "Failed to load wave config %s: %s", fileName, exception.getMessage());
+            return null;
+        }
+    }
+
+    public int getDungeonWaveMobCountForRank(@Nonnull GateRankTier rankTier) {
+        DungeonGateOptions options = dungeonGateOptions == null ? DungeonGateOptions.defaults() : dungeonGateOptions;
+        return switch (rankTier) {
+            case E -> options.waveMobCountE;
+            case D -> options.waveMobCountD;
+            case C -> options.waveMobCountC;
+            case B -> options.waveMobCountB;
+            case A -> options.waveMobCountA;
+            case S -> options.waveMobCountS;
+        };
+    }
+
     @Nonnull
     public String getDungeonLevelReferenceScope() {
         return dungeonGateOptions == null
@@ -1476,6 +1581,33 @@ public final class AddonFilesManager {
                 bossLevelBonus = Math.max(0, n.intValue());
             }
 
+            Map<String, Object> waveMobCountByRank = asMap(root.get("wave_mob_count_by_rank"));
+            int waveMobCountE = readPositiveInt(waveMobCountByRank.get("E"), defaults.waveMobCountE);
+            int waveMobCountD = readPositiveInt(waveMobCountByRank.get("D"), defaults.waveMobCountD);
+            int waveMobCountC = readPositiveInt(waveMobCountByRank.get("C"), defaults.waveMobCountC);
+            int waveMobCountB = readPositiveInt(waveMobCountByRank.get("B"), defaults.waveMobCountB);
+            int waveMobCountA = readPositiveInt(waveMobCountByRank.get("A"), defaults.waveMobCountA);
+            int waveMobCountS = readPositiveInt(waveMobCountByRank.get("S"), defaults.waveMobCountS);
+
+            if (root.containsKey("wave_mob_count_e")) {
+                waveMobCountE = readPositiveInt(root.get("wave_mob_count_e"), waveMobCountE);
+            }
+            if (root.containsKey("wave_mob_count_d")) {
+                waveMobCountD = readPositiveInt(root.get("wave_mob_count_d"), waveMobCountD);
+            }
+            if (root.containsKey("wave_mob_count_c")) {
+                waveMobCountC = readPositiveInt(root.get("wave_mob_count_c"), waveMobCountC);
+            }
+            if (root.containsKey("wave_mob_count_b")) {
+                waveMobCountB = readPositiveInt(root.get("wave_mob_count_b"), waveMobCountB);
+            }
+            if (root.containsKey("wave_mob_count_a")) {
+                waveMobCountA = readPositiveInt(root.get("wave_mob_count_a"), waveMobCountA);
+            }
+            if (root.containsKey("wave_mob_count_s")) {
+                waveMobCountS = readPositiveInt(root.get("wave_mob_count_s"), waveMobCountS);
+            }
+
             String levelPlayerScope = defaults.levelPlayerScope;
             if (root.get("level_player_scope") instanceof String scopeRaw && !scopeRaw.isBlank()) {
                 levelPlayerScope = normalizeLevelPlayerScope(scopeRaw, defaults.levelPlayerScope);
@@ -1533,7 +1665,8 @@ public final class AddonFilesManager {
                     sRankPityTopLevelDelta, sRankPitySWeightMultiplier,
                     lowLevelRankBiasEnabled, lowLevelRankBiasWindowLevels, lowLevelRankBiasStrengthPercent,
                     normalMobLevelRange, bossLevelBonus, scopePercent, levelPlayerScope, rankAnchorMode,
-                    rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE);
+                    rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE,
+                    waveMobCountE, waveMobCountD, waveMobCountC, waveMobCountB, waveMobCountA, waveMobCountS);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -1618,6 +1751,20 @@ public final class AddonFilesManager {
         return fallback;
     }
 
+    private static int readPositiveInt(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return Math.max(1, number.intValue());
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Math.max(1, Integer.parseInt(text.trim()));
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
     @Nonnull
     private static Level parseLogLevel(Object raw, @Nonnull Level fallback) {
         if (raw == null) {
@@ -1676,6 +1823,12 @@ public final class AddonFilesManager {
         private final int rankWeightC;
         private final int rankWeightD;
         private final int rankWeightE;
+        private final int waveMobCountE;
+        private final int waveMobCountD;
+        private final int waveMobCountC;
+        private final int waveMobCountB;
+        private final int waveMobCountA;
+        private final int waveMobCountS;
 
         private DungeonGateOptions(boolean enabled,
                 boolean allowReentryAfterDeath,
@@ -1713,7 +1866,13 @@ public final class AddonFilesManager {
                 int rankWeightB,
                 int rankWeightC,
                 int rankWeightD,
-                int rankWeightE) {
+                int rankWeightE,
+                int waveMobCountE,
+                int waveMobCountD,
+                int waveMobCountC,
+                int waveMobCountB,
+                int waveMobCountA,
+                int waveMobCountS) {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
             this.announceOnSpawn = announceOnSpawn;
@@ -1751,6 +1910,12 @@ public final class AddonFilesManager {
             this.rankWeightC = Math.max(0, rankWeightC);
             this.rankWeightD = Math.max(0, rankWeightD);
             this.rankWeightE = Math.max(0, rankWeightE);
+            this.waveMobCountE = Math.max(1, waveMobCountE);
+            this.waveMobCountD = Math.max(1, waveMobCountD);
+            this.waveMobCountC = Math.max(1, waveMobCountC);
+            this.waveMobCountB = Math.max(1, waveMobCountB);
+            this.waveMobCountA = Math.max(1, waveMobCountA);
+            this.waveMobCountS = Math.max(1, waveMobCountS);
         }
 
         private static DungeonGateOptions defaults() {
@@ -1761,7 +1926,8 @@ public final class AddonFilesManager {
                     true, 12, 3, 10, 8,
                     true, 80, 80,
                     20, 10, 25, "ONLINE", "HIGHEST_MOB",
-                    1, 6, 13, 30, 25, 25);
+                    1, 6, 13, 30, 25, 25,
+                    5, 10, 20, 40, 80, 160);
         }
     }
 

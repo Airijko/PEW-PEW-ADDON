@@ -1,0 +1,25 @@
+{
+  "_comment": "C-rank wave pool. Aberrant undead and praetorian vanguard. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "aberrant_pack",
+      "mobs": [
+        "Zombie_Aberrant_Small",
+        "Skeleton_Burnt_Soldier",
+        "Scarak_Fighter"
+      ]
+    },
+    {
+      "id": "praetorian_vanguard",
+      "mobs": [
+        "Skeleton_Burnt_Praetorian",
+        "Skeleton_Burnt_Lancer",
+        "Skeleton_Burnt_Archer"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Goblin_Duke",
+    "Scarak_Broodmother"
+  ]
+}

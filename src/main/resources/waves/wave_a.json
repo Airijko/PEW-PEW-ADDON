@@ -1,0 +1,25 @@
+{
+  "_comment": "A-rank wave pool. Full strength aberrant siege. Mob IDs are Hytale NPC role template names (RAG-verified). Reset on plugin update.",
+  "pools": [
+    {
+      "id": "aberrant_siege",
+      "mobs": [
+        "Zombie_Aberrant",
+        "Zombie_Aberrant_Big",
+        "Skeleton_Burnt_Praetorian"
+      ]
+    },
+    {
+      "id": "broodmother_assault",
+      "mobs": [
+        "Zombie_Aberrant_Big",
+        "Scarak_Broodmother",
+        "Skeleton_Burnt_Praetorian"
+      ]
+    }
+  ],
+  "boss_pool": [
+    "Zombie_Aberrant_Big",
+    "Goblin_Duke"
+  ]
+}

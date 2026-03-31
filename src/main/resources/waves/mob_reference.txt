@@ -1,0 +1,133 @@
+==============================================================================
+  HYTALE NPC MOB REFERENCE  —  Spawnable Variant Roles (RAG-verified)
+  Use these IDs in wave pool "mobs" and "boss_pool" arrays.
+  Role key = filename without .json  (e.g. Zombie.json → "Zombie")
+  ChangeRole=true mobs start passive and may not engage immediately — avoid.
+==============================================================================
+
+------------------------------------------------------------------------------
+  HOSTILE / AGGRESSIVE  (always fight player on sight)
+------------------------------------------------------------------------------
+
+--- UNDEAD ---
+  Zombie                      HP: 49    | melee | basic undead
+  Zombie_Sand                 HP: 49    | melee | desert variant
+  Zombie_Aberrant             HP: 400   | melee | mutant predator, very dangerous
+  Zombie_Aberrant_Big         HP: 341   | melee | large mutant, hard-hitting
+  Zombie_Aberrant_Small       HP: 126   | melee | small mutant, fast
+  Werewolf                    HP: 283   | melee | powerful predator-class undead
+
+  Skeleton_Fighter            HP: 36    | melee | basic skeleton
+  Skeleton_Soldier            HP: 61    | melee | armored skeleton
+  Skeleton_Archer             HP: 36    | ranged (bow)
+  Skeleton_Frost_Fighter      HP: 74    | melee | ice variant
+
+  Skeleton_Sand_Soldier       HP: 61    | melee | desert dungeon skeleton
+  Skeleton_Sand_Mage          HP: 38    | ranged (magic) | corruption orb
+  Skeleton_Sand_Archmage      HP: 38    | ranged (magic)
+
+  Skeleton_Burnt_Soldier      HP: 124   | melee+shield | fire immune
+  Skeleton_Burnt_Archer       HP: 74    | ranged (bow) | fire immune
+  Skeleton_Burnt_Lancer       HP: 103   | melee (axe) | fire immune
+  Skeleton_Burnt_Wizard       HP: 81    | ranged (staff/magic) | fire immune
+  Skeleton_Burnt_Praetorian   HP: 226   | melee+shield | fire immune, elite
+
+  [Dungeon-only variants — placed by dungeon NPC spawners:]
+  Dungeon_Skeleton_Sand_Soldier  HP: 61  | melee | dungeon patrol
+  Dungeon_Skeleton_Sand_Archer   HP: 61  | ranged | dungeon patrol
+  Dungeon_Skeleton_Sand_Assassin HP: 61  | melee | dungeon patrol
+  Dungeon_Skeleton_Sand_Mage     HP: 49  | ranged (magic) | dungeon patrol
+
+--- GOBLINS ---
+  Goblin_Scrapper             HP: 38    | melee | weakest goblin
+  Goblin_Ogre                 HP: 124   | melee | large goblin, strong
+  Goblin_Duke                 HP: 226   | melee | boss-tier, CAE combat
+  NOTE: Goblin_Scavenger uses ChangeRole=true — starts passive, avoid for waves.
+
+--- TRORKS ---
+  Trork_Brawler               HP: 61    | melee | basic trork
+  Trork_Warrior               HP: 61    | melee (battleaxe)
+  Trork_Mauler                HP: 61    | melee (mace)
+  Trork_Hunter                HP: 61    | melee (sword+axe)
+  Trork_Shaman                HP: 61    | ranged (magic staff)
+  Trork_Chieftain             HP: 124   | melee | elite, calls underlings
+
+--- OUTLANDERS ---
+  Outlander_Berserker         HP: 103   | melee (dual axes) | camps, calls backup
+  Outlander_Marauder          HP: 103   | melee+shield (dual swords) | boss-tier outlander
+
+--- SCARAK ---
+  Scarak_Fighter              HP: 81    | melee | spider-like creature
+  Scarak_Seeker               HP: 61    | melee | scout type
+  Scarak_Broodmother          HP: 145   | melee | elite, large
+
+--- WILD PREDATORS (creature/predator template — attack when provoked or on sight) ---
+  Wolf_Black                  HP: 103   | melee (bite) | pack animal
+  Wolf_Trork_Hunter           HP: 38    | melee (bite) | bonded to Trork
+  Wolf_Trork_Shaman           HP: 118   | melee (bite) | bonded to Trork Shaman
+  Crocodile                   HP: 145   | melee (bite) | ambush, won't chase
+  Spider                      HP: 61    | melee (bite) | web detection
+  Spider_Cave                 HP: 74    | melee (poison bite) | cave variant
+  Snake_Marsh                 HP: 25    | melee | small, marsh zones
+
+------------------------------------------------------------------------------
+  NEUTRAL — Feran  (defensive: attack only if attacked)
+------------------------------------------------------------------------------
+  Feran_Sharptooth            HP: 61    | melee | neutral until provoked
+  Feran_Burrower              HP: 61    | melee | neutral until provoked
+
+  NOTE: Kweebec roles (Kweebec_Razorleaf, Kweebec_Elder, etc.) are under
+  "Intelligent/Neutral" — they become hostile only if faction is hostile.
+  Avoid in wave pools.
+
+------------------------------------------------------------------------------
+  PASSIVE / NEUTRAL — Livestock & Wildlife  (flee or defend, not pure hostile)
+------------------------------------------------------------------------------
+
+--- LIVESTOCK (tameable, flee from threats, may kick if startled) ---
+  Cow                         HP: 103   | kick if startled | harvestable (milk)
+  Sheep                       HP: 81    | flee | harvestable (wool)
+  Horse                       HP: 124   | kick if startled | mountable
+  Bison                       HP: ~124  | flee | harvestable
+  Mosshorn                    HP: 124   | kick if startled | harvestable (milk)
+  Mosshorn_Plain              HP: 124   | plain variant of Mosshorn
+  Tamed_Cow                   HP: 103   | tamed version
+  Tamed_Sheep                 HP: 81    | tamed version
+  Tamed_Horse                 HP: 124   | tamed version
+  Tamed_Bison                 HP: ~124  | tamed version
+  Tamed_Mosshorn              HP: 124   | tamed version
+  Tamed_Mosshorn_Plain        HP: 124   | tamed version
+
+--- SMALL CRITTERS (flee only, no attack) ---
+  Rabbit                      HP: 49    | flee | timid
+  Bunny                       HP: 25    | flee | timid (smaller variant)
+  Tamed_Rabbit                HP: 49    | tamed version
+  Tamed_Bunny                 HP: 25    | tamed version
+
+--- WILD MAMMALS (neutral, flee or charge if startled) ---
+  Deer_Stag                   HP: 103   | ram attack if startled | timid
+  Deer_Doe                    HP: ~80   | flee | timid
+
+--- NEUTRAL INTELLIGENT (social factions, not hostile by default) ---
+  NOTE: Do NOT use these in wave pools — they will not attack players unless
+  faction config makes them hostile.
+  [Kweebec variants]  Kweebec_Razorleaf, Kweebec_Elder, Kweebec_Razorleaf_Patrol
+  [Feran variants]    Feran_Sharptooth, Feran_Burrower  (see Neutral section)
+  [Temple/Passive]    Temple_Kweebec
+
+------------------------------------------------------------------------------
+  NOTES FOR WAVE POOL USAGE
+------------------------------------------------------------------------------
+  - ALL roles above under HOSTILE are Template_Intelligent or Template_Predator
+    and will immediately aggro player in range. Safe for wave pools.
+  - Avoid ChangeRole=true mobs (Goblin_Scavenger) — starts as passive hermit,
+    transforms to hostile only after being attacked.
+  - Dungeon_ prefixed variants are valid but designed for patrol path spawners;
+    they will still aggro as regular combat NPCs when spawned via spawnNPC().
+  - MaxHealth values are BASE values; the leveling system scales them further.
+  - Wander variants (e.g. Skeleton_Burnt_Soldier_Wander) work but start in
+    patrol mode; stationary versions are more predictable for waves.
+  - Boss pool should use roles with HP >= 100 for impact; recommended:
+    Goblin_Ogre, Goblin_Duke, Trork_Chieftain, Scarak_Broodmother,
+    Zombie_Aberrant, Zombie_Aberrant_Big, Outlander_Marauder, Werewolf,
+    Skeleton_Burnt_Praetorian, Crocodile.
