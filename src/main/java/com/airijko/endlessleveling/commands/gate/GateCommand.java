@@ -20,6 +20,7 @@ public final class GateCommand extends AbstractCommand {
         this.addSubCommand(new PortalReturnPosCommand());
         this.addSubCommand(new ClearElDungeonsCommand());
         this.addSubCommand(new GateInstancesCommand());
+        this.addSubCommand(new GateTrackCommand());
         this.addSubCommand(new GateDebugCommand());
     }
 
@@ -27,7 +28,7 @@ public final class GateCommand extends AbstractCommand {
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-            "Usage: /gate <give|spawn|wave|blocks|returnpos|deleteinstances|instances|debug> ...")
+            "Usage: /gate <give|spawn|wave|blocks|returnpos|deleteinstances|instances|track|debug> ...")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }

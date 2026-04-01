@@ -318,6 +318,35 @@ public final class AddonFilesManager {
         text.append("  A: ").append(options.waveMobCountA).append("\n");
         text.append("  S: ").append(options.waveMobCountS).append("\n\n");
 
+        text.append("# Seconds to wait after clearing a wave before the next wave starts.\n");
+        text.append("# Global setting for all ranks. Minimum enforced value: 1 second.\n");
+        text.append("wave_interval_seconds: ").append(options.waveIntervalSecondsE).append("\n\n");
+
+        text.append("# Minutes before a natural dungeon break wave opens after the global announcement.\n");
+        text.append("# Configurable per rank. Minimum enforced value: 1.\n");
+        text.append("# Defaults: E/D/C/B = 1 min, A = 5 min, S = 10 min.\n");
+        text.append("natural_wave_open_delay_minutes:\n");
+        text.append("  E: ").append(options.naturalWaveOpenDelayMinutesE).append("\n");
+        text.append("  D: ").append(options.naturalWaveOpenDelayMinutesD).append("\n");
+        text.append("  C: ").append(options.naturalWaveOpenDelayMinutesC).append("\n");
+        text.append("  B: ").append(options.naturalWaveOpenDelayMinutesB).append("\n");
+        text.append("  A: ").append(options.naturalWaveOpenDelayMinutesA).append("\n");
+        text.append("  S: ").append(options.naturalWaveOpenDelayMinutesS).append("\n\n");
+
+        text.append("# Global natural wave scheduler interval in minutes.\n");
+        text.append("# A random value between min and max (inclusive) is used for each cycle.\n");
+        text.append("# Minimum enforced value: 1.\n");
+        text.append("natural_wave_spawn_interval_minutes_min: ")
+            .append(options.naturalWaveSpawnIntervalMinutesMin)
+            .append("\n");
+        text.append("natural_wave_spawn_interval_minutes_max: ")
+            .append(options.naturalWaveSpawnIntervalMinutesMax)
+            .append("\n\n");
+
+        text.append("# Maximum number of independently spawned natural waves active/pending at once.\n");
+        text.append("# Set to -1 for no limit.\n");
+        text.append("natural_wave_max_concurrent_spawns: ").append(options.naturalWaveMaxConcurrentSpawns).append("\n\n");
+
         text.append("# Which players are considered when determining the highest-level player ceiling.\n");
         text.append("# online  = only players currently online (high-water mark: remembered until restart).\n");
         text.append("# overall = all players ever seen (online and offline data).\n");
@@ -1348,6 +1377,53 @@ public final class AddonFilesManager {
         };
     }
 
+    public int getDungeonWaveIntervalSecondsForRank(@Nonnull GateRankTier rankTier) {
+        DungeonGateOptions options = dungeonGateOptions == null ? DungeonGateOptions.defaults() : dungeonGateOptions;
+        return options.waveIntervalSecondsE;
+    }
+
+    public int getDungeonNaturalWaveOpenDelayMinutesForRank(@Nonnull GateRankTier rankTier) {
+        DungeonGateOptions options = dungeonGateOptions == null ? DungeonGateOptions.defaults() : dungeonGateOptions;
+        return switch (rankTier) {
+            case E -> options.naturalWaveOpenDelayMinutesE;
+            case D -> options.naturalWaveOpenDelayMinutesD;
+            case C -> options.naturalWaveOpenDelayMinutesC;
+            case B -> options.naturalWaveOpenDelayMinutesB;
+            case A -> options.naturalWaveOpenDelayMinutesA;
+            case S -> options.naturalWaveOpenDelayMinutesS;
+        };
+    }
+
+    public int getDungeonNaturalWaveSpawnIntervalSecondsForRank(@Nonnull GateRankTier rankTier) {
+        DungeonGateOptions options = dungeonGateOptions == null ? DungeonGateOptions.defaults() : dungeonGateOptions;
+        return switch (rankTier) {
+            case E -> options.naturalWaveSpawnIntervalSecondsE;
+            case D -> options.naturalWaveSpawnIntervalSecondsD;
+            case C -> options.naturalWaveSpawnIntervalSecondsC;
+            case B -> options.naturalWaveSpawnIntervalSecondsB;
+            case A -> options.naturalWaveSpawnIntervalSecondsA;
+            case S -> options.naturalWaveSpawnIntervalSecondsS;
+        };
+    }
+
+    public int getDungeonNaturalWaveSpawnIntervalMinutesMin() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().naturalWaveSpawnIntervalMinutesMin
+                : dungeonGateOptions.naturalWaveSpawnIntervalMinutesMin;
+    }
+
+    public int getDungeonNaturalWaveSpawnIntervalMinutesMax() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().naturalWaveSpawnIntervalMinutesMax
+                : dungeonGateOptions.naturalWaveSpawnIntervalMinutesMax;
+    }
+
+    public int getDungeonNaturalWaveMaxConcurrentSpawns() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().naturalWaveMaxConcurrentSpawns
+                : dungeonGateOptions.naturalWaveMaxConcurrentSpawns;
+    }
+
     @Nonnull
     public String getDungeonLevelReferenceScope() {
         return dungeonGateOptions == null
@@ -1608,6 +1684,102 @@ public final class AddonFilesManager {
                 waveMobCountS = readPositiveInt(root.get("wave_mob_count_s"), waveMobCountS);
             }
 
+            int sharedWaveIntervalSeconds = defaults.waveIntervalSecondsE;
+            if (root.get("wave_interval_seconds") instanceof Number n) {
+                sharedWaveIntervalSeconds = Math.max(1, n.intValue());
+            }
+            int waveIntervalSecondsE = sharedWaveIntervalSeconds;
+            int waveIntervalSecondsD = sharedWaveIntervalSeconds;
+            int waveIntervalSecondsC = sharedWaveIntervalSeconds;
+            int waveIntervalSecondsB = sharedWaveIntervalSeconds;
+            int waveIntervalSecondsA = sharedWaveIntervalSeconds;
+            int waveIntervalSecondsS = sharedWaveIntervalSeconds;
+
+            Map<String, Object> naturalWaveOpenDelay = asMap(root.get("natural_wave_open_delay_minutes"));
+            int naturalWaveOpenDelayMinutesE = readPositiveInt(naturalWaveOpenDelay.get("E"), defaults.naturalWaveOpenDelayMinutesE);
+            int naturalWaveOpenDelayMinutesD = readPositiveInt(naturalWaveOpenDelay.get("D"), defaults.naturalWaveOpenDelayMinutesD);
+            int naturalWaveOpenDelayMinutesC = readPositiveInt(naturalWaveOpenDelay.get("C"), defaults.naturalWaveOpenDelayMinutesC);
+            int naturalWaveOpenDelayMinutesB = readPositiveInt(naturalWaveOpenDelay.get("B"), defaults.naturalWaveOpenDelayMinutesB);
+            int naturalWaveOpenDelayMinutesA = readPositiveInt(naturalWaveOpenDelay.get("A"), defaults.naturalWaveOpenDelayMinutesA);
+            int naturalWaveOpenDelayMinutesS = readPositiveInt(naturalWaveOpenDelay.get("S"), defaults.naturalWaveOpenDelayMinutesS);
+
+                int naturalWaveSpawnIntervalSecondsE = defaults.naturalWaveSpawnIntervalSecondsE;
+                int naturalWaveSpawnIntervalSecondsD = defaults.naturalWaveSpawnIntervalSecondsD;
+                int naturalWaveSpawnIntervalSecondsC = defaults.naturalWaveSpawnIntervalSecondsC;
+                int naturalWaveSpawnIntervalSecondsB = defaults.naturalWaveSpawnIntervalSecondsB;
+                int naturalWaveSpawnIntervalSecondsA = defaults.naturalWaveSpawnIntervalSecondsA;
+                int naturalWaveSpawnIntervalSecondsS = defaults.naturalWaveSpawnIntervalSecondsS;
+
+                int naturalWaveSpawnIntervalMinutesMin = defaults.naturalWaveSpawnIntervalMinutesMin;
+                int naturalWaveSpawnIntervalMinutesMax = defaults.naturalWaveSpawnIntervalMinutesMax;
+
+                if (root.get("natural_wave_spawn_interval_minutes_min") instanceof Number n) {
+                naturalWaveSpawnIntervalMinutesMin = Math.max(1, n.intValue());
+                }
+                if (root.get("natural_wave_spawn_interval_minutes_max") instanceof Number n) {
+                naturalWaveSpawnIntervalMinutesMax = Math.max(1, n.intValue());
+                }
+
+                // Legacy fallback: natural_wave_spawn_interval_seconds as map or scalar.
+                if (!(root.get("natural_wave_spawn_interval_minutes_min") instanceof Number)
+                        || !(root.get("natural_wave_spawn_interval_minutes_max") instanceof Number)) {
+                int legacyMinSeconds = Integer.MAX_VALUE;
+                int legacyMaxSeconds = Integer.MIN_VALUE;
+                Map<String, Object> naturalWaveSpawnIntervalSeconds = asMap(root.get("natural_wave_spawn_interval_seconds"));
+                if (!naturalWaveSpawnIntervalSeconds.isEmpty()) {
+                    naturalWaveSpawnIntervalSecondsE = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("E"), naturalWaveSpawnIntervalSecondsE);
+                    naturalWaveSpawnIntervalSecondsD = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("D"), naturalWaveSpawnIntervalSecondsD);
+                    naturalWaveSpawnIntervalSecondsC = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("C"), naturalWaveSpawnIntervalSecondsC);
+                    naturalWaveSpawnIntervalSecondsB = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("B"), naturalWaveSpawnIntervalSecondsB);
+                    naturalWaveSpawnIntervalSecondsA = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("A"), naturalWaveSpawnIntervalSecondsA);
+                    naturalWaveSpawnIntervalSecondsS = readPositiveInt(
+                        naturalWaveSpawnIntervalSeconds.get("S"), naturalWaveSpawnIntervalSecondsS);
+
+                    for (Object value : naturalWaveSpawnIntervalSeconds.values()) {
+                        int parsed = readPositiveInt(value, -1);
+                        if (parsed <= 0) {
+                            continue;
+                        }
+                        legacyMinSeconds = Math.min(legacyMinSeconds, parsed);
+                        legacyMaxSeconds = Math.max(legacyMaxSeconds, parsed);
+                    }
+                } else if (root.get("natural_wave_spawn_interval_seconds") instanceof Number n) {
+                    int sharedNaturalIntervalSeconds = Math.max(1, n.intValue());
+                    naturalWaveSpawnIntervalSecondsE = sharedNaturalIntervalSeconds;
+                    naturalWaveSpawnIntervalSecondsD = sharedNaturalIntervalSeconds;
+                    naturalWaveSpawnIntervalSecondsC = sharedNaturalIntervalSeconds;
+                    naturalWaveSpawnIntervalSecondsB = sharedNaturalIntervalSeconds;
+                    naturalWaveSpawnIntervalSecondsA = sharedNaturalIntervalSeconds;
+                    naturalWaveSpawnIntervalSecondsS = sharedNaturalIntervalSeconds;
+                    legacyMinSeconds = sharedNaturalIntervalSeconds;
+                    legacyMaxSeconds = sharedNaturalIntervalSeconds;
+                }
+
+                if (legacyMinSeconds != Integer.MAX_VALUE && legacyMaxSeconds != Integer.MIN_VALUE) {
+                    if (!(root.get("natural_wave_spawn_interval_minutes_min") instanceof Number)) {
+                        naturalWaveSpawnIntervalMinutesMin = Math.max(1, (int) Math.ceil(legacyMinSeconds / 60.0D));
+                    }
+                    if (!(root.get("natural_wave_spawn_interval_minutes_max") instanceof Number)) {
+                        naturalWaveSpawnIntervalMinutesMax = Math.max(1, (int) Math.ceil(legacyMaxSeconds / 60.0D));
+                    }
+                }
+                }
+
+                naturalWaveSpawnIntervalMinutesMax = Math.max(
+                    naturalWaveSpawnIntervalMinutesMin,
+                    naturalWaveSpawnIntervalMinutesMax);
+
+                int naturalWaveMaxConcurrentSpawns = defaults.naturalWaveMaxConcurrentSpawns;
+                if (root.get("natural_wave_max_concurrent_spawns") instanceof Number n) {
+                int raw = n.intValue();
+                naturalWaveMaxConcurrentSpawns = raw < 0 ? -1 : Math.max(1, raw);
+                }
+
             String levelPlayerScope = defaults.levelPlayerScope;
             if (root.get("level_player_scope") instanceof String scopeRaw && !scopeRaw.isBlank()) {
                 levelPlayerScope = normalizeLevelPlayerScope(scopeRaw, defaults.levelPlayerScope);
@@ -1666,7 +1838,16 @@ public final class AddonFilesManager {
                     lowLevelRankBiasEnabled, lowLevelRankBiasWindowLevels, lowLevelRankBiasStrengthPercent,
                     normalMobLevelRange, bossLevelBonus, scopePercent, levelPlayerScope, rankAnchorMode,
                     rankWeightS, rankWeightA, rankWeightB, rankWeightC, rankWeightD, rankWeightE,
-                    waveMobCountE, waveMobCountD, waveMobCountC, waveMobCountB, waveMobCountA, waveMobCountS);
+                    waveMobCountE, waveMobCountD, waveMobCountC, waveMobCountB, waveMobCountA, waveMobCountS,
+                    waveIntervalSecondsE, waveIntervalSecondsD, waveIntervalSecondsC,
+                    waveIntervalSecondsB, waveIntervalSecondsA, waveIntervalSecondsS,
+                    naturalWaveOpenDelayMinutesE, naturalWaveOpenDelayMinutesD, naturalWaveOpenDelayMinutesC,
+                    naturalWaveOpenDelayMinutesB, naturalWaveOpenDelayMinutesA, naturalWaveOpenDelayMinutesS,
+                    naturalWaveSpawnIntervalMinutesMin, naturalWaveSpawnIntervalMinutesMax,
+                    naturalWaveSpawnIntervalSecondsE, naturalWaveSpawnIntervalSecondsD,
+                    naturalWaveSpawnIntervalSecondsC, naturalWaveSpawnIntervalSecondsB,
+                    naturalWaveSpawnIntervalSecondsA, naturalWaveSpawnIntervalSecondsS,
+                    naturalWaveMaxConcurrentSpawns);
         } catch (IOException ignored) {
             return defaults;
         }
@@ -1829,6 +2010,27 @@ public final class AddonFilesManager {
         private final int waveMobCountB;
         private final int waveMobCountA;
         private final int waveMobCountS;
+        private final int waveIntervalSecondsE;
+        private final int waveIntervalSecondsD;
+        private final int waveIntervalSecondsC;
+        private final int waveIntervalSecondsB;
+        private final int waveIntervalSecondsA;
+        private final int waveIntervalSecondsS;
+        private final int naturalWaveOpenDelayMinutesE;
+        private final int naturalWaveOpenDelayMinutesD;
+        private final int naturalWaveOpenDelayMinutesC;
+        private final int naturalWaveOpenDelayMinutesB;
+        private final int naturalWaveOpenDelayMinutesA;
+        private final int naturalWaveOpenDelayMinutesS;
+        private final int naturalWaveSpawnIntervalMinutesMin;
+        private final int naturalWaveSpawnIntervalMinutesMax;
+        private final int naturalWaveSpawnIntervalSecondsE;
+        private final int naturalWaveSpawnIntervalSecondsD;
+        private final int naturalWaveSpawnIntervalSecondsC;
+        private final int naturalWaveSpawnIntervalSecondsB;
+        private final int naturalWaveSpawnIntervalSecondsA;
+        private final int naturalWaveSpawnIntervalSecondsS;
+        private final int naturalWaveMaxConcurrentSpawns;
 
         private DungeonGateOptions(boolean enabled,
                 boolean allowReentryAfterDeath,
@@ -1872,7 +2074,28 @@ public final class AddonFilesManager {
                 int waveMobCountC,
                 int waveMobCountB,
                 int waveMobCountA,
-                int waveMobCountS) {
+                int waveMobCountS,
+                int waveIntervalSecondsE,
+                int waveIntervalSecondsD,
+                int waveIntervalSecondsC,
+                int waveIntervalSecondsB,
+                int waveIntervalSecondsA,
+                int waveIntervalSecondsS,
+                int naturalWaveOpenDelayMinutesE,
+                int naturalWaveOpenDelayMinutesD,
+                int naturalWaveOpenDelayMinutesC,
+                int naturalWaveOpenDelayMinutesB,
+                int naturalWaveOpenDelayMinutesA,
+                int naturalWaveOpenDelayMinutesS,
+                int naturalWaveSpawnIntervalMinutesMin,
+                int naturalWaveSpawnIntervalMinutesMax,
+                int naturalWaveSpawnIntervalSecondsE,
+                int naturalWaveSpawnIntervalSecondsD,
+                int naturalWaveSpawnIntervalSecondsC,
+                int naturalWaveSpawnIntervalSecondsB,
+                int naturalWaveSpawnIntervalSecondsA,
+                int naturalWaveSpawnIntervalSecondsS,
+                int naturalWaveMaxConcurrentSpawns) {
             this.enabled = enabled;
             this.allowReentryAfterDeath = allowReentryAfterDeath;
             this.announceOnSpawn = announceOnSpawn;
@@ -1916,6 +2139,31 @@ public final class AddonFilesManager {
             this.waveMobCountB = Math.max(1, waveMobCountB);
             this.waveMobCountA = Math.max(1, waveMobCountA);
             this.waveMobCountS = Math.max(1, waveMobCountS);
+            this.waveIntervalSecondsE = Math.max(1, waveIntervalSecondsE);
+            this.waveIntervalSecondsD = Math.max(1, waveIntervalSecondsD);
+            this.waveIntervalSecondsC = Math.max(1, waveIntervalSecondsC);
+            this.waveIntervalSecondsB = Math.max(1, waveIntervalSecondsB);
+            this.waveIntervalSecondsA = Math.max(1, waveIntervalSecondsA);
+            this.waveIntervalSecondsS = Math.max(1, waveIntervalSecondsS);
+            this.naturalWaveOpenDelayMinutesE = Math.max(1, naturalWaveOpenDelayMinutesE);
+            this.naturalWaveOpenDelayMinutesD = Math.max(1, naturalWaveOpenDelayMinutesD);
+            this.naturalWaveOpenDelayMinutesC = Math.max(1, naturalWaveOpenDelayMinutesC);
+            this.naturalWaveOpenDelayMinutesB = Math.max(1, naturalWaveOpenDelayMinutesB);
+            this.naturalWaveOpenDelayMinutesA = Math.max(1, naturalWaveOpenDelayMinutesA);
+            this.naturalWaveOpenDelayMinutesS = Math.max(1, naturalWaveOpenDelayMinutesS);
+                this.naturalWaveSpawnIntervalMinutesMin = Math.max(1, naturalWaveSpawnIntervalMinutesMin);
+                this.naturalWaveSpawnIntervalMinutesMax = Math.max(
+                    this.naturalWaveSpawnIntervalMinutesMin,
+                    naturalWaveSpawnIntervalMinutesMax);
+                this.naturalWaveSpawnIntervalSecondsE = Math.max(1, naturalWaveSpawnIntervalSecondsE);
+                this.naturalWaveSpawnIntervalSecondsD = Math.max(1, naturalWaveSpawnIntervalSecondsD);
+                this.naturalWaveSpawnIntervalSecondsC = Math.max(1, naturalWaveSpawnIntervalSecondsC);
+                this.naturalWaveSpawnIntervalSecondsB = Math.max(1, naturalWaveSpawnIntervalSecondsB);
+                this.naturalWaveSpawnIntervalSecondsA = Math.max(1, naturalWaveSpawnIntervalSecondsA);
+                this.naturalWaveSpawnIntervalSecondsS = Math.max(1, naturalWaveSpawnIntervalSecondsS);
+                this.naturalWaveMaxConcurrentSpawns = naturalWaveMaxConcurrentSpawns < 0
+                    ? -1
+                    : Math.max(1, naturalWaveMaxConcurrentSpawns);
         }
 
         private static DungeonGateOptions defaults() {
@@ -1927,7 +2175,12 @@ public final class AddonFilesManager {
                     true, 80, 80,
                     20, 10, 25, "ONLINE", "HIGHEST_MOB",
                     1, 6, 13, 30, 25, 25,
-                    5, 10, 20, 40, 80, 160);
+                    5, 10, 20, 40, 80, 160,
+                    5, 5, 5, 5, 5, 5,
+                    1, 1, 1, 1, 5, 10,
+                    15, 30,
+                    15, 30, 45, 60, 120, 300,
+                    3);
         }
     }
 

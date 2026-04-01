@@ -2,17 +2,17 @@
   "Layers": [
     {
       "Files": [
-        "Sounds/Gates/S-Rank-Gate-Spawn.ogg"
+        "Sounds/Gates/s-wave-1-minute-countdown.ogg"
       ],
       "RandomSettings": {
         "MinPitch": 0,
         "MaxPitch": 0,
         "MinVolume": 0
       },
-      "Volume": 3.5
+      "Volume": 1.4
     }
   ],
   "Volume": 0,
-  "MaxDistance": 25,
+  "MaxDistance": 20,
   "StartAttenuationDistance": 2
 }

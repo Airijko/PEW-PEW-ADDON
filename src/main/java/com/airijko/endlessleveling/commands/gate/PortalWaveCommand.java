@@ -2,6 +2,7 @@ package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.enums.GateRankTier;
 import com.airijko.endlessleveling.managers.MobWaveManager;
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.server.core.Message;
@@ -22,20 +23,53 @@ import java.util.concurrent.CompletableFuture;
 
 public final class PortalWaveCommand extends AbstractCommand {
 
+    private final RequiredArg<String> rankArg = this.withRequiredArg(
+            "rank_or_random",
+            "Rank tier (S/A/B/C/D/E) or 'random' — starts a natural dungeon break wave with countdown",
+            Objects.requireNonNull(ArgTypes.STRING));
+
     public PortalWaveCommand() {
-        super("wave", "Run barebones mob waves around your player");
+        super("wave", "Dungeon break wave commands");
         this.addAliases("waves");
+        this.addSubCommand(new TestWaveSubCommand());
+        this.addSubCommand(new TestGateWaveComboSubCommand());
+        this.addSubCommand(new ClearGateWaveComboSubCommand());
         this.addSubCommand(new StartWaveSubCommand());
         this.addSubCommand(new StopWaveSubCommand());
         this.addSubCommand(new SkipWaveSubCommand());
         this.addSubCommand(new StatusWaveSubCommand());
+        this.addSubCommand(new ClearWaveParticlesSubCommand());
     }
 
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /gate wave <start <rank>|stop|skip|status> (rank: S A B C D E)").color("#ffcc66"));
-        return CompletableFuture.completedFuture(null);
+        String rawArg = rankArg.get(context);
+        if (rawArg == null || rawArg.isBlank()) {
+            context.sendMessage(Message.raw(
+                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status")
+                    .color("#ffcc66"));
+            return CompletableFuture.completedFuture(null);
+        }
+        String normalizedArg = rawArg.trim().toUpperCase(Locale.ROOT);
+        return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
+            GateRankTier tier;
+            if ("RANDOM".equals(normalizedArg)) {
+                tier = NaturalPortalGateManager.rollGateRankTierForPlayer(playerRef);
+            } else {
+                tier = parseRankTier(normalizedArg);
+            }
+            if (tier == null) {
+                ctx.sendMessage(Message.raw("Unknown rank '" + rawArg + "'. Use: S A B C D E random").color("#ff6666"));
+                return;
+            }
+            MobWaveManager.NaturalStartResult result = MobWaveManager.startNaturalForPlayer(playerRef, tier);
+            if (!result.scheduled) {
+                ctx.sendMessage(Message.raw(result.message).color("#ff6666"));
+                return;
+            }
+            ctx.sendMessage(Message.raw(result.message).color("#6cff78"));
+        });
     }
 
     @Nullable
@@ -97,6 +131,99 @@ public final class PortalWaveCommand extends AbstractCommand {
     @FunctionalInterface
     private interface WaveAction {
         void run(@Nonnull CommandContext context, @Nonnull PlayerRef playerRef);
+    }
+
+    private static final class TestWaveSubCommand extends AbstractCommand {
+        private final RequiredArg<String> rankArg =
+                this.withRequiredArg("rank", "Wave rank tier (S/A/B/C/D/E)", Objects.requireNonNull(ArgTypes.STRING));
+
+        private TestWaveSubCommand() {
+            super("test", "Start an immediate test wave — mobs spawn right away, no countdown");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
+                GateRankTier tier = parseRankTier(Objects.requireNonNull(rankArg.get(ctx)));
+                if (tier == null) {
+                    ctx.sendMessage(Message.raw("Invalid rank. Use one of: S A B C D E").color("#ff6666"));
+                    return;
+                }
+                MobWaveManager.StartResult result = MobWaveManager.startForPlayer(playerRef, tier);
+                if (!result.started) {
+                    ctx.sendMessage(Message.raw(result.message).color("#ff6666"));
+                    return;
+                }
+                String rankLetter = result.rankTier == null ? tier.letter() : result.rankTier.letter();
+                ctx.sendMessage(Message.raw("Test wave started immediately.").color("#6cff78"));
+                ctx.sendMessage(Message.raw(
+                                "Rank=" + rankLetter
+                                        + " waves=" + result.waves
+                                        + " mobsPerWave=" + result.mobsPerWave
+                                        + " interval=" + result.intervalSeconds + "s"
+                                        + " levelRange=" + result.levelMin + "-" + result.levelMax)
+                        .color("#8fd3ff"));
+            });
+        }
+    }
+
+    private static final class TestGateWaveComboSubCommand extends AbstractCommand {
+        private final RequiredArg<String> rankArg =
+                this.withRequiredArg("rank", "Gate rank tier (S/A/B/C/D/E)", Objects.requireNonNull(ArgTypes.STRING));
+
+        private TestGateWaveComboSubCommand() {
+            super("testcombo", "Spawn a test gate that is forcibly linked to a wave countdown");
+            this.addAliases("combo", "testgatewave");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            if (!(context.sender() instanceof Player player)) {
+                context.sendMessage(Message.raw("This command is player-only.").color("#ff9900"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            GateRankTier tier = parseRankTier(Objects.requireNonNull(rankArg.get(context)));
+            if (tier == null) {
+                context.sendMessage(Message.raw("Invalid rank. Use one of: S A B C D E").color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            return NaturalPortalGateManager.spawnGateNearPlayerWithRankAndForcedLinkedWave(player, tier, true)
+                    .thenAccept(spawned -> {
+                        if (!spawned) {
+                            context.sendMessage(Message.raw("Failed to spawn test gate+wave combo nearby.").color("#ff6666"));
+                            return;
+                        }
+
+                        context.sendMessage(Message.raw(
+                                String.format(Locale.ROOT,
+                                        "Spawned %s-rank gate+wave test combo. Gate stays locked until linked waves are cleared.",
+                                        tier.letter())).color("#6cff78"));
+                    });
+        }
+    }
+
+    private static final class ClearGateWaveComboSubCommand extends AbstractCommand {
+        private ClearGateWaveComboSubCommand() {
+            super("clearcombo", "Clear your linked gate-wave combo locks and countdowns");
+            this.addAliases("clearlinked", "comboff", "unlockgatewave");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
+                int cleared = MobWaveManager.clearLinkedGateCombosForPlayer(playerRef);
+                if (cleared <= 0) {
+                    ctx.sendMessage(Message.raw("No linked gate-wave combos to clear.").color("#ffcc66"));
+                    return;
+                }
+                ctx.sendMessage(Message.raw("Cleared " + cleared + " linked gate-wave combo(s).").color("#6cff78"));
+            });
+        }
     }
 
     private static final class StartWaveSubCommand extends AbstractCommand {
@@ -212,6 +339,28 @@ public final class PortalWaveCommand extends AbstractCommand {
                 ctx.sendMessage(Message.raw(
                         "Skipped wave: killed " + result.killed + " mob(s). Advanced to wave "
                                 + result.nextWave + "/" + result.totalWaves + ".")
+                        .color("#6cff78"));
+            });
+        }
+    }
+
+    private static final class ClearWaveParticlesSubCommand extends AbstractCommand {
+        private ClearWaveParticlesSubCommand() {
+            super("clearparticles", "Clear nearby stuck wave magicportal visuals");
+            this.addAliases("purgeparticles", "cleanparticles", "clearwaveportals");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            return runWithPlayerRefOnWorldThread(context, (ctx, playerRef) -> {
+                int removed = MobWaveManager.clearWavePortalVisualsInPlayerWorld(playerRef);
+                if (removed <= 0) {
+                    ctx.sendMessage(Message.raw("No wave magicportal anchor blocks were found in this world.").color("#ffcc66"));
+                    return;
+                }
+
+                ctx.sendMessage(Message.raw("Cleared " + removed + " wave magicportal block(s) in this world.")
                         .color("#6cff78"));
             });
         }

@@ -1,6 +1,7 @@
 package com.airijko.endlessleveling.managers;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import java.util.Comparator;
 import com.airijko.endlessleveling.EndlessLeveling;
 import com.airijko.endlessleveling.player.PlayerData;
 import com.airijko.endlessleveling.enums.GateRankTier;
@@ -81,6 +82,7 @@ public final class NaturalPortalGateManager {
     private static final String S_RANK_GATE_SPAWN_SOUND_ID = "SFX_EL_S_Rank_Gate_Spawn";
     private static final String S_RANK_DISASTER_TITLE = "WORLD DISASTER";
     private static final String S_RANK_GATE_TITLE = "S-RANK GATE BREACH";
+    private static final double LINKED_GATE_WAVE_CHANCE = 0.10D;
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
@@ -193,20 +195,28 @@ public final class NaturalPortalGateManager {
 
     @Nonnull
     public static CompletableFuture<Boolean> spawnRandomGateNearPlayer(@Nonnull Player player, boolean isTestSpawn) {
-        return spawnGateNearPlayerWithOptionalRank(player, null, isTestSpawn);
+        return spawnGateNearPlayerWithOptionalRank(player, null, isTestSpawn, null);
     }
 
     @Nonnull
     public static CompletableFuture<Boolean> spawnGateNearPlayerWithRank(@Nonnull Player player,
                                                                           @Nonnull GateRankTier rankTier,
                                                                           boolean isTestSpawn) {
-        return spawnGateNearPlayerWithOptionalRank(player, rankTier, isTestSpawn);
+        return spawnGateNearPlayerWithOptionalRank(player, rankTier, isTestSpawn, null);
+    }
+
+    @Nonnull
+    public static CompletableFuture<Boolean> spawnGateNearPlayerWithRankAndForcedLinkedWave(@Nonnull Player player,
+                                                                                              @Nonnull GateRankTier rankTier,
+                                                                                              boolean isTestSpawn) {
+        return spawnGateNearPlayerWithOptionalRank(player, rankTier, isTestSpawn, Boolean.TRUE);
     }
 
     @Nonnull
     private static CompletableFuture<Boolean> spawnGateNearPlayerWithOptionalRank(@Nonnull Player player,
                                                                                    @Nullable GateRankTier forcedRankTier,
-                                                                                   boolean isTestSpawn) {
+                                                                                   boolean isTestSpawn,
+                                                                                   @Nullable Boolean forceLinkedWave) {
         refreshConfigSnapshot();
         int minLevelRequired = resolveMinLevelRequired();
         int playerLevel = resolvePlayerLevel(player.getUuid());
@@ -256,7 +266,7 @@ public final class NaturalPortalGateManager {
                 return;
             }
 
-            spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, forcedRankTier, isTestSpawn, future);
+            spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, forcedRankTier, isTestSpawn, forceLinkedWave, future);
         });
         return future;
     }
@@ -332,7 +342,7 @@ public final class NaturalPortalGateManager {
                                                                           @Nonnull String blockId,
                                                                           boolean isTestSpawn) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
-        world.execute(() -> spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, null, isTestSpawn, future));
+        world.execute(() -> spawnInWorldNearPlayerRefOnThread(world, playerRef, blockId, null, isTestSpawn, null, future));
         return future;
     }
 
@@ -411,6 +421,7 @@ public final class NaturalPortalGateManager {
                                                           @Nonnull String blockId,
                                                           @Nullable GateRankTier forcedRankTier,
                                                           boolean isTestSpawn,
+                                                          @Nullable Boolean forceLinkedWave,
                                                           @Nonnull CompletableFuture<Boolean> future) {
             List<Long> loadedChunkIndexes = resolveLoadedChunkIndexes(world);
             if (loadedChunkIndexes.isEmpty()) {
@@ -456,31 +467,25 @@ public final class NaturalPortalGateManager {
                     }
                 }
                 PortalLeveledInstanceRouter.setPendingLevelRange(rankedBlockId, gateId, normalLevelMin, normalLevelMax, bossLevel);
+                boolean linkedWaveTriggered = false;
+                boolean shouldTriggerLinkedWave = forceLinkedWave != null ? forceLinkedWave : shouldTriggerLinkedWave(gateRank.tier);
+                if (gateId != null && !gateId.isBlank() && shouldTriggerLinkedWave) {
+                    linkedWaveTriggered = MobWaveManager.startLinkedGateWaveForGate(playerRef, gateRank.tier, gateId, false);
+                }
                 if (gateRank.tier == GateRankTier.S) {
                     LAST_S_RANK_SPAWN_AT_MILLIS = System.currentTimeMillis();
                 }
                 if (isAnnounceOnSpawnEnabled()) {
-                    announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
+                    if (linkedWaveTriggered) {
+                        announceGateWaveConvergence(x, y, z, gateRank.tier, normalLevelMin, normalLevelMax, bossLevel);
+                    } else {
+                        announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
+                    }
                 }
                 String expectedGroupId = gateId == null || gateId.isBlank() ? "<unknown>" : gateId;
                 log(Level.INFO,
-                        "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
-                        world.getName(),
-                        rankedBlockId,
-                        expectedGroupId,
-                        expectedGroupId,
-                        isTestSpawn,
-                        x,
-                        y,
-                        z,
-                        gateRank.tier.letter(),
-                        gateRank.roll,
-                        normalLevelMin,
-                        normalLevelMax,
-                        bossLevel);
-                // Keep a warning-level twin so range parity evidence is visible even when INFO is suppressed.
-                log(Level.WARNING,
-                        "[ELPortal] Gate spawned world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                        "[ELPortal] Spawn mode=%s world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
+                        linkedWaveTriggered ? "gate+wave" : "gate-only",
                         world.getName(),
                         rankedBlockId,
                         expectedGroupId,
@@ -618,6 +623,7 @@ public final class NaturalPortalGateManager {
             if (isAnnounceOnDespawnEnabled()) {
                 announceGateDespawn(x, y, z, blockId);
             }
+            MobWaveManager.unregisterLinkedGateWave(gateId);
             // Cleanup the paired instance when gate expires
             if (gateId != null && !gateId.isBlank()) {
                 PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(gateId, blockId);
@@ -725,6 +731,68 @@ public final class NaturalPortalGateManager {
         return new GateAnchor(best.x(), best.y(), best.z(), best.gateId());
     }
 
+    @Nonnull
+    public static List<TrackedGateSnapshot> listTrackedGates() {
+        Universe universe = Universe.get();
+        List<TrackedGateSnapshot> snapshots = new ArrayList<>();
+        for (ActiveGate gate : ACTIVE_GATES) {
+            if (gate == null) {
+                continue;
+            }
+
+            String worldName = null;
+            if (universe != null) {
+                World world = universe.getWorld(gate.worldUuid());
+                worldName = world == null ? null : world.getName();
+            }
+
+            snapshots.add(new TrackedGateSnapshot(
+                    gate.gateId(),
+                    gate.worldUuid(),
+                    worldName,
+                    gate.blockId(),
+                    resolveTrackedGateRankTier(gate.blockId()),
+                    gate.x(),
+                    gate.y(),
+                    gate.z()));
+        }
+
+        snapshots.sort(Comparator
+                .comparing((TrackedGateSnapshot entry) -> entry.worldName() == null ? "" : entry.worldName())
+                .thenComparingInt(TrackedGateSnapshot::y)
+                .thenComparingInt(TrackedGateSnapshot::x)
+                .thenComparingInt(TrackedGateSnapshot::z));
+        return snapshots;
+    }
+
+    @Nullable
+    public static TrackedGateSnapshot findTrackedGate(@Nullable String gateId) {
+        if (gateId == null || gateId.isBlank()) {
+            return null;
+        }
+
+        for (TrackedGateSnapshot snapshot : listTrackedGates()) {
+            if (gateId.equals(snapshot.gateId())) {
+                return snapshot;
+            }
+        }
+        return null;
+    }
+
+    @Nonnull
+    private static GateRankTier resolveTrackedGateRankTier(@Nonnull String blockId) {
+        for (GateRankTier tier : GateRankTier.values()) {
+            String suffix = tier.blockIdSuffix();
+            if (suffix.isEmpty()) {
+                continue;
+            }
+            if (blockId.endsWith(suffix)) {
+                return tier;
+            }
+        }
+        return GateRankTier.E;
+    }
+
     @Nullable
     public static String resolveGateIdAt(@Nonnull World world, int x, int y, int z) {
         UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
@@ -806,6 +874,7 @@ public final class NaturalPortalGateManager {
                                          int x, int y, int z,
                                          @Nonnull String blockId) {
         String gateId = resolveGateIdAt(world, x, y, z);
+        MobWaveManager.unregisterLinkedGateWave(gateId);
         if (gateId != null && !gateId.isBlank()) {
             // Kick any players inside the instance before tearing it down.
             String instanceName = PortalLeveledInstanceRouter.resolveInstanceNameForGate(gateId);
@@ -1030,6 +1099,35 @@ public final class NaturalPortalGateManager {
     private static LevelRange resolveLevelRangeForWorld(@Nonnull World world,
                                                          @Nonnull PlayerRef anchorPlayerRef,
                                                          @Nonnull GateRankTier rankTier) {
+        return resolveLevelRangeImpl(anchorPlayerRef, rankTier);
+    }
+
+    /**
+     * Package-private: resolves {normalMin, normalMax, bossLevel} using the same config-driven
+     * logic as dungeon gate mob level spawning. Intended for use by MobWaveManager.
+     */
+    static int[] resolveLevelRangeForRank(@Nonnull PlayerRef anchorPlayerRef, @Nonnull GateRankTier rankTier) {
+        LevelRange r = resolveLevelRangeImpl(anchorPlayerRef, rankTier);
+        return new int[]{r.normalMin, r.normalMax, r.bossLevel};
+    }
+
+    /**
+     * Package-private: rolls a gate rank tier for the given anchor player using the same
+     * weighted config logic as natural gate spawning. Intended for use by MobWaveManager.
+     */
+    public static GateRankTier rollGateRankTierForPlayer(@Nonnull PlayerRef anchorPlayerRef) {
+        return resolveGateRank(anchorPlayerRef).tier;
+    }
+
+    private static boolean shouldTriggerLinkedWave(@Nonnull GateRankTier rankTier) {
+        if (rankTier == GateRankTier.S) {
+            return true;
+        }
+        return Math.random() < LINKED_GATE_WAVE_CHANCE;
+    }
+
+    private static LevelRange resolveLevelRangeImpl(@Nonnull PlayerRef anchorPlayerRef,
+                                                     @Nonnull GateRankTier rankTier) {
         LevelBand worldBand = resolveGlobalLevelBand(anchorPlayerRef);
         int normalRange = resolveNormalMobLevelRange();
         int bossBonus = resolveBossLevelBonus();
@@ -1692,16 +1790,16 @@ public final class NaturalPortalGateManager {
         if (gateRank.tier == GateRankTier.S) {
             Message message = Message.join(
                     Message.raw("[WORLD DISASTER] ").color("#ff5a36"),
-                    Message.raw("An S-Rank Gate has ruptured the world veil.").color("#ffd7cf"),
+                Message.raw("A Sovereign Gate has ruptured the world veil.").color("#ffd7cf"),
                     Message.raw("\n"),
-                    Message.raw("[ALERT] ").color("#ff9a3c"),
-                    Message.raw(String.format("Catastrophic breach detected at (%d, %d, %d)", x, y, z)).color("#ffe3a8"),
+                Message.raw("[OMEN] ").color("#ff9a3c"),
+                Message.raw(String.format(Locale.ROOT, "Catastrophic breach detected at (%d, %d, %d)", x, y, z)).color("#ffe3a8"),
                     Message.raw("\n"),
                     Message.raw("[THREAT] ").color("#ff5a36"),
-                    Message.raw(String.format("Hostile level range %d-%d | Boss level %d", normalLevelMin, normalLevelMax, bossLevel)).color("#fff0cf"),
+                Message.raw(String.format(Locale.ROOT, "Hostile level range %d-%d | Boss level %d", normalLevelMin, normalLevelMax, bossLevel)).color("#fff0cf"),
                     Message.raw("\n"),
-                    Message.raw("[ORDER] ").color("#ff9a3c"),
-                    Message.raw("All adventurers are advised to mobilize immediately.").color("#ffd7cf")
+                Message.raw("[DECREE] ").color("#ff9a3c"),
+                Message.raw("All adventurers must mobilize at once.").color("#ffd7cf")
             );
             universe.sendMessage(message);
             showTitleToAllPlayers(
@@ -1713,19 +1811,58 @@ public final class NaturalPortalGateManager {
         }
 
         Message message = Message.join(
-            Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-            Message.raw(String.format("%s RANK GATE SPAWNED!", gateRank.tier.letter())).color(gateRank.tier.color().hex()),
+            Message.raw("[RIFT BREACH] ").color(gateRank.tier.color().hex()),
+            Message.raw(String.format(Locale.ROOT, "%s-Rank gate has emerged.", gateRank.tier.letter())).color("#ffffff"),
             Message.raw("\n"),
-            Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-            Message.raw(String.format("Position: (%d, %d, %d)", x, y, z)).color(PortalGateColor.POSITION.hex()),
+            Message.raw("[WAYPOINT] ").color(PortalGateColor.PREFIX.hex()),
+            Message.raw(String.format(Locale.ROOT, "Coordinates (%d, %d, %d)", x, y, z)).color(PortalGateColor.POSITION.hex()),
             Message.raw("\n"),
-            Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-            Message.raw(String.format("Normal Level Range: %d-%d", normalLevelMin, normalLevelMax)).color(PortalGateColor.LEVEL.hex()),
+            Message.raw("[THREAT] ").color(PortalGateColor.PREFIX.hex()),
+            Message.raw(String.format(Locale.ROOT, "Mob level range %d-%d", normalLevelMin, normalLevelMax)).color(PortalGateColor.LEVEL.hex()),
             Message.raw("\n"),
-            Message.raw(PREFIX).color(PortalGateColor.PREFIX.hex()),
-            Message.raw(String.format("Boss Level: %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
+            Message.raw("[VANGUARD] ").color(PortalGateColor.PREFIX.hex()),
+            Message.raw(String.format(Locale.ROOT, "Boss level %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
         );
         universe.sendMessage(message);
+    }
+
+    private static void announceGateWaveConvergence(int x,
+                                                    int y,
+                                                    int z,
+                                                    @Nonnull GateRankTier rankTier,
+                                                    int normalLevelMin,
+                                                    int normalLevelMax,
+                                                    int bossLevel) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        int delayMinutes = resolveNaturalWaveDelayMinutes(rankTier);
+        String delayLabel = delayMinutes == 1 ? "1 minute" : delayMinutes + " minutes";
+
+        Message message = Message.join(
+                Message.raw("[RIFT CONVERGENCE] ").color("#ff6b6b"),
+                Message.raw(String.format(Locale.ROOT, "%s-Rank gate and dungeon break have merged.", rankTier.letter())).color("#ffe0cf"),
+                Message.raw("\n"),
+                Message.raw("[SEAL] ").color("#ffb84d"),
+                Message.raw(String.format(Locale.ROOT, "Gate entry is locked until the wave begins in %s.", delayLabel)).color("#fff0cf"),
+                Message.raw("\n"),
+                Message.raw("[BATTLEFIELD] ").color("#ffb84d"),
+                Message.raw(String.format(Locale.ROOT, "Coords (%d, %d, %d) | Threat %d-%d | Boss %d", x, y, z, normalLevelMin, normalLevelMax, bossLevel)).color("#ffe0cf")
+        );
+        universe.sendMessage(message);
+    }
+
+    private static int resolveNaturalWaveDelayMinutes(@Nonnull GateRankTier rankTier) {
+        if (filesManager == null) {
+            return switch (rankTier) {
+                case S -> 10;
+                case A -> 5;
+                default -> 1;
+            };
+        }
+        return Math.max(1, filesManager.getDungeonNaturalWaveOpenDelayMinutesForRank(rankTier));
     }
 
     private static void showTitleToAllPlayers(@Nonnull Message titlePrimary,
@@ -1851,6 +1988,16 @@ public final class NaturalPortalGateManager {
     }
 
     public record GateAnchor(int x, int y, int z, @Nullable String gateId) {
+    }
+
+    public record TrackedGateSnapshot(@Nonnull String gateId,
+                                      @Nonnull UUID worldUuid,
+                                      @Nullable String worldName,
+                                      @Nonnull String blockId,
+                                      @Nonnull GateRankTier rankTier,
+                                      int x,
+                                      int y,
+                                      int z) {
     }
 
     private record LevelBand(int minLevel, int maxLevel) {

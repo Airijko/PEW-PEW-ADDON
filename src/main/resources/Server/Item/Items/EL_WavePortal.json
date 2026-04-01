@@ -10,10 +10,18 @@
   "PlayerAnimationsId": "Block",
   "MaxStack": 1,
   "Quality": "Uncommon",
+  "InteractionConfig": {
+    "UseDistance": {
+      "Adventure": 4.0,
+      "Creative": 5.0
+    }
+  },
   "BlockType": {
+    "AmbientSoundEventId": "SFX_Portal_Neutral",
     "DrawType": "Cube",
     "Material": "Solid",
     "Opacity": "Transparent",
+    "HitboxType": "EL_WavePortal_Anchor",
     "RequiresAlphaBlending": true,
     "Group": "Stone",
     "Textures": [
@@ -34,6 +42,11 @@
         },
         "Scale": 6.0
       }
-    ]
+    ],
+    "InteractionHint": "Wave Portal Anchor",
+    "Flags": {
+      "IsUsable": true
+    },
+    "Interactions": {}
   }
 }

@@ -3,6 +3,7 @@ package com.airijko.endlessleveling.events;
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
+import com.airijko.endlessleveling.managers.MobWaveManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
 import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
@@ -1058,6 +1059,21 @@ public final class PortalLeveledInstanceRouter {
                             z);
                     gateKey = canonicalGateKey;
                 }
+
+            if (MobWaveManager.isGateEntryLocked(gateKey)) {
+                playerRef.sendMessage(Message.raw("[Dungeon Break] Gate is sealed until the linked wave is cleared.").color("#ff9a3c"));
+                log(Level.INFO,
+                    "[ELPortal] Gate entry blocked by linked wave lock player=%s gateId=%s world=%s block=%s at %d %d %d",
+                    playerRef.getUsername(),
+                    gateKey,
+                    sourceWorld.getName(),
+                    blockId,
+                    x,
+                    y,
+                    z);
+                return false;
+            }
+
         logGateEntryExpectation(gateKey, blockId, routingName, playerRef.getUsername());
         rememberPendingGateEntry(playerRef, gateKey, blockId, routingName);
         // Try to route to existing instance for this gate, or create new one

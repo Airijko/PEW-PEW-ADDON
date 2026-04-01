@@ -29,6 +29,7 @@ import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
 import com.airijko.endlessleveling.listeners.PortalGateJoinNotificationListener;
 import com.airijko.endlessleveling.listeners.PortalReturnInteractionListener;
+import com.airijko.endlessleveling.listeners.WavePortalBreakBlockSystem;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
@@ -88,7 +89,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new GateCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
+        this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
+        MobWaveManager.initialize();
         PortalProximityManager.initialize(this);
         PortalLeveledInstanceRouter.initialize(this);
         PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
@@ -160,7 +163,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
                     this.filesManager.shouldEnableExampleEvents());
 
             NaturalPortalGateManager.shutdown();
+            MobWaveManager.shutdown();
             NaturalPortalGateManager.initialize(this, this.filesManager);
+            MobWaveManager.initialize();
             PortalInstanceDiagnostics.initialize(this, this.filesManager);
 
                 AddonLoggingManager.log(this,
