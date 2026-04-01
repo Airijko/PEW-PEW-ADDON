@@ -1,7 +1,8 @@
 package com.airijko.endlessleveling.commands.gate;
 
-import com.airijko.endlessleveling.managers.MobWaveManager;
-import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
+import com.airijko.endlessleveling.api.gates.TrackedDungeonGateSnapshot;
+import com.airijko.endlessleveling.api.gates.TrackedWaveGateSnapshot;
+import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -19,33 +20,33 @@ import java.util.concurrent.CompletableFuture;
 public final class GateTrackCommand extends AbstractCommand {
 
     public GateTrackCommand() {
-        super("track", "List tracked gates, waves, and gate-wave combos");
-        this.addAliases("tracks", "tracking", "listtrack");
+        super("track", "List tracked dungeon gates, wave gates, and dungeon+wave gate combos");
+        this.addAliases("tracks", "tracking", "listtrack", "trackgatetypes");
     }
 
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        List<NaturalPortalGateManager.TrackedGateSnapshot> allGates = NaturalPortalGateManager.listTrackedGates();
-        List<MobWaveManager.TrackedWaveSnapshot> standaloneWaves = MobWaveManager.listTrackedStandaloneWaves();
-        List<MobWaveManager.TrackedWaveSnapshot> combos = MobWaveManager.listTrackedGateWaveCombos();
+        List<TrackedDungeonGateSnapshot> allGates = EndlessLevelingCompatibility.listTrackedDungeonGates();
+        List<TrackedWaveGateSnapshot> standaloneWaves = EndlessLevelingCompatibility.listTrackedStandaloneWaves();
+        List<TrackedWaveGateSnapshot> combos = EndlessLevelingCompatibility.listTrackedGateWaveCombos();
 
         Set<String> comboGateIds = new HashSet<>();
-        for (MobWaveManager.TrackedWaveSnapshot combo : combos) {
+        for (TrackedWaveGateSnapshot combo : combos) {
             if (combo.linkedGateId() != null && !combo.linkedGateId().isBlank()) {
                 comboGateIds.add(combo.linkedGateId());
             }
         }
 
-        List<NaturalPortalGateManager.TrackedGateSnapshot> standaloneGates = allGates.stream()
+        List<TrackedDungeonGateSnapshot> standaloneGates = allGates.stream()
                 .filter(gate -> !comboGateIds.contains(gate.gateId()))
                 .toList();
 
-        context.sendMessage(Message.raw("Tracked Gate Activity").color("#8fd3ff"));
+        context.sendMessage(Message.raw("Tracked Gate-Type Activity").color("#8fd3ff"));
         context.sendMessage(Message.raw(
-                "Standalone gates=" + standaloneGates.size()
+            "Standalone dungeon gates=" + standaloneGates.size()
                         + " | standalone waves=" + standaloneWaves.size()
-                        + " | gate+wave combos=" + combos.size()).color("#d9f0ff"));
+                + " | dungeon+wave gate combos=" + combos.size()).color("#d9f0ff"));
 
         sendGateSection(context, standaloneGates);
         sendWaveSection(context, standaloneWaves);
@@ -55,25 +56,25 @@ public final class GateTrackCommand extends AbstractCommand {
     }
 
     private static void sendGateSection(@Nonnull CommandContext context,
-                                        @Nonnull List<NaturalPortalGateManager.TrackedGateSnapshot> gates) {
-        context.sendMessage(Message.raw("Standalone Gates").color("#f8d66d"));
+                                        @Nonnull List<TrackedDungeonGateSnapshot> gates) {
+        context.sendMessage(Message.raw("Standalone Dungeon Gates").color("#f8d66d"));
         if (gates.isEmpty()) {
             context.sendMessage(Message.raw("- none").color("#ffcc66"));
             return;
         }
 
-        Map<String, List<NaturalPortalGateManager.TrackedGateSnapshot>> grouped = new LinkedHashMap<>();
-        for (NaturalPortalGateManager.TrackedGateSnapshot gate : gates) {
+        Map<String, List<TrackedDungeonGateSnapshot>> grouped = new LinkedHashMap<>();
+        for (TrackedDungeonGateSnapshot gate : gates) {
             grouped.computeIfAbsent(formatWorld(gate.worldName()), ignored -> new ArrayList<>()).add(gate);
         }
 
-        for (Map.Entry<String, List<NaturalPortalGateManager.TrackedGateSnapshot>> entry : grouped.entrySet()) {
+        for (Map.Entry<String, List<TrackedDungeonGateSnapshot>> entry : grouped.entrySet()) {
             context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
                     .color("#8fd3ff"));
-            for (NaturalPortalGateManager.TrackedGateSnapshot gate : entry.getValue()) {
+            for (TrackedDungeonGateSnapshot gate : entry.getValue()) {
                 context.sendMessage(Message.raw(String.format(
                         "  %-5s %-18s %s",
-                        "[" + gate.rankTier().letter() + "]",
+                        "[" + gate.rankTierId() + "]",
                         formatCoords(gate.x(), gate.y(), gate.z()),
                         shortenGateId(gate.gateId()))).color("#d9f0ff"));
             }
@@ -81,25 +82,25 @@ public final class GateTrackCommand extends AbstractCommand {
     }
 
     private static void sendWaveSection(@Nonnull CommandContext context,
-                                        @Nonnull List<MobWaveManager.TrackedWaveSnapshot> waves) {
-        context.sendMessage(Message.raw("Standalone Waves").color("#f8d66d"));
+                                        @Nonnull List<TrackedWaveGateSnapshot> waves) {
+        context.sendMessage(Message.raw("Standalone Wave Gates").color("#f8d66d"));
         if (waves.isEmpty()) {
             context.sendMessage(Message.raw("- none").color("#ffcc66"));
             return;
         }
 
-        Map<String, List<MobWaveManager.TrackedWaveSnapshot>> grouped = new LinkedHashMap<>();
-        for (MobWaveManager.TrackedWaveSnapshot wave : waves) {
+        Map<String, List<TrackedWaveGateSnapshot>> grouped = new LinkedHashMap<>();
+        for (TrackedWaveGateSnapshot wave : waves) {
             grouped.computeIfAbsent(formatWorld(wave.worldName()), ignored -> new ArrayList<>()).add(wave);
         }
 
-        for (Map.Entry<String, List<MobWaveManager.TrackedWaveSnapshot>> entry : grouped.entrySet()) {
+        for (Map.Entry<String, List<TrackedWaveGateSnapshot>> entry : grouped.entrySet()) {
             context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
                     .color("#8fd3ff"));
-            for (MobWaveManager.TrackedWaveSnapshot wave : entry.getValue()) {
+            for (TrackedWaveGateSnapshot wave : entry.getValue()) {
                 context.sendMessage(Message.raw(String.format(
                         "  %-5s %-8s %-18s owner=%s",
-                        "[" + wave.rankTier().letter() + "]",
+                        "[" + wave.rankTierId() + "]",
                         wave.stage().toUpperCase(),
                         formatCoords(wave.x(), wave.y(), wave.z()),
                         formatOwner(wave.ownerName()))).color("#d9f0ff"));
@@ -108,25 +109,25 @@ public final class GateTrackCommand extends AbstractCommand {
     }
 
     private static void sendComboSection(@Nonnull CommandContext context,
-                                         @Nonnull List<MobWaveManager.TrackedWaveSnapshot> combos) {
-        context.sendMessage(Message.raw("Gate/Wave Combos").color("#f8d66d"));
+                                         @Nonnull List<TrackedWaveGateSnapshot> combos) {
+        context.sendMessage(Message.raw("Dungeon Gate / Wave Gate Combos").color("#f8d66d"));
         if (combos.isEmpty()) {
             context.sendMessage(Message.raw("- none").color("#ffcc66"));
             return;
         }
 
-        Map<String, List<MobWaveManager.TrackedWaveSnapshot>> grouped = new LinkedHashMap<>();
-        for (MobWaveManager.TrackedWaveSnapshot combo : combos) {
+        Map<String, List<TrackedWaveGateSnapshot>> grouped = new LinkedHashMap<>();
+        for (TrackedWaveGateSnapshot combo : combos) {
             grouped.computeIfAbsent(formatWorld(combo.worldName()), ignored -> new ArrayList<>()).add(combo);
         }
 
-        for (Map.Entry<String, List<MobWaveManager.TrackedWaveSnapshot>> entry : grouped.entrySet()) {
+        for (Map.Entry<String, List<TrackedWaveGateSnapshot>> entry : grouped.entrySet()) {
             context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
                     .color("#8fd3ff"));
-            for (MobWaveManager.TrackedWaveSnapshot combo : entry.getValue()) {
+            for (TrackedWaveGateSnapshot combo : entry.getValue()) {
                 context.sendMessage(Message.raw(String.format(
                         "  %-5s %-8s %-18s gate=%s owner=%s",
-                        "[" + combo.rankTier().letter() + "]",
+                        "[" + combo.rankTierId() + "]",
                         combo.stage().toUpperCase(),
                         formatCoords(combo.x(), combo.y(), combo.z()),
                         shortenGateId(combo.linkedGateId()),

@@ -1,6 +1,6 @@
 package com.airijko.endlessleveling.commands.gate;
 
-import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
+import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
 import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
@@ -19,8 +19,8 @@ public final class GateInstancesCommand extends AbstractCommand {
     private static final int MAX_LIST_LINES = 40;
 
     public GateInstancesCommand() {
-        super("instances", "List and delete persisted gate-instance entries by numeric ID");
-        this.addAliases("instance", "gates", "gateinstances");
+        super("instances", "List and delete persisted dungeon gate instance entries by numeric ID");
+        this.addAliases("instance", "gates", "gateinstances", "dungeongateinstances");
         this.addSubCommand(new ListSubCommand());
         this.addSubCommand(new DeleteByIdSubCommand());
     }
@@ -35,7 +35,7 @@ public final class GateInstancesCommand extends AbstractCommand {
     private static final class ListSubCommand extends AbstractCommand {
 
         private ListSubCommand() {
-            super("list", "List persisted gate instances with numeric IDs");
+            super("list", "List persisted dungeon gate instances with numeric IDs");
             this.addAliases("ls");
         }
 
@@ -46,11 +46,11 @@ public final class GateInstancesCommand extends AbstractCommand {
                     GateInstancePersistenceManager.listSavedInstancesById();
 
             if (instances.isEmpty()) {
-                context.sendMessage(Message.raw("No persisted gate instances found.").color("#ffcc66"));
+                context.sendMessage(Message.raw("No persisted dungeon gate instances found.").color("#ffcc66"));
                 return CompletableFuture.completedFuture(null);
             }
 
-            context.sendMessage(Message.raw("Persisted gate instances: " + instances.size()).color("#8fd3ff"));
+            context.sendMessage(Message.raw("Persisted dungeon gate instances: " + instances.size()).color("#8fd3ff"));
             int displayCount = Math.min(MAX_LIST_LINES, instances.size());
             for (int index = 0; index < displayCount; index++) {
                 GateInstancePersistenceManager.StoredGateInstance entry = instances.get(index);
@@ -80,10 +80,10 @@ public final class GateInstancesCommand extends AbstractCommand {
     private static final class DeleteByIdSubCommand extends AbstractCommand {
 
         private final RequiredArg<Integer> idArg =
-                this.withRequiredArg("id", "Numeric gate instance ID", Objects.requireNonNull(ArgTypes.INTEGER));
+                this.withRequiredArg("id", "Numeric dungeon gate instance ID", Objects.requireNonNull(ArgTypes.INTEGER));
 
         private DeleteByIdSubCommand() {
-            super("delete", "Delete a persisted gate instance entry by numeric ID");
+            super("delete", "Delete a persisted dungeon gate instance entry by numeric ID");
             this.addAliases("remove", "del", "rm");
         }
 
@@ -99,14 +99,14 @@ public final class GateInstancesCommand extends AbstractCommand {
             GateInstancePersistenceManager.StoredGateInstance entry =
                     GateInstancePersistenceManager.getSavedInstanceById(id);
             if (entry == null) {
-                context.sendMessage(Message.raw("No persisted gate instance found for id " + id + ".").color("#ff6666"));
+                context.sendMessage(Message.raw("No persisted dungeon gate instance found for id " + id + ".").color("#ff6666"));
                 return CompletableFuture.completedFuture(null);
             }
 
             String blockId = entry.blockId == null || entry.blockId.isBlank() ? "<unknown>" : entry.blockId;
-            PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(entry.gateKey, blockId);
+            EndlessLevelingCompatibility.cleanupGateInstanceByIdentity(entry.gateKey, blockId);
             context.sendMessage(Message.raw(
-                    "Deleted gate instance id " + id + " (gate=" + entry.gateKey + ").").color("#6cff78"));
+                    "Deleted dungeon gate instance id " + id + " (gate=" + entry.gateKey + ").").color("#6cff78"));
             return CompletableFuture.completedFuture(null);
         }
     }

@@ -1,6 +1,8 @@
 package com.airijko.endlessleveling.events;
 
 import com.airijko.endlessleveling.api.EndlessLevelingAPI;
+import com.airijko.endlessleveling.api.gates.InstanceDungeonDefinition;
+import com.airijko.endlessleveling.compatibility.AddonInstanceDungeonRegistry;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.MobWaveManager;
@@ -54,64 +56,9 @@ import java.util.logging.Level;
 import java.util.HashMap;
 
 public final class PortalLeveledInstanceRouter {
-
-    private static final Map<String, String> ROUTING_TO_SUFFIX = Map.of(
-            "EL_MJ_Instance_D01", "MJ_D01",
-            "EL_MJ_Instance_D02", "MJ_D02",
-            "EL_MJ_Instance_D03", "MJ_D03",
-            "EL_Endgame_Frozen_Dungeon", "EG_Frozen",
-            "EL_Endgame_Golem_Void", "EG_Golem",
-            "EL_Endgame_Swamp_Dungeon", "EG_Swamp"
-    );
-        private static final Map<String, String> SUFFIX_TO_ORIGINAL_TEMPLATE = Map.of(
-            "MJ_D01", "MJ_Instance_D01",
-            "MJ_D02", "MJ_Instance_D02",
-            "MJ_D03", "MJ_Instance_D03",
-            "EG_Frozen", "Endgame_Frozen_Dungeon",
-            "EG_Golem", "Endgame_Golem_Void",
-            "EG_Swamp", "Endgame_Swamp_Dungeon"
-        );
-
-    private static final Map<String, String> INSTANCE_TEMPLATE_TO_SUFFIX = Map.ofEntries(
-            Map.entry("EL_MJ_Instance_D01", "MJ_D01"),
-            Map.entry("EL_MJ_Instance_D02", "MJ_D02"),
-            Map.entry("EL_MJ_Instance_D03", "MJ_D03"),
-            Map.entry("EL_Endgame_Frozen_Dungeon", "EG_Frozen"),
-            Map.entry("EL_Endgame_Golem_Void", "EG_Golem"),
-            Map.entry("EL_Endgame_Swamp_Dungeon", "EG_Swamp")
-    );
-
-    private static final Map<String, String> ROUTING_TO_DISPLAY = Map.of(
-            "EL_MJ_Instance_D01", "Major Dungeon I",
-            "EL_MJ_Instance_D02", "Major Dungeon II",
-            "EL_MJ_Instance_D03", "Major Dungeon III",
-            "EL_Endgame_Frozen_Dungeon", "Endgame Frozen Dungeon",
-            "EL_Endgame_Golem_Void", "Endgame Golem Void",
-            "EL_Endgame_Swamp_Dungeon", "Endgame Swamp Dungeon"
-    );
     private static final int DYNAMIC_MIN_LEVEL = 1;
-        private static final int DYNAMIC_MAX_LEVEL = 500;
-        private static final int DYNAMIC_RANGE_SIZE = 15;
-
-    /** Block ID → routing world template name (EL_MajorDungeonPortal_D01 → EL_MJ_Instance_D01, etc.) */
-    private static final Map<String, String> BLOCK_ID_TO_ROUTING_NAME = Map.of(
-            "EL_MajorDungeonPortal_D01", "EL_MJ_Instance_D01",
-            "EL_MajorDungeonPortal_D02", "EL_MJ_Instance_D02",
-            "EL_MajorDungeonPortal_D03", "EL_MJ_Instance_D03",
-            "EL_EndgamePortal_Frozen_Dungeon", "EL_Endgame_Frozen_Dungeon",
-            "EL_EndgamePortal_Swamp_Dungeon", "EL_Endgame_Swamp_Dungeon",
-            "EL_EndgamePortal_Golem_Void", "EL_Endgame_Golem_Void"
-    );
-
-            /** Routing template name -> base portal block ID for pairing backfill. */
-            private static final Map<String, String> ROUTING_NAME_TO_BLOCK_ID = Map.of(
-                "EL_MJ_Instance_D01", "EL_MajorDungeonPortal_D01",
-                "EL_MJ_Instance_D02", "EL_MajorDungeonPortal_D02",
-                "EL_MJ_Instance_D03", "EL_MajorDungeonPortal_D03",
-                "EL_Endgame_Frozen_Dungeon", "EL_EndgamePortal_Frozen_Dungeon",
-                "EL_Endgame_Swamp_Dungeon", "EL_EndgamePortal_Swamp_Dungeon",
-                "EL_Endgame_Golem_Void", "EL_EndgamePortal_Golem_Void"
-            );
+    private static final int DYNAMIC_MAX_LEVEL = 500;
+    private static final int DYNAMIC_RANGE_SIZE = 15;
 
     /** Routing world template name → level profile announced when the portal gate was placed. */
     private static final Map<String, PendingLevelProfile> PENDING_LEVEL_RANGES = new ConcurrentHashMap<>();
@@ -1210,7 +1157,7 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        String suffix = ROUTING_TO_SUFFIX.get(routingName);
+            String suffix = resolveDungeonSpawnSuffix(routingName);
         if (suffix == null) {
             return;
         }
@@ -1743,7 +1690,7 @@ public final class PortalLeveledInstanceRouter {
                                                  @Nonnull String routingName,
                                                  @Nonnull World returnWorld,
                                                  @Nullable Transform returnTransform) {
-        String displayName = ROUTING_TO_DISPLAY.getOrDefault(routingName, routingName);
+        String displayName = resolveDungeonDisplayName(routingName);
 
         log(Level.INFO,
                 "[ELPortal] Routing player=%s source=%s template=%s",
@@ -1823,7 +1770,7 @@ public final class PortalLeveledInstanceRouter {
                         if (gateKey != null) {
                             persistGateInstanceImmediate(gateKey, spawned.getName(), gateBlockId);
                         }
-                        String suffix = ROUTING_TO_SUFFIX.get(routingName);
+                        String suffix = resolveDungeonSpawnSuffix(routingName);
                         queueTeleportToInstanceSpawn(playerRef,
                             spawned,
                             effectiveReturnTransform,
@@ -3258,7 +3205,7 @@ public final class PortalLeveledInstanceRouter {
 
         String templateName = resolveTemplateNameFromWorldName(worldName);
         if (templateName != null) {
-            return ROUTING_TO_DISPLAY.get(templateName);
+            return resolveDungeonDisplayName(templateName);
         }
 
         // el_gate_* world IDs do not include template name; recover display from
@@ -3273,7 +3220,7 @@ public final class PortalLeveledInstanceRouter {
                 continue;
             }
 
-            String displayName = ROUTING_TO_DISPLAY.get(expectation.routingName());
+            String displayName = resolveDungeonDisplayName(expectation.routingName());
             if (displayName != null && !displayName.isBlank()) {
                 return displayName;
             }
@@ -3289,28 +3236,14 @@ public final class PortalLeveledInstanceRouter {
      */
     @Nullable
     private static String resolveRoutingName(@Nonnull String blockId) {
-        String direct = BLOCK_ID_TO_ROUTING_NAME.get(blockId);
-        if (direct != null) {
-            return direct;
-        }
-        // Strip _Rank{S,A,B,C,D,E} suffix and retry
-        String stripped = blockId.replaceAll("_Rank[SABCDE]$", "");
-        return BLOCK_ID_TO_ROUTING_NAME.get(stripped);
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByBlockId(blockId);
+        return definition == null ? null : definition.routingTemplateName();
     }
 
     @Nonnull
     private static String canonicalizeRoutingTemplate(@Nonnull String templateName) {
-        String suffix = INSTANCE_TEMPLATE_TO_SUFFIX.get(templateName);
-        if (suffix == null) {
-            return templateName;
-        }
-
-        for (Map.Entry<String, String> entry : ROUTING_TO_SUFFIX.entrySet()) {
-            if (entry.getValue().equals(suffix)) {
-                return entry.getKey();
-            }
-        }
-        return templateName;
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByTemplate(templateName);
+        return definition == null ? templateName : definition.routingTemplateName();
     }
 
     private static void backfillGatePairingFromDirectEntry(@Nonnull PlayerRef playerRef,
@@ -3323,7 +3256,7 @@ public final class PortalLeveledInstanceRouter {
             return;
         }
 
-        String blockId = ROUTING_NAME_TO_BLOCK_ID.get(canonicalTemplate);
+        String blockId = resolveDungeonBaseBlockId(canonicalTemplate);
         if (blockId == null) {
             return;
         }
@@ -3423,8 +3356,8 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private static boolean isRoutingTemplateWorldName(@Nonnull String worldName) {
-        for (String template : ROUTING_TO_SUFFIX.keySet()) {
-            if (template.equalsIgnoreCase(worldName)) {
+        for (InstanceDungeonDefinition definition : getInstanceDungeonDefinitions()) {
+            if (definition.routingTemplateName().equalsIgnoreCase(worldName)) {
                 return true;
             }
         }
@@ -3444,33 +3377,13 @@ public final class PortalLeveledInstanceRouter {
         if (routingName == null || routingName.isBlank()) {
             return "el_gate";
         }
-        String originalTemplateName = resolveOriginalDungeonTemplateName(routingName);
-        String templateToken = sanitizeInstanceToken(originalTemplateName, "dungeon");
-        if (gateIdentity == null || gateIdentity.isBlank()) {
-            return "el_gate_" + templateToken;
-        }
-        String gateToken = sanitizeInstanceToken(gateIdentity, "gate");
-        return "el_gate_" + templateToken + "_" + gateToken;
+        return EndlessLevelingAPI.get().buildInstanceDungeonGroupId(gateIdentity, routingName);
     }
 
     @Nonnull
     private static String buildGateInstanceWorldName(@Nonnull String routingName,
                                                      @Nullable String gateIdentity) {
-        String originalTemplateName = resolveOriginalDungeonTemplateName(routingName);
-        String templateToken = originalTemplateName.replaceAll("[^A-Za-z0-9._-]", "_");
-        if (gateIdentity == null || gateIdentity.isBlank()) {
-            return "el_gate_" + templateToken + "_" + UUID.randomUUID();
-        }
-        String gateToken = sanitizeInstanceToken(gateIdentity, "gate");
-        if (gateToken.startsWith("el_gate_")) {
-            gateToken = gateToken.substring("el_gate_".length());
-        }
-        gateToken = gateToken.replaceAll("_+", "_").replaceAll("^_+", "").replaceAll("_+$", "");
-        if (gateToken.isBlank()) {
-            gateToken = UUID.randomUUID().toString();
-        }
-        // Deterministic world IDs keep gate pairing/saving stable across retries and restarts.
-        return "el_gate_" + templateToken + "_" + gateToken;
+        return EndlessLevelingAPI.get().buildInstanceDungeonWorldName(routingName, gateIdentity);
     }
 
     @Nonnull
@@ -3493,15 +3406,11 @@ public final class PortalLeveledInstanceRouter {
     
     @Nonnull
     private static String resolveOriginalDungeonTemplateName(@Nonnull String routingName) {
-        String canonicalRoutingName = canonicalizeRoutingTemplate(routingName);
-        String suffix = ROUTING_TO_SUFFIX.get(canonicalRoutingName);
-        if (suffix == null) {
-            suffix = INSTANCE_TEMPLATE_TO_SUFFIX.get(routingName);
-        }
-        if (suffix == null) {
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByTemplate(routingName);
+        if (definition == null || definition.legacyTemplateName() == null || definition.legacyTemplateName().isBlank()) {
             return routingName;
         }
-        return SUFFIX_TO_ORIGINAL_TEMPLATE.getOrDefault(suffix, routingName);
+        return definition.legacyTemplateName();
     }
 
     @Nullable
@@ -3976,47 +3885,14 @@ public final class PortalLeveledInstanceRouter {
 
     @Nullable
     private static String resolveSuffixFromWorldName(@Nonnull String worldName) {
-        String normalizedWorldName = worldName.toLowerCase(Locale.ROOT);
-        String bestTemplate = null;
-        String bestSuffix = null;
-        for (Map.Entry<String, String> entry : INSTANCE_TEMPLATE_TO_SUFFIX.entrySet()) {
-            String template = entry.getKey();
-            if (!normalizedWorldName.contains(template.toLowerCase(Locale.ROOT))) {
-                continue;
-            }
-
-            if (bestTemplate == null || template.length() > bestTemplate.length()) {
-                bestTemplate = template;
-                bestSuffix = entry.getValue();
-            }
-        }
-        return bestSuffix;
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByWorldName(worldName);
+        return definition == null ? null : definition.spawnSuffix();
     }
 
     @Nullable
     private static String resolveTemplateNameFromWorldName(@Nonnull String worldName) {
-        String normalizedWorldName = worldName.toLowerCase(Locale.ROOT);
-
-        // Check routing/template names first (the worldName may BE the template name for routed path)
-        for (String routingTemplate : ROUTING_TO_SUFFIX.keySet()) {
-            if (routingTemplate.equalsIgnoreCase(worldName)) {
-                return routingTemplate;
-            }
-        }
-
-        // Check instance world names (e.g. "instance-EL_MJ_Instance_D02-<uuid>")
-        String bestTemplate = null;
-        for (String templateName : INSTANCE_TEMPLATE_TO_SUFFIX.keySet()) {
-            if (!normalizedWorldName.contains(templateName.toLowerCase(Locale.ROOT))) {
-                continue;
-            }
-
-            if (bestTemplate == null || templateName.length() > bestTemplate.length()) {
-                bestTemplate = templateName;
-            }
-        }
-
-        return bestTemplate == null ? null : canonicalizeRoutingTemplate(bestTemplate);
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByWorldName(worldName);
+        return definition == null ? null : definition.routingTemplateName();
     }
 
     private static void applyFixedGateSpawn(@Nonnull PlayerRef playerRef,
@@ -4079,8 +3955,114 @@ public final class PortalLeveledInstanceRouter {
     }
 
     private static boolean isOriginalTemplateName(@Nullable String templateName) {
-        return templateName != null
-                && (templateName.startsWith("Endgame_") || templateName.startsWith("MJ_Instance_"));
+        return templateName != null && EndlessLevelingAPI.get().isInstanceDungeonOriginalTemplate(templateName);
+    }
+
+    @Nonnull
+    private static List<InstanceDungeonDefinition> getInstanceDungeonDefinitions() {
+        List<InstanceDungeonDefinition> registered = EndlessLevelingAPI.get().getInstanceDungeons();
+        if (registered != null && !registered.isEmpty()) {
+            return registered;
+        }
+        return AddonInstanceDungeonRegistry.getDefinitions();
+    }
+
+    @Nullable
+    private static InstanceDungeonDefinition resolveInstanceDungeonByBlockId(@Nonnull String blockId) {
+        InstanceDungeonDefinition definition = EndlessLevelingAPI.get().getInstanceDungeonByBlockId(blockId);
+        if (definition != null) {
+            return definition;
+        }
+        String stripped = stripRankSuffix(blockId);
+        for (InstanceDungeonDefinition candidate : AddonInstanceDungeonRegistry.getDefinitions()) {
+            if (candidate.basePortalBlockId().equalsIgnoreCase(blockId)
+                    || candidate.basePortalBlockId().equalsIgnoreCase(stripped)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static InstanceDungeonDefinition resolveInstanceDungeonByTemplate(@Nullable String templateName) {
+        if (templateName == null || templateName.isBlank()) {
+            return null;
+        }
+        InstanceDungeonDefinition definition = EndlessLevelingAPI.get().getInstanceDungeonByRoutingTemplate(templateName);
+        if (definition != null) {
+            return definition;
+        }
+        for (InstanceDungeonDefinition candidate : AddonInstanceDungeonRegistry.getDefinitions()) {
+            if (candidate.routingTemplateName().equalsIgnoreCase(templateName)) {
+                return candidate;
+            }
+            if (candidate.legacyTemplateName() != null
+                    && candidate.legacyTemplateName().equalsIgnoreCase(templateName)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static InstanceDungeonDefinition resolveInstanceDungeonByWorldName(@Nonnull String worldName) {
+        InstanceDungeonDefinition definition = EndlessLevelingAPI.get().getInstanceDungeonByWorldName(worldName);
+        if (definition != null) {
+            return definition;
+        }
+
+        String normalizedWorldName = worldName.toLowerCase(Locale.ROOT);
+        InstanceDungeonDefinition best = null;
+        int bestLength = -1;
+        for (InstanceDungeonDefinition candidate : AddonInstanceDungeonRegistry.getDefinitions()) {
+            String normalizedRouting = candidate.routingTemplateName().toLowerCase(Locale.ROOT);
+            String normalizedLegacy = candidate.legacyTemplateName() == null
+                    ? null
+                    : candidate.legacyTemplateName().toLowerCase(Locale.ROOT);
+            String worldPrefix = "el_gate_"
+                    + sanitizeInstanceToken(candidate.worldNameToken(), "dungeon").toLowerCase(Locale.ROOT);
+            boolean matches = normalizedWorldName.equals(worldPrefix)
+                    || normalizedWorldName.startsWith(worldPrefix + "_")
+                    || normalizedWorldName.equals(normalizedRouting)
+                    || normalizedWorldName.contains(normalizedRouting)
+                    || (normalizedLegacy != null
+                            && (normalizedWorldName.equals(normalizedLegacy)
+                                    || normalizedWorldName.contains(normalizedLegacy)));
+            if (!matches) {
+                continue;
+            }
+            int candidateLength = Math.max(worldPrefix.length(), normalizedRouting.length());
+            if (best == null || candidateLength > bestLength) {
+                best = candidate;
+                bestLength = candidateLength;
+            }
+        }
+        return best;
+    }
+
+    @Nonnull
+    private static String resolveDungeonDisplayName(@Nonnull String routingName) {
+        return EndlessLevelingAPI.get().resolveInstanceDungeonDisplayName(routingName);
+    }
+
+    @Nullable
+    private static String resolveDungeonBaseBlockId(@Nonnull String routingName) {
+        String blockId = EndlessLevelingAPI.get().resolveInstanceDungeonBasePortalBlockId(routingName);
+        if (blockId != null) {
+            return blockId;
+        }
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByTemplate(routingName);
+        return definition == null ? null : definition.basePortalBlockId();
+    }
+
+    @Nullable
+    private static String resolveDungeonSpawnSuffix(@Nonnull String routingName) {
+        String suffix = EndlessLevelingAPI.get().resolveInstanceDungeonSpawnSuffix(routingName);
+        if (suffix != null) {
+            return suffix;
+        }
+        InstanceDungeonDefinition definition = resolveInstanceDungeonByTemplate(routingName);
+        return definition == null ? null : definition.spawnSuffix();
     }
 
     @Nullable

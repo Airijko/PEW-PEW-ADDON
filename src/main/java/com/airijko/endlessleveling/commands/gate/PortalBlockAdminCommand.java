@@ -69,7 +69,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static ScheduledFuture<?> pendingTask;
 
     public PortalBlockAdminCommand() {
-        super("blocks", "List and remove placed portal blocks in your current world");
+        super("blocks", "List and remove placed dungeon gate portal blocks in your current world");
         this.addAliases("portalblocks", "portalblock", "elportalblocks", "gateblocks");
         this.addSubCommand(new ListSubCommand());
         this.addSubCommand(new RemoveNearestSubCommand());
@@ -441,7 +441,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static final class ListSubCommand extends AbstractCommand {
 
         private ListSubCommand() {
-            super("list", "List all portal blocks currently loaded in this world");
+            super("list", "List all dungeon gate portal blocks currently loaded in this world");
         }
 
         @Nullable
@@ -546,7 +546,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static final class RemoveNearestSubCommand extends AbstractCommand {
 
         private RemoveNearestSubCommand() {
-            super("remove-nearest", "Remove the nearest placed portal block in your current world");
+            super("remove-nearest", "Remove the nearest placed dungeon gate portal block in your current world");
             this.addAliases("remove", "rm");
         }
 
@@ -609,7 +609,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     private static final class RemoveAllSubCommand extends AbstractCommand {
 
         private RemoveAllSubCommand() {
-            super("remove-all", "Remove all placed portal blocks in your current world");
+            super("remove-all", "Remove all placed dungeon gate portal blocks in your current world");
             this.addAliases("clear", "purge");
         }
 

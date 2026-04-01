@@ -11,7 +11,7 @@ import java.util.concurrent.CompletableFuture;
 public final class GateDebugCommand extends AbstractCommand {
 
     public GateDebugCommand() {
-        super("debug", "Gate debug tools");
+        super("debug", "Dungeon gate debug tools");
         this.addSubCommand(new GateDebugPreventEnterCommand());
     }
 

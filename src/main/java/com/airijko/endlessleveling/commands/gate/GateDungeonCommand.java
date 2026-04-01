@@ -12,7 +12,7 @@ public final class GateDungeonCommand extends AbstractCommand {
 
     public GateDungeonCommand() {
         super("dungeon", "Dungeon gate commands");
-        this.addAliases("dungeons");
+        this.addAliases("dungeons", "dungeongate", "dungeongates");
 
         this.addSubCommand(new PortalGiveCommand());
         this.addSubCommand(new PortalGateTestCommand());
@@ -28,7 +28,7 @@ public final class GateDungeonCommand extends AbstractCommand {
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-                "Usage: /gate dungeon <give|spawn|blocks|returnpos|deleteinstances|instances|track|debug> ...")
+                "Usage: /gate dungeon <give|spawn|blocks|returnpos|deleteinstances|instances|track|debug> ... (alias: /gate dungeongate ...)")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }

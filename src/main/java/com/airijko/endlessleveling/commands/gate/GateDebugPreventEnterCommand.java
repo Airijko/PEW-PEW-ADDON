@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 public final class GateDebugPreventEnterCommand extends AbstractCommand {
 
     public GateDebugPreventEnterCommand() {
-        super("prevententer", "Toggle gate entry prevention for debug testing");
+        super("prevententer", "Toggle dungeon gate entry prevention for debug testing");
         this.addSubCommand(new PreventEnterSetCommand(true));
         this.addSubCommand(new PreventEnterSetCommand(false));
         this.addSubCommand(new PreventEnterStatusCommand());
@@ -38,7 +38,7 @@ public final class GateDebugPreventEnterCommand extends AbstractCommand {
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             PortalLeveledInstanceRouter.setDebugPreventEnter(enabled);
-            context.sendMessage(Message.raw("Gate debug prevententer set to " + enabled + ".").color(enabled ? "#ff6666" : "#6cff78"));
+            context.sendMessage(Message.raw("Dungeon gate debug prevententer set to " + enabled + ".").color(enabled ? "#ff6666" : "#6cff78"));
             return CompletableFuture.completedFuture(null);
         }
     }
@@ -53,7 +53,7 @@ public final class GateDebugPreventEnterCommand extends AbstractCommand {
         @Override
         protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
             boolean enabled = PortalLeveledInstanceRouter.isDebugPreventEnterEnabled();
-            context.sendMessage(Message.raw("Gate debug prevententer is " + enabled + ".").color(enabled ? "#ff6666" : "#6cff78"));
+            context.sendMessage(Message.raw("Dungeon gate debug prevententer is " + enabled + ".").color(enabled ? "#ff6666" : "#6cff78"));
             return CompletableFuture.completedFuture(null);
         }
     }

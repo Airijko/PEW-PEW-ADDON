@@ -1,7 +1,7 @@
 package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.enums.GateRankTier;
-import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
+import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -23,8 +23,8 @@ public class PortalGateTestCommand extends AbstractCommand {
             Objects.requireNonNull(ArgTypes.STRING));
 
     public PortalGateTestCommand() {
-        super("spawn", "Spawn an EL gate near you (/gate dungeon spawn <S|A|B|C|D|E|random>)");
-        this.addAliases("gatespawn", "elgatespawn", "spawnrandomgate");
+        super("spawn", "Spawn an EL dungeon gate near you (/gate dungeon spawn <S|A|B|C|D|E|random>)");
+        this.addAliases("gatespawn", "elgatespawn", "spawnrandomgate", "spawndungeongate");
     }
 
     @Nullable
@@ -53,14 +53,14 @@ public class PortalGateTestCommand extends AbstractCommand {
         }
 
         if ("RANDOM".equals(normalizedArg)) {
-            return NaturalPortalGateManager.spawnRandomGateNearPlayer(player, true)
+            return EndlessLevelingCompatibility.spawnRandomDungeonGate(player, true)
                     .thenAccept(spawned -> {
                         if (spawned) {
                             context.sendMessage(
-                                    Message.raw("Spawned a random gate near your loaded chunks.").color("#6cff78"));
+                                    Message.raw("Spawned a random dungeon gate near your loaded chunks.").color("#6cff78"));
                         } else {
                             context.sendMessage(
-                                    Message.raw("Failed to spawn a gate nearby (no suitable loaded chunk found).")
+                                    Message.raw("Failed to spawn a dungeon gate nearby (no suitable loaded chunk found).")
                                             .color("#ff6666"));
                         }
                     });
@@ -72,14 +72,14 @@ public class PortalGateTestCommand extends AbstractCommand {
             return CompletableFuture.completedFuture(null);
         }
 
-        return NaturalPortalGateManager.spawnGateNearPlayerWithRank(player, rankTier, true)
+        return EndlessLevelingCompatibility.spawnDungeonGateWithRank(player, rankTier.name(), true)
             .thenAccept(spawned -> {
                 if (spawned) {
                     context.sendMessage(
-                            Message.raw("Spawned a " + rankTier.letter() + "-rank gate near your loaded chunks.").color("#6cff78"));
+                            Message.raw("Spawned a " + rankTier.letter() + "-rank dungeon gate near your loaded chunks.").color("#6cff78"));
                 } else {
                     context.sendMessage(
-                            Message.raw("Failed to spawn a gate nearby (no suitable loaded chunk found).")
+                            Message.raw("Failed to spawn a dungeon gate nearby (no suitable loaded chunk found).")
                                     .color("#ff6666"));
                 }
             });
