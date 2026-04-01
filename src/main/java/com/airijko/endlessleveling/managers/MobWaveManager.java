@@ -40,6 +40,7 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -86,6 +87,9 @@ public final class MobWaveManager {
     private static final String WAVE_10_SECOND_COUNTDOWN_SOUND_ID = "SFX_EL_DungeonBreak_10_Second_Countdown";
     private static final String S_WAVE_1_MINUTE_COUNTDOWN_SOUND_ID = "SFX_EL_S_Wave_1_Minute_Countdown";
     private static final int DEFAULT_NATURAL_WAVE_MAX_CONCURRENT_SPAWNS = 3;
+    private static final long NO_KILL_HINT_INTERVAL_MS = 10_000L;
+    private static final double NO_KILL_HINT_NEARBY_RADIUS = 48.0D;
+    private static final int NO_KILL_HINT_MAX_LISTED_MOBS = 12;
 
     private static final String[] HOSTILE_ROLE_KEYWORDS = new String[] {
             "skeleton", "zombie", "undead", "ghoul", "wraith", "goblin", "orc", "bandit", "raider",
@@ -101,6 +105,7 @@ public final class MobWaveManager {
     private static final Map<UUID, ActiveWaveSession> ACTIVE_SESSIONS = new ConcurrentHashMap<>();
     private static final Map<UUID, ScheduledFuture<?>> PENDING_NATURAL_COUNTDOWNS = new ConcurrentHashMap<>();
     private static final Map<UUID, List<ScheduledFuture<?>>> PENDING_NATURAL_PRESTART_COUNTDOWNS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS = new ConcurrentHashMap<>();
     private static final Map<UUID, WavePortalPlacement> PENDING_NATURAL_PREVIEW_PORTALS = new ConcurrentHashMap<>();
     private static final Map<UUID, WaveStartSource> PENDING_NATURAL_SOURCES = new ConcurrentHashMap<>();
     private static final Map<UUID, GateRankTier> PENDING_NATURAL_RANKS = new ConcurrentHashMap<>();
@@ -136,6 +141,7 @@ public final class MobWaveManager {
         PENDING_NATURAL_COUNTDOWNS.clear();
         PENDING_NATURAL_SOURCES.clear();
         PENDING_NATURAL_RANKS.clear();
+        PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.clear();
         for (ScheduledFuture<?> countdown : countdowns) {
             if (countdown != null) {
                 countdown.cancel(false);
@@ -300,7 +306,9 @@ public final class MobWaveManager {
 
         int delayMinutes = resolveNaturalWaveOpenDelay(rankTier);
         long delaySeconds = Math.max(1L, TimeUnit.MINUTES.toSeconds(delayMinutes));
-        GATE_WAVE_STATES.put(canonicalGateId, LinkedGateWaveState.pending(rankTier, playerRef.getUuid()));
+        long opensAtEpochMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(delaySeconds);
+        GATE_WAVE_STATES.put(canonicalGateId,
+            LinkedGateWaveState.pending(rankTier, playerRef.getUuid(), opensAtEpochMillis));
         if (announceLinkedBreak) {
             announceLinkedGateBreak(rankTier, delayMinutes);
         }
@@ -322,7 +330,8 @@ public final class MobWaveManager {
                         null,
                         WaveStartSource.LINKED_GATE);
                 if (result.started) {
-                    GATE_WAVE_STATES.put(canonicalGateId, LinkedGateWaveState.active(rankTier, playerRef.getUuid()));
+                    GATE_WAVE_STATES.put(canonicalGateId,
+                            LinkedGateWaveState.active(rankTier, playerRef.getUuid(), System.currentTimeMillis()));
                     announceLinkedGateOpen(rankTier);
                 } else {
                     GATE_WAVE_STATES.remove(canonicalGateId);
@@ -364,6 +373,37 @@ public final class MobWaveManager {
         }
 
         return true;
+    }
+
+    @Nullable
+    public static LinkedGateWaveTimingSnapshot getLinkedGateWaveTimingSnapshot(@Nullable String gateIdentity) {
+        String canonicalGateId = normalizeGateIdentity(gateIdentity);
+        if (canonicalGateId == null) {
+            return null;
+        }
+
+        LinkedGateWaveState state = GATE_WAVE_STATES.get(canonicalGateId);
+        if (state == null) {
+            return null;
+        }
+
+        long expiresAtEpochMillis = 0L;
+        for (ActiveWaveSession session : ACTIVE_SESSIONS.values()) {
+            if (session == null || session.cancelled.get()) {
+                continue;
+            }
+            if (!canonicalGateId.equals(session.linkedGateId)) {
+                continue;
+            }
+            expiresAtEpochMillis = session.expiryAtEpochMillis;
+            break;
+        }
+
+        return new LinkedGateWaveTimingSnapshot(
+                state.stage,
+                state.opensAtEpochMillis,
+                state.openedAtEpochMillis,
+                expiresAtEpochMillis);
     }
 
     public static void unregisterLinkedGateWave(@Nullable String gateIdentity) {
@@ -440,6 +480,7 @@ public final class MobWaveManager {
 
         int delayMinutes = resolveNaturalWaveOpenDelay(rankTier);
         long delaySeconds = Math.max(1L, TimeUnit.MINUTES.toSeconds(delayMinutes));
+        long opensAtEpochMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(delaySeconds);
 
         WavePortalPlacement previewPortal = createWavePortalPlacement(world,
                 playerRef.getTransform() == null ? null : playerRef.getTransform().getPosition(),
@@ -450,6 +491,7 @@ public final class MobWaveManager {
         PENDING_NATURAL_PREVIEW_PORTALS.put(playerUuid, previewPortal);
         PENDING_NATURAL_SOURCES.put(playerUuid, startSource);
         PENDING_NATURAL_RANKS.put(playerUuid, rankTier);
+        PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.put(playerUuid, opensAtEpochMillis);
 
         announceNaturalWaveBreak(rankTier, delayMinutes, previewPortal);
         if (delaySeconds >= 10L) {
@@ -459,6 +501,7 @@ public final class MobWaveManager {
 
         ScheduledFuture<?> countdownFuture = HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             PENDING_NATURAL_COUNTDOWNS.remove(playerUuid);
+            PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.remove(playerUuid);
             cancelScheduledFutures(PENDING_NATURAL_PRESTART_COUNTDOWNS.remove(playerUuid));
             WavePortalPlacement placement = PENDING_NATURAL_PREVIEW_PORTALS.remove(playerUuid);
             WaveStartSource source = PENDING_NATURAL_SOURCES.remove(playerUuid);
@@ -499,6 +542,7 @@ public final class MobWaveManager {
         ScheduledFuture<?> countdown = PENDING_NATURAL_COUNTDOWNS.remove(playerUuid);
         PENDING_NATURAL_SOURCES.remove(playerUuid);
         PENDING_NATURAL_RANKS.remove(playerUuid);
+        PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.remove(playerUuid);
         if (countdown != null) {
             countdown.cancel(false);
             shouldForceAnchorCleanup = true;
@@ -539,6 +583,14 @@ public final class MobWaveManager {
             return StopResult.stopped(session.roleName + " | cleared " + clearedLinkedCombos + " linked combo(s)");
         }
         return StopResult.stopped(session.roleName);
+    }
+
+    public static long getPendingNaturalWaveOpensAtEpochMillis(@Nullable UUID ownerUuid) {
+        if (ownerUuid == null) {
+            return 0L;
+        }
+        Long value = PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.get(ownerUuid);
+        return value == null ? 0L : value;
     }
 
     @Nonnull
@@ -759,6 +811,7 @@ public final class MobWaveManager {
                 applyWaveLevelOverride(session, waveLevelRange);
                 if (spawnedRef != null) {
                     session.activeWaveMobRefs.add(spawnedRef);
+                    session.activeWaveMobNames.put(spawnedRef, roleName);
                     progress.spawned.incrementAndGet();
                     if (spawnAsBoss) {
                         progress.bossSpawned.set(true);
@@ -866,6 +919,7 @@ public final class MobWaveManager {
         }
 
         session.activeWaveMobRefs.add(bossRef);
+        session.activeWaveMobNames.put(bossRef, bossRole);
         session.playerRef.sendMessage(
                 Message.raw(String.format(Locale.ROOT, "[Wave] Boss fallback promoted: %s (Lv %d)", bossRole, waveLevelRange.bossLevel))
                         .color("#f3b37a")
@@ -900,7 +954,16 @@ public final class MobWaveManager {
                 return;
             }
 
+            int aliveBefore = active.lastAliveMobCount;
             if (!isWaveCleared(active)) {
+                int aliveAfter = active.activeWaveMobRefs.size();
+                long now = System.currentTimeMillis();
+                if (aliveAfter < aliveBefore) {
+                    active.lastKillAtEpochMillis = now;
+                    active.lastNoKillHintAtEpochMillis = -1L;
+                }
+                active.lastAliveMobCount = aliveAfter;
+                maybeSendNoKillMobCoordinatesHint(active, now);
                 active.waveClearedAtEpochMillis = -1L;
                 return;
             }
@@ -935,14 +998,178 @@ public final class MobWaveManager {
 
     private static boolean isWaveCleared(@Nonnull ActiveWaveSession session) {
         List<Ref<EntityStore>> stillAlive = new ArrayList<>();
+        Map<Ref<EntityStore>, String> aliveMobNames = new IdentityHashMap<>();
         for (Ref<EntityStore> ref : session.activeWaveMobRefs) {
             if (ref != null && ref.isValid()) {
                 stillAlive.add(ref);
+                String mobName = session.activeWaveMobNames.get(ref);
+                if (mobName != null) {
+                    aliveMobNames.put(ref, mobName);
+                }
             }
         }
         session.activeWaveMobRefs.clear();
         session.activeWaveMobRefs.addAll(stillAlive);
+        session.activeWaveMobNames.clear();
+        session.activeWaveMobNames.putAll(aliveMobNames);
         return session.activeWaveMobRefs.isEmpty();
+    }
+
+    private static void maybeSendNoKillMobCoordinatesHint(@Nonnull ActiveWaveSession session, long nowMillis) {
+        if (session.activeWaveMobRefs.isEmpty()) {
+            return;
+        }
+        if (session.lastKillAtEpochMillis <= 0L) {
+            session.lastKillAtEpochMillis = nowMillis;
+            return;
+        }
+        if (nowMillis - session.lastKillAtEpochMillis < NO_KILL_HINT_INTERVAL_MS) {
+            return;
+        }
+        if (session.lastNoKillHintAtEpochMillis > 0L
+                && nowMillis - session.lastNoKillHintAtEpochMillis < NO_KILL_HINT_INTERVAL_MS) {
+            return;
+        }
+
+        List<MobCoordinateHintLine> hintLines = buildMobCoordinateHintLines(session);
+        if (hintLines.isEmpty()) {
+            return;
+        }
+
+        List<PlayerRef> nearbyPlayers = resolveNearbyWavePlayers(session);
+        if (nearbyPlayers.isEmpty()) {
+            return;
+        }
+
+        Message header = Message.raw(String.format(Locale.ROOT,
+                "[Wave] No kills for %ds. Remaining mobs:",
+                NO_KILL_HINT_INTERVAL_MS / 1000L)).color("#ffd27a");
+
+        for (PlayerRef nearby : nearbyPlayers) {
+            nearby.sendMessage(header);
+            int index = 1;
+            for (MobCoordinateHintLine line : hintLines) {
+                nearby.sendMessage(Message.raw(String.format(Locale.ROOT,
+                        "[Wave] %d. %s @ (%d, %d, %d)",
+                        index++,
+                        line.mobName,
+                        line.x,
+                        line.y,
+                        line.z)).color("#d9f0ff"));
+            }
+        }
+
+        session.lastNoKillHintAtEpochMillis = nowMillis;
+    }
+
+    @Nonnull
+    private static List<MobCoordinateHintLine> buildMobCoordinateHintLines(@Nonnull ActiveWaveSession session) {
+        List<MobCoordinateHintLine> lines = new ArrayList<>();
+        for (Ref<EntityStore> mobRef : session.activeWaveMobRefs) {
+            if (mobRef == null || !mobRef.isValid()) {
+                continue;
+            }
+            Store<EntityStore> store = mobRef.getStore();
+            if (store == null) {
+                continue;
+            }
+            TransformComponent transform = store.getComponent(mobRef,
+                    Objects.requireNonNull(TransformComponent.getComponentType()));
+            if (transform == null) {
+                continue;
+            }
+            Vector3d pos = transform.getPosition();
+            if (pos == null) {
+                continue;
+            }
+
+            String mobName = session.activeWaveMobNames.getOrDefault(mobRef, "Unknown Mob");
+            lines.add(new MobCoordinateHintLine(
+                    mobName,
+                    (int) Math.floor(pos.x),
+                    (int) Math.floor(pos.y),
+                    (int) Math.floor(pos.z)));
+            if (lines.size() >= NO_KILL_HINT_MAX_LISTED_MOBS) {
+                break;
+            }
+        }
+        return lines;
+    }
+
+    @Nonnull
+    private static List<PlayerRef> resolveNearbyWavePlayers(@Nonnull ActiveWaveSession session) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return List.of();
+        }
+
+        Vector3d center = resolveWaveHintCenter(session);
+        if (center == null) {
+            return List.of();
+        }
+
+        List<PlayerRef> nearby = new ArrayList<>();
+        double radiusSquared = NO_KILL_HINT_NEARBY_RADIUS * NO_KILL_HINT_NEARBY_RADIUS;
+        for (PlayerRef player : universe.getPlayers()) {
+            Ref<EntityStore> playerEntityRef = player.getReference();
+            if (playerEntityRef == null || !playerEntityRef.isValid()) {
+                continue;
+            }
+
+            Store<EntityStore> store = playerEntityRef.getStore();
+            if (store == null) {
+                continue;
+            }
+
+            World world = store.getExternalData().getWorld();
+            if (world == null || !session.worldName.equals(world.getName())) {
+                continue;
+            }
+
+            TransformComponent transform = store.getComponent(playerEntityRef,
+                    Objects.requireNonNull(TransformComponent.getComponentType()));
+            if (transform == null) {
+                continue;
+            }
+
+            Vector3d playerPos = transform.getPosition();
+            if (playerPos == null) {
+                continue;
+            }
+
+            if (distanceSquared(center, playerPos) <= radiusSquared) {
+                nearby.add(player);
+            }
+        }
+        return nearby;
+    }
+
+    @Nullable
+    private static Vector3d resolveWaveHintCenter(@Nonnull ActiveWaveSession session) {
+        if (session.waveCenterPosition != null) {
+            return session.waveCenterPosition;
+        }
+        if (session.wavePortalPlacement != null) {
+            return new Vector3d(session.wavePortalPlacement.x, session.wavePortalPlacement.y, session.wavePortalPlacement.z);
+        }
+
+        Ref<EntityStore> ref = session.playerRef.getReference();
+        if (ref == null || !ref.isValid()) {
+            return null;
+        }
+        Store<EntityStore> store = ref.getStore();
+        if (store == null) {
+            return null;
+        }
+        TransformComponent transform = store.getComponent(ref, Objects.requireNonNull(TransformComponent.getComponentType()));
+        return transform == null ? null : transform.getPosition();
+    }
+
+    private static double distanceSquared(@Nonnull Vector3d a, @Nonnull Vector3d b) {
+        double dx = a.x - b.x;
+        double dy = a.y - b.y;
+        double dz = a.z - b.z;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private static int forceKillActiveWaveMobs(@Nonnull ActiveWaveSession session) {
@@ -961,6 +1188,8 @@ public final class MobWaveManager {
             killed++;
         }
         session.activeWaveMobRefs.clear();
+        session.activeWaveMobNames.clear();
+        session.lastAliveMobCount = 0;
         session.waveClearedAtEpochMillis = -1L;
         return killed;
     }
@@ -2551,6 +2780,10 @@ public final class MobWaveManager {
         private int currentWave = 0;
         private long waveClearedAtEpochMillis = -1L;
         private final List<Ref<EntityStore>> activeWaveMobRefs = new ArrayList<>();
+        private final Map<Ref<EntityStore>, String> activeWaveMobNames = new IdentityHashMap<>();
+        private int lastAliveMobCount = 0;
+        private long lastKillAtEpochMillis = System.currentTimeMillis();
+        private long lastNoKillHintAtEpochMillis = -1L;
         private final List<ScheduledFuture<?>> scheduledFutures = new ArrayList<>();
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
         @Nullable
@@ -2599,6 +2832,21 @@ public final class MobWaveManager {
         }
     }
 
+    private static final class MobCoordinateHintLine {
+        @Nonnull
+        private final String mobName;
+        private final int x;
+        private final int y;
+        private final int z;
+
+        private MobCoordinateHintLine(@Nonnull String mobName, int x, int y, int z) {
+            this.mobName = mobName;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+    }
+
     private enum WaveStartSource {
         DIRECT_COMMAND,
         MANUAL_NATURAL,
@@ -2613,23 +2861,33 @@ public final class MobWaveManager {
         private final UUID ownerUuid;
         @Nonnull
         private final String stage;
+        private final long opensAtEpochMillis;
+        private final long openedAtEpochMillis;
 
         private LinkedGateWaveState(@Nonnull GateRankTier rankTier,
                                     @Nullable UUID ownerUuid,
-                                    @Nonnull String stage) {
+                                    @Nonnull String stage,
+                                    long opensAtEpochMillis,
+                                    long openedAtEpochMillis) {
             this.rankTier = rankTier;
             this.ownerUuid = ownerUuid;
             this.stage = stage;
+            this.opensAtEpochMillis = opensAtEpochMillis;
+            this.openedAtEpochMillis = openedAtEpochMillis;
         }
 
         @Nonnull
-        private static LinkedGateWaveState pending(@Nonnull GateRankTier rankTier, @Nullable UUID ownerUuid) {
-            return new LinkedGateWaveState(rankTier, ownerUuid, "pending");
+        private static LinkedGateWaveState pending(@Nonnull GateRankTier rankTier,
+                                                   @Nullable UUID ownerUuid,
+                                                   long opensAtEpochMillis) {
+            return new LinkedGateWaveState(rankTier, ownerUuid, "pending", opensAtEpochMillis, 0L);
         }
 
         @Nonnull
-        private static LinkedGateWaveState active(@Nonnull GateRankTier rankTier, @Nullable UUID ownerUuid) {
-            return new LinkedGateWaveState(rankTier, ownerUuid, "active");
+        private static LinkedGateWaveState active(@Nonnull GateRankTier rankTier,
+                                                  @Nullable UUID ownerUuid,
+                                                  long openedAtEpochMillis) {
+            return new LinkedGateWaveState(rankTier, ownerUuid, "active", 0L, openedAtEpochMillis);
         }
     }
 
@@ -2743,6 +3001,12 @@ public final class MobWaveManager {
                                       @Nullable Integer x,
                                       @Nullable Integer y,
                                       @Nullable Integer z) {
+    }
+
+    public record LinkedGateWaveTimingSnapshot(@Nonnull String stage,
+                                               long opensAtEpochMillis,
+                                               long openedAtEpochMillis,
+                                               long expiresAtEpochMillis) {
     }
 
     public static final class StopResult {

@@ -123,10 +123,15 @@ public class EndlessLevelingAddon extends JavaPlugin {
         EndlessLevelingCompatibility.registerWaveGateSessionExecutorBridge(AddonGatesManager.INSTANCE);
         EndlessLevelingCompatibility.registerGateInstanceRoutingBridge(AddonGateInstanceRoutingManager.INSTANCE);
 
+        // Gate tracker HUD is command-driven and should keep refreshing even when the
+        // broader addon runtime is disabled (core-owned mode).
+        this.getEntityStoreRegistry().registerSystem(new GateTrackerHudRefreshSystem());
+        GateTrackerHudReadyListener gateTrackerHudReadyListener = new GateTrackerHudReadyListener();
+        this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, gateTrackerHudReadyListener::onPlayerReady);
+
         if (isAddonRuntimeEnabled()) {
             this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
             this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
-            this.getEntityStoreRegistry().registerSystem(new GateTrackerHudRefreshSystem());
             NaturalPortalGateManager.initialize(this, this.filesManager);
             MobWaveManager.initialize();
             PortalProximityManager.initialize(this);
@@ -138,10 +143,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
             this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
             PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
-            GateTrackerHudReadyListener gateTrackerHudReadyListener = new GateTrackerHudReadyListener();
             PortalReturnInteractionListener portalReturnInteractionListener = new PortalReturnInteractionListener();
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
-            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, gateTrackerHudReadyListener::onPlayerReady);
             this.getEventRegistry().registerGlobal(PlayerInteractEvent.class, portalReturnInteractionListener::onPlayerInteract);
             this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
             this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
@@ -164,13 +167,14 @@ public class EndlessLevelingAddon extends JavaPlugin {
         EndlessLevelingCompatibility.unregisterDungeonGateLifecycleBridge(AddonGatesManager.INSTANCE);
         EndlessLevelingCompatibility.unregisterGatesManager(AddonGatesManager.INSTANCE);
 
+        GateTrackerManager.shutdown();
+        GateTrackerHud.clearAllTrackedHuds();
+
         if (isAddonRuntimeEnabled()) {
             MobWaveManager.shutdown();
             PortalLeveledInstanceRouter.saveGateInstances();
             NaturalPortalGateManager.shutdown();
             ChunkKeepaliveManager.shutdown();
-            GateTrackerManager.shutdown();
-            GateTrackerHud.clearAllTrackedHuds();
             PortalProximityManager.shutdown();
             PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();
             PortalLeveledInstanceRouter.shutdown();
@@ -222,12 +226,13 @@ public class EndlessLevelingAddon extends JavaPlugin {
                     this.filesManager.shouldEnableExampleCommand(),
                     this.filesManager.shouldEnableExampleEvents());
 
+            GateTrackerManager.shutdown();
+            GateTrackerHud.clearAllTrackedHuds();
+
             if (isAddonRuntimeEnabled()) {
                 NaturalPortalGateManager.shutdown();
                 MobWaveManager.shutdown();
                 ChunkKeepaliveManager.shutdown();
-                GateTrackerManager.shutdown();
-                GateTrackerHud.clearAllTrackedHuds();
             }
 
             EndlessLevelingCompatibility.unregisterDungeonGateContentProvider(dungeonGateContentProvider);

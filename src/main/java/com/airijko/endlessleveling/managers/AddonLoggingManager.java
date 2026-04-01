@@ -36,11 +36,12 @@ public final class AddonLoggingManager {
     @Nonnull
     public static Level effectiveBaseLevel() {
         if (enableLogging) {
-            return baseLevel;
+            // Master switch enabled: allow every addon log level through.
+            return Level.ALL;
         }
 
-        // When logging is disabled, suppress INFO/FINE and clamp to WARNING/SEVERE.
-        return baseLevel.intValue() >= Level.SEVERE.intValue() ? Level.SEVERE : Level.WARNING;
+        // Master switch disabled: respect the configured base threshold instead.
+        return baseLevel;
     }
 
     public static void log(@Nonnull HytaleLogger logger,

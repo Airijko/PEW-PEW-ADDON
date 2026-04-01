@@ -10,7 +10,6 @@ import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
@@ -31,14 +30,12 @@ public final class GateTrackerHud extends CustomUIHud {
     private static final Map<UUID, Object> HUD_LOCKS = new ConcurrentHashMap<>();
 
     private final PlayerRef targetPlayerRef;
-    private final Ref<EntityStore> targetEntityRef;
     private final Map<String, Object> lastUiState = new HashMap<>();
     private final AtomicBoolean built = new AtomicBoolean(false);
 
-    public GateTrackerHud(@Nonnull PlayerRef playerRef, @Nullable Ref<EntityStore> targetEntityRef) {
+    public GateTrackerHud(@Nonnull PlayerRef playerRef) {
         super(playerRef);
         this.targetPlayerRef = playerRef;
-        this.targetEntityRef = targetEntityRef;
     }
 
     @Override
@@ -51,12 +48,10 @@ public final class GateTrackerHud extends CustomUIHud {
             return;
         }
         uiCommandBuilder.append("Hud/EndlessGateTrackerHud.ui");
-        // Write initial label values directly into the build packet so the HUD
-        // shows real data immediately rather than sitting on .ui defaults.
-        computeHudLabels(uuid, uiCommandBuilder);
+        computeHudLabels(uuid, null, uiCommandBuilder);
     }
 
-    public void refreshHud() {
+    public void refreshHud(@Nonnull Store<EntityStore> store) {
         if (!built.get()) {
             return;
         }
@@ -66,11 +61,9 @@ public final class GateTrackerHud extends CustomUIHud {
             return;
         }
         UICommandBuilder builder = new UICommandBuilder();
-        // Force a full HUD payload refresh so dynamic fields like player coordinates
-        // are always re-sent on refresh ticks.
-        lastUiState.clear();
-        computeHudLabels(uuid, builder);
-        update(false, builder);
+        if (computeDynamicHudLabels(uuid, store, builder)) {
+            update(false, builder);
+        }
     }
 
     public static OpenStatus open(@Nonnull Player player, @Nonnull PlayerRef playerRef) {
@@ -80,7 +73,7 @@ public final class GateTrackerHud extends CustomUIHud {
         }
 
         synchronized (getHudLock(uuid)) {
-            GateTrackerHud newHud = new GateTrackerHud(playerRef, player.getReference());
+            GateTrackerHud newHud = new GateTrackerHud(playerRef);
             ACTIVE_HUDS.put(uuid, newHud);
 
             if (GateTrackerMultipleHudCompatibility.showHud(player, playerRef, MULTI_HUD_SLOT, newHud)) {
@@ -163,7 +156,9 @@ public final class GateTrackerHud extends CustomUIHud {
         if (hud == null || !hud.built.get()) {
             return null;
         }
-        return hud.resolveLiveEntityRef();
+        // Use targetPlayerRef.getReference() directly — the same proven pattern
+        // as PlayerHud — to ensure store identity matches the ticking store.
+        return hud.targetPlayerRef.getReference();
     }
 
     public static boolean isHudInStore(@Nullable UUID uuid, @Nullable Store<EntityStore> store) {
@@ -174,11 +169,13 @@ public final class GateTrackerHud extends CustomUIHud {
         if (hud == null || !hud.built.get()) {
             return false;
         }
-        Ref<EntityStore> ref = hud.resolveLiveEntityRef();
+        // Mirror PlayerHud.isHudInStore exactly: use targetPlayerRef.getReference()
+        // so the Store instance comparison is reliable from the TickingSystem thread.
+        Ref<EntityStore> ref = hud.targetPlayerRef.getReference();
         return ref != null && ref.getStore() == store;
     }
 
-    public static void refreshHudNow(@Nullable UUID uuid) {
+    public static void refreshHudNow(@Nullable UUID uuid, @Nonnull Store<EntityStore> store) {
         if (uuid == null) {
             return;
         }
@@ -190,32 +187,18 @@ public final class GateTrackerHud extends CustomUIHud {
             unregister(uuid);
             return;
         }
-        hud.refreshHud();
-    }
-
-    public static void refreshPlayerCoordsNow(@Nullable UUID uuid) {
-        if (uuid == null) {
-            return;
-        }
-        GateTrackerHud hud = ACTIVE_HUDS.get(uuid);
-        if (hud == null || !hud.built.get()) {
-            return;
-        }
-        if (!hud.targetPlayerRef.isValid()) {
-            unregister(uuid);
-            return;
-        }
-        hud.refreshPlayerCoordsOnly();
+        hud.refreshHud(store);
     }
 
     /**
-     * Writes the current tracker state into {@code uiCommandBuilder} using
-     * {@link #setTextIfChanged} for all label fields. Returns {@code true} if any
-     * field changed (caller should call {@code update()} if desired). Safe to call
-     * from {@link #build} without a subsequent {@code update()} since the values
-     * go directly into the build packet.
+     * Writes the current tracker state into {@code uiCommandBuilder}. Pass the
+     * ticking {@code store} from a {@link TickingSystem} so that
+     * {@link TransformComponent} is read on the correct store thread. Pass
+     * {@code null} during {@link #build} (world/command thread) — the method will
+     * fall back to {@code ref.getStore()} which is safe at that time.
      */
-    private boolean computeHudLabels(@Nullable UUID playerUuid, @Nonnull UICommandBuilder uiCommandBuilder) {
+    private boolean computeHudLabels(@Nullable UUID playerUuid, @Nullable Store<EntityStore> store,
+            @Nonnull UICommandBuilder uiCommandBuilder) {
         if (playerUuid == null) {
             return false;
         }
@@ -229,7 +212,7 @@ public final class GateTrackerHud extends CustomUIHud {
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerMeta.Text", "No active target");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerGateCoords.Text", "Gate: --");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerWorld.Text", "World: --");
-            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords());
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords(store));
             return changed;
         }
 
@@ -247,28 +230,54 @@ public final class GateTrackerHud extends CustomUIHud {
                 "World: " + entry.worldName());
         changed |= setTextIfChanged(uiCommandBuilder,
                 "#TrackerPlayerCoords.Text",
-                "You: " + resolvePlayerCoords());
+                "You: " + resolvePlayerCoords(store));
         return changed;
     }
 
-    private void refreshPlayerCoordsOnly() {
-        if (!built.get()) {
-            return;
+    /**
+     * Writes only the fields that need live refresh after build: the gate meta /
+     * status line and the player's current coordinates.
+     */
+    private boolean computeDynamicHudLabels(@Nullable UUID playerUuid, @Nullable Store<EntityStore> store,
+            @Nonnull UICommandBuilder uiCommandBuilder) {
+        if (playerUuid == null) {
+            return false;
         }
-        UICommandBuilder builder = new UICommandBuilder();
-        if (setTextIfChanged(builder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords())) {
-            update(false, builder);
+
+        GateTrackerEntry entry = GateTrackerManager.getTrackedEntry(playerUuid);
+        if (entry == null) {
+            GateTrackerManager.clearTrackedEntry(playerUuid);
+            boolean changed = false;
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerMeta.Text", "No active target");
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords(store));
+            return changed;
         }
+
+        boolean changed = false;
+        changed |= setTextIfChanged(uiCommandBuilder,
+                "#TrackerMeta.Text",
+                entry.type().label() + " | Rank " + entry.rankLetter() + " | " + entry.status());
+        changed |= setTextIfChanged(uiCommandBuilder,
+                "#TrackerPlayerCoords.Text",
+                "You: " + resolvePlayerCoords(store));
+        return changed;
     }
 
+    /**
+     * Reads the player's current position using the ticking {@code store} so that
+     * component access is always on the correct store thread (mirrors
+     * {@code HudRefreshSystem.shouldRefreshForMovement}). When {@code store} is
+     * {@code null} (build-time call on the world thread) we fall back to
+     * {@code ref.getStore()} which is safe at that point.
+     */
     @Nonnull
-    private String resolvePlayerCoords() {
-        Ref<EntityStore> ref = resolveLiveEntityRef();
+    private String resolvePlayerCoords(@Nullable Store<EntityStore> store) {
+        Ref<EntityStore> ref = targetPlayerRef.getReference();
         if (ref == null || !ref.isValid()) {
             return "(<untracked>)";
         }
-        Store<EntityStore> store = ref.getStore();
-        TransformComponent transform = store.getComponent(ref, TransformComponent.getComponentType());
+        Store<EntityStore> effectiveStore = (store != null) ? store : ref.getStore();
+        TransformComponent transform = effectiveStore.getComponent(ref, TransformComponent.getComponentType());
         if (transform == null || transform.getPosition() == null) {
             return "(<untracked>)";
         }
@@ -277,41 +286,6 @@ public final class GateTrackerHud extends CustomUIHud {
                 (int) Math.floor(transform.getPosition().getX()),
                 (int) Math.floor(transform.getPosition().getY()),
                 (int) Math.floor(transform.getPosition().getZ()));
-    }
-
-    @Nullable
-    private Ref<EntityStore> resolveLiveEntityRef() {
-        PlayerRef refreshed = resolveLivePlayerRef();
-        if (refreshed != null) {
-            Ref<EntityStore> refreshedRef = refreshed.getReference();
-            if (refreshedRef != null && refreshedRef.isValid()) {
-                return refreshedRef;
-            }
-        }
-
-        if (targetEntityRef != null && targetEntityRef.isValid()) {
-            return targetEntityRef;
-        }
-        Ref<EntityStore> fallback = targetPlayerRef.getReference();
-        return fallback != null && fallback.isValid() ? fallback : null;
-    }
-
-    @Nullable
-    private PlayerRef resolveLivePlayerRef() {
-        UUID playerUuid = targetPlayerRef.getUuid();
-        if (playerUuid == null) {
-            return null;
-        }
-        Universe universe = Universe.get();
-        if (universe == null) {
-            return null;
-        }
-        PlayerRef refreshed = universe.getPlayer(playerUuid);
-        if (refreshed == null) {
-            return null;
-        }
-        Ref<EntityStore> refreshedRef = refreshed.getReference();
-        return refreshedRef != null && refreshedRef.isValid() ? refreshed : null;
     }
 
     @Nonnull

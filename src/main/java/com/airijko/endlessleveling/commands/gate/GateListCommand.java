@@ -2,9 +2,12 @@ package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.managers.GateTrackerManager;
 import com.airijko.endlessleveling.managers.GateTrackerManager.GateTrackerEntry;
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
+import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.universe.world.World;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -23,6 +26,19 @@ public final class GateListCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+        if (context.sender() instanceof Player player) {
+            World world = player.getWorld();
+            if (world != null) {
+                CompletableFuture<Void> future = new CompletableFuture<>();
+                world.execute(() -> {
+                    NaturalPortalGateManager.reconcileTrackedGatesFromLoadedChunks(world);
+                    sendGateList(context, true);
+                    future.complete(null);
+                });
+                return future;
+            }
+        }
+
         sendGateList(context, true);
         return CompletableFuture.completedFuture(null);
     }
@@ -35,26 +51,41 @@ public final class GateListCommand extends AbstractCommand {
         }
 
         context.sendMessage(Message.raw("-- Live Gates (" + entries.size() + ") --").color("#8fd3ff"));
+        context.sendMessage(Message.join(
+            Message.raw("Legend: ").color("#9db8c9"),
+            Message.raw("Dungeon").color(typeColor(GateTrackerManager.GateEntryType.DUNGEON)),
+            Message.raw(" | ").color("#6f8fa3"),
+            Message.raw("Outbreak").color(typeColor(GateTrackerManager.GateEntryType.OUTBREAK)),
+            Message.raw(" | ").color("#6f8fa3"),
+            Message.raw("Hybrid").color(typeColor(GateTrackerManager.GateEntryType.HYBRID)),
+            Message.raw("  (OPENED = green, CLOSED = amber)").color("#9db8c9")));
 
         int displayCount = Math.min(MAX_LIST_LINES, entries.size());
         for (int index = 0; index < displayCount; index++) {
             GateTrackerEntry entry = entries.get(index);
-            // Line 1: index, type, rank, name
-            context.sendMessage(Message.raw(
-                    String.format("#%-2d  %-9s  %s  %s",
-                            index + 1,
-                            entry.type().label(),
-                            entry.rankLetter(),
-                            entry.title())
-            ).color("#d9f0ff"));
-            // Line 2: coords | world | status | elapsed
-            context.sendMessage(Message.raw(
-                    String.format("      %s  |  %s  |  %s  |  %s",
-                            formatCoords(entry.x(), entry.y(), entry.z()),
-                            entry.worldName(),
-                            entry.status(),
-                            formatElapsed(entry.firstSeenMillis()))
-            ).color("#8fd3ff"));
+            context.sendMessage(Message.join(
+                Message.raw("#" + (index + 1) + " ").color("#d9f0ff"),
+                Message.raw("[" + typeLabel(entry.type()) + "]").color(typeColor(entry.type())),
+                Message.raw(" ").color("#d9f0ff"),
+                Message.raw("[Rank " + entry.rankLetter() + "]").color(rankColor(entry.rankLetter())),
+                Message.raw(" ").color("#d9f0ff"),
+                Message.raw(entry.title()).color("#f2fbff")));
+
+            context.sendMessage(Message.join(
+                Message.raw("      Location: ").color("#6f8fa3"),
+                Message.raw(formatCoords(entry.x(), entry.y(), entry.z())).color("#9ed8ff"),
+                Message.raw("  in  ").color("#6f8fa3"),
+                Message.raw(entry.worldName()).color("#9ed8ff"),
+                Message.raw("  |  Seen ").color("#6f8fa3"),
+                Message.raw(formatElapsed(entry.firstSeenMillis())).color("#9ed8ff")));
+
+            context.sendMessage(Message.join(
+                Message.raw("      Status: ").color("#6f8fa3"),
+                Message.raw(entry.status()).color(statusColor(entry.status())),
+                Message.raw("  |  Opens: ").color("#6f8fa3"),
+                Message.raw(formatSchedule(entry.opensAtEpochMillis())).color("#9ed8ff"),
+                Message.raw("  |  Expires: ").color("#6f8fa3"),
+                Message.raw(formatSchedule(entry.expiresAtEpochMillis())).color("#9ed8ff")));
         }
 
         if (entries.size() > displayCount) {
@@ -77,6 +108,79 @@ public final class GateListCommand extends AbstractCommand {
         long hours = mins / 60;
         long remainMins = mins % 60;
         return hours + "h " + remainMins + "m";
+    }
+
+    @Nonnull
+    private static String formatSchedule(long epochMillis) {
+        if (epochMillis <= 0L) {
+            return "--";
+        }
+        long now = System.currentTimeMillis();
+        long deltaSeconds = (epochMillis - now) / 1000L;
+        if (deltaSeconds >= 0L) {
+            return "in " + formatDurationSeconds(deltaSeconds);
+        }
+        return formatDurationSeconds(Math.abs(deltaSeconds)) + " ago";
+    }
+
+    @Nonnull
+    private static String formatDurationSeconds(long seconds) {
+        if (seconds < 60L) {
+            return seconds + "s";
+        }
+        long mins = seconds / 60L;
+        long secs = seconds % 60L;
+        if (mins < 60L) {
+            return mins + "m " + secs + "s";
+        }
+        long hours = mins / 60L;
+        long remainMins = mins % 60L;
+        return hours + "h " + remainMins + "m";
+    }
+
+    @Nonnull
+    private static String typeLabel(@Nonnull GateTrackerManager.GateEntryType type) {
+        return switch (type) {
+            case DUNGEON -> "DUNGEON GATE";
+            case OUTBREAK -> "OUTBREAK GATE";
+            case HYBRID -> "HYBRID GATE";
+        };
+    }
+
+    @Nonnull
+    private static String typeColor(@Nonnull GateTrackerManager.GateEntryType type) {
+        return switch (type) {
+            case DUNGEON -> "#5ec8ff";
+            case OUTBREAK -> "#ff8a5b";
+            case HYBRID -> "#d48dff";
+        };
+    }
+
+    @Nonnull
+    private static String rankColor(@Nullable String rankLetter) {
+        if (rankLetter == null) {
+            return "#c7d7e0";
+        }
+        return switch (rankLetter.toUpperCase()) {
+            case "S" -> "#ff6767";
+            case "A" -> "#ff9959";
+            case "B" -> "#ffd166";
+            case "C" -> "#b9e769";
+            case "D" -> "#89d4ff";
+            default -> "#c7d7e0";
+        };
+    }
+
+    @Nonnull
+    private static String statusColor(@Nonnull String status) {
+        String normalized = status.toUpperCase();
+        if (normalized.startsWith("OPEN")) {
+            return "#6cff78";
+        }
+        if (normalized.startsWith("CLOSED")) {
+            return "#ffcc66";
+        }
+        return "#9ed8ff";
     }
 
     @Nonnull

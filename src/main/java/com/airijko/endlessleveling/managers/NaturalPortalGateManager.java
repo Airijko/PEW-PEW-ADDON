@@ -29,8 +29,11 @@ import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -83,6 +86,11 @@ public final class NaturalPortalGateManager {
     private static final String S_RANK_DISASTER_TITLE = "WORLD DISASTER";
     private static final String S_RANK_GATE_TITLE = "S-RANK GATE BREACH";
     private static final double LINKED_GATE_WAVE_CHANCE = 0.10D;
+    private static final int[][] NEIGHBOR_OFFSETS = new int[][]{
+            {1, 0, 0}, {-1, 0, 0},
+            {0, 1, 0}, {0, -1, 0},
+            {0, 0, 1}, {0, 0, -1}
+    };
 
     private static JavaPlugin plugin;
     private static AddonFilesManager filesManager;
@@ -492,9 +500,9 @@ public final class NaturalPortalGateManager {
                 }
                 if (isAnnounceOnSpawnEnabled()) {
                     if (linkedWaveTriggered) {
-                        announceGateWaveConvergence(x, y, z, gateRank.tier, normalLevelMin, normalLevelMax, bossLevel);
+                        announceGateWaveConvergence(gateId, x, y, z, gateRank.tier, normalLevelMin, normalLevelMax, bossLevel);
                     } else {
-                        announceGate(x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
+                        announceGate(gateId, world.getName(), x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                     }
                 }
                 String expectedGroupId = gateId == null || gateId.isBlank() ? "<unknown>" : gateId;
@@ -540,6 +548,168 @@ public final class NaturalPortalGateManager {
             }
         }
         return loaded;
+    }
+
+    /**
+     * Reconciles tracked active gates against currently loaded portal structures in a world.
+     * Useful after world/server restarts where portal blocks still exist but ACTIVE_GATES was not rebuilt.
+     * Must run on the world's thread.
+     *
+     * @return number of newly tracked gate anchors recovered from loaded chunks
+     */
+    public static int reconcileTrackedGatesFromLoadedChunks(@Nonnull World world) {
+        List<PortalBlockHit> hits = scanLoadedPortalBlocks(world);
+        if (hits.isEmpty()) {
+            return 0;
+        }
+
+        Map<BlockPos, PortalBlockHit> byPos = new HashMap<>();
+        for (PortalBlockHit hit : hits) {
+            byPos.put(new BlockPos(hit.x, hit.y, hit.z), hit);
+        }
+
+        Set<BlockPos> visited = new HashSet<>();
+        int recovered = 0;
+
+        for (PortalBlockHit hit : hits) {
+            BlockPos start = new BlockPos(hit.x, hit.y, hit.z);
+            if (!visited.add(start)) {
+                continue;
+            }
+
+            String baseId = stripRankSuffix(hit.blockId);
+            Deque<BlockPos> queue = new ArrayDeque<>();
+            queue.add(start);
+
+            List<PortalBlockHit> cluster = new ArrayList<>();
+            cluster.add(hit);
+
+            while (!queue.isEmpty()) {
+                BlockPos current = queue.poll();
+                for (int[] offset : NEIGHBOR_OFFSETS) {
+                    BlockPos neighbor = new BlockPos(
+                            current.x() + offset[0],
+                            current.y() + offset[1],
+                            current.z() + offset[2]);
+                    if (visited.contains(neighbor)) {
+                        continue;
+                    }
+
+                    PortalBlockHit neighborHit = byPos.get(neighbor);
+                    if (neighborHit == null) {
+                        continue;
+                    }
+                    if (!stripRankSuffix(neighborHit.blockId).equals(baseId)) {
+                        continue;
+                    }
+
+                    visited.add(neighbor);
+                    queue.add(neighbor);
+                    cluster.add(neighborHit);
+                }
+            }
+
+            PortalBlockHit anchor = cluster.get(0);
+            for (PortalBlockHit block : cluster) {
+                if (block.y < anchor.y
+                        || (block.y == anchor.y && block.x < anchor.x)
+                        || (block.y == anchor.y && block.x == anchor.x && block.z < anchor.z)) {
+                    anchor = block;
+                }
+            }
+
+            if (resolveGateIdAt(world, anchor.x, anchor.y, anchor.z) != null) {
+                continue;
+            }
+
+            trackActiveGate(world, anchor.blockId, anchor.x, anchor.y, anchor.z);
+            recovered++;
+        }
+
+        return recovered;
+    }
+
+    @Nonnull
+    private static List<PortalBlockHit> scanLoadedPortalBlocks(@Nonnull World world) {
+        List<PortalBlockHit> hits = new ArrayList<>();
+        Set<Integer> portalBlockIntIds = resolvePortalBlockIntIds();
+        if (portalBlockIntIds.isEmpty()) {
+            return hits;
+        }
+
+        for (Long chunkIndexObj : world.getChunkStore().getChunkIndexes()) {
+            if (chunkIndexObj == null) {
+                continue;
+            }
+
+            long chunkIndex = chunkIndexObj;
+            WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
+            if (chunk == null) {
+                continue;
+            }
+
+            int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
+            int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
+            int minX = chunkX << 5;
+            int minZ = chunkZ << 5;
+
+            for (int y = WORLD_MIN_Y; y <= WORLD_MAX_Y; y++) {
+                for (int x = minX; x < minX + 32; x++) {
+                    for (int z = minZ; z < minZ + 32; z++) {
+                        int blockIntId = chunk.getBlock(x, y, z);
+                        if (blockIntId == 0 || !portalBlockIntIds.contains(blockIntId)) {
+                            continue;
+                        }
+
+                        BlockType blockType = BlockType.getAssetMap().getAsset(blockIntId);
+                        if (blockType == null || blockType.getId() == null) {
+                            continue;
+                        }
+
+                        String blockId = blockType.getId();
+                        if (isPortalBlockId(blockId)) {
+                            hits.add(new PortalBlockHit(blockId, x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+
+        return hits;
+    }
+
+    @Nonnull
+    private static Set<Integer> resolvePortalBlockIntIds() {
+        Set<Integer> blockIds = new HashSet<>();
+        for (String baseBlockId : PORTAL_BLOCK_IDS) {
+            addPortalBlockIntId(blockIds, baseBlockId);
+            for (GateRankTier tier : GateRankTier.values()) {
+                String suffix = tier.blockIdSuffix();
+                if (suffix != null && !suffix.isBlank()) {
+                    addPortalBlockIntId(blockIds, baseBlockId + suffix);
+                }
+            }
+        }
+        return blockIds;
+    }
+
+    private static void addPortalBlockIntId(@Nonnull Set<Integer> blockIds, @Nonnull String blockTypeKey) {
+        int index = BlockType.getAssetMap().getIndex(blockTypeKey);
+        if (index != Integer.MIN_VALUE) {
+            blockIds.add(index);
+        }
+    }
+
+    private static boolean isPortalBlockId(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return false;
+        }
+        for (String baseBlockId : PORTAL_BLOCK_IDS) {
+            if (baseBlockId.equals(blockId) || blockId.startsWith(baseBlockId + "_Rank")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int resolveGroundPlacementY(@Nonnull WorldChunk chunk, int x, int z) {
@@ -1660,6 +1830,10 @@ public final class NaturalPortalGateManager {
         return filesManager.getDungeonDurationMinutes();
     }
 
+    public static long getConfiguredGateLifetimeMillis() {
+        return TimeUnit.MINUTES.toMillis(resolveGateLifetimeMinutes());
+    }
+
     private static int resolveMaxConcurrentSpawns() {
         if (filesManager == null) {
             return -1;
@@ -1798,7 +1972,9 @@ public final class NaturalPortalGateManager {
         }
     }
 
-    private static void announceGate(int x,
+    private static void announceGate(@Nullable String gateIdentity,
+                                     @Nullable String worldName,
+                                     int x,
                                      int y,
                                      int z,
                                      @Nonnull GateRank gateRank,
@@ -1825,6 +2001,7 @@ public final class NaturalPortalGateManager {
                 Message.raw("All adventurers must mobilize at once.").color("#ffd7cf")
             );
             universe.sendMessage(message);
+            sendTrackHint(gateIdentity, worldName, x, y, z, GateTrackerManager.GateEntryType.DUNGEON);
             showTitleToAllPlayers(
                     Message.raw(S_RANK_DISASTER_TITLE).color("#ff5a36"),
                     Message.raw(String.format("%s at (%d, %d, %d)", S_RANK_GATE_TITLE, x, y, z)).color("#ffd7cf"),
@@ -1847,9 +2024,11 @@ public final class NaturalPortalGateManager {
             Message.raw(String.format(Locale.ROOT, "Boss level %d", bossLevel)).color(PortalGateColor.LEVEL.hex())
         );
         universe.sendMessage(message);
+        sendTrackHint(gateIdentity, worldName, x, y, z, GateTrackerManager.GateEntryType.DUNGEON);
     }
 
-    private static void announceGateWaveConvergence(int x,
+    private static void announceGateWaveConvergence(@Nullable String gateIdentity,
+                                                    int x,
                                                     int y,
                                                     int z,
                                                     @Nonnull GateRankTier rankTier,
@@ -1875,6 +2054,38 @@ public final class NaturalPortalGateManager {
                 Message.raw(String.format(Locale.ROOT, "Coords (%d, %d, %d) | Threat %d-%d | Boss %d", x, y, z, normalLevelMin, normalLevelMax, bossLevel)).color("#ffe0cf")
         );
         universe.sendMessage(message);
+        sendTrackHint(gateIdentity, null, x, y, z, GateTrackerManager.GateEntryType.HYBRID);
+    }
+
+    private static void sendTrackHint(@Nullable String gateIdentity,
+                                      @Nullable String worldName,
+                                      int x,
+                                      int y,
+                                      int z,
+                                      @Nonnull GateTrackerManager.GateEntryType fallbackType) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        Integer index = GateTrackerManager.findListIndexForGateIdentity(gateIdentity);
+        if (index == null) {
+            index = GateTrackerManager.findListIndexByTypeAndLocation(fallbackType, worldName, x, y, z);
+        }
+
+        if (index != null) {
+            universe.sendMessage(Message.join(
+                    Message.raw("[TRACKER] ").color("#8fd3ff"),
+                    Message.raw(String.format(Locale.ROOT,
+                            "Track this gate with /gate track %d", index)).color("#d9f0ff")
+            ));
+            return;
+        }
+
+        universe.sendMessage(Message.join(
+                Message.raw("[TRACKER] ").color("#8fd3ff"),
+                Message.raw("Use /gate list then /gate track <index> to follow this gate.").color("#d9f0ff")
+        ));
     }
 
     private static int resolveNaturalWaveDelayMinutes(@Nonnull GateRankTier rankTier) {
@@ -2030,6 +2241,12 @@ public final class NaturalPortalGateManager {
                                       int x,
                                       int y,
                                       int z) {
+    }
+
+    private record PortalBlockHit(@Nonnull String blockId, int x, int y, int z) {
+    }
+
+    private record BlockPos(int x, int y, int z) {
     }
 
     private record LevelBand(int minLevel, int maxLevel) {

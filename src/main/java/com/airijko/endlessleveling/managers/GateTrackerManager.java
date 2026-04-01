@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public final class GateTrackerManager {
@@ -47,6 +48,8 @@ public final class GateTrackerManager {
             seeds.add(new GateTrackerEntrySeed(
                     GateEntryType.DUNGEON,
                     "dungeon:" + gate.gateId(),
+                    gate.gateId(),
+                    null,
                     resolveDungeonName(gate.blockId()),
                     normalizeRank(gate.rankTierId()),
                     normalizeWorld(gate.worldName()),
@@ -63,6 +66,8 @@ public final class GateTrackerManager {
             seeds.add(new GateTrackerEntrySeed(
                     GateEntryType.OUTBREAK,
                     buildWaveUniqueKey("outbreak", wave),
+                    null,
+                    wave.ownerUuid(),
                     resolveOutbreakName(wave.kind()),
                     normalizeRank(wave.rankTierId()),
                     normalizeWorld(wave.worldName()),
@@ -80,6 +85,8 @@ public final class GateTrackerManager {
             seeds.add(new GateTrackerEntrySeed(
                     GateEntryType.HYBRID,
                     "hybrid:" + (gateId == null ? buildWaveUniqueKey("hybrid", hybrid) : gateId),
+                    gateId,
+                    hybrid.ownerUuid(),
                     resolveHybridName(gateId),
                     normalizeRank(hybrid.rankTierId()),
                     normalizeWorld(hybrid.worldName()),
@@ -106,18 +113,26 @@ public final class GateTrackerManager {
             int collisionIndex = displayIdCollisions.merge(baseDisplayId, 1, Integer::sum);
             String displayId = collisionIndex == 1 ? baseDisplayId : baseDisplayId + collisionIndex;
             long firstSeen = GATE_FIRST_SEEN.computeIfAbsent(seed.uniqueKey, k -> now);
+            MobWaveManager.LinkedGateWaveTimingSnapshot linkedTiming = seed.gateIdentity == null
+                ? null
+                : MobWaveManager.getLinkedGateWaveTimingSnapshot(seed.gateIdentity);
+            long opensAt = resolveOpensAtEpochMillis(seed, firstSeen, linkedTiming);
+            long expiresAt = resolveExpiresAtEpochMillis(seed, opensAt, linkedTiming);
             entries.add(new GateTrackerEntry(
                     displayId,
                     seed.uniqueKey,
+                    seed.gateIdentity,
                     seed.type,
                     seed.title,
                     seed.rankLetter,
                     seed.worldName,
-                    seed.status,
+                resolveStatus(seed, now, linkedTiming),
                     seed.x,
                     seed.y,
                     seed.z,
-                    firstSeen));
+                firstSeen,
+                opensAt,
+                expiresAt));
         }
         // Prune timestamps for gates that are no longer in the live snapshot.
         if (entries.isEmpty()) {
@@ -189,6 +204,48 @@ public final class GateTrackerManager {
         return playerUuid != null && TRACKED_TARGETS_BY_PLAYER.containsKey(playerUuid);
     }
 
+    @Nullable
+    public static Integer findListIndexForGateIdentity(@Nullable String gateIdentity) {
+        if (gateIdentity == null || gateIdentity.isBlank()) {
+            return null;
+        }
+        String canonical = gateIdentity.startsWith("el_gate:") ? gateIdentity : "el_gate:" + gateIdentity;
+        List<GateTrackerEntry> entries = listEntries();
+        for (int i = 0; i < entries.size(); i++) {
+            GateTrackerEntry entry = entries.get(i);
+            if (canonical.equals(entry.gateIdentity())) {
+                return i + 1;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    public static Integer findListIndexByTypeAndLocation(@Nonnull GateEntryType type,
+                                                         @Nullable String worldName,
+                                                         @Nullable Integer x,
+                                                         @Nullable Integer y,
+                                                         @Nullable Integer z) {
+        if (worldName == null || x == null || y == null || z == null) {
+            return null;
+        }
+        List<GateTrackerEntry> entries = listEntries();
+        for (int i = 0; i < entries.size(); i++) {
+            GateTrackerEntry entry = entries.get(i);
+            if (entry.type() != type) {
+                continue;
+            }
+            if (!worldName.equals(entry.worldName())) {
+                continue;
+            }
+            if (!x.equals(entry.x()) || !y.equals(entry.y()) || !z.equals(entry.z())) {
+                continue;
+            }
+            return i + 1;
+        }
+        return null;
+    }
+
     public static void shutdown() {
         TRACKED_TARGETS_BY_PLAYER.clear();
         GATE_FIRST_SEEN.clear();
@@ -250,6 +307,96 @@ public final class GateTrackerManager {
             return "ACTIVE";
         }
         return stage.trim().toUpperCase(Locale.ROOT).replace('_', ' ');
+    }
+
+    @Nonnull
+    private static String resolveStatus(@Nonnull GateTrackerEntrySeed seed,
+                                        long nowMillis,
+                                        @Nullable MobWaveManager.LinkedGateWaveTimingSnapshot linkedTiming) {
+        if (linkedTiming != null) {
+            return formatLinkedStatus(linkedTiming, nowMillis);
+        }
+
+        String normalized = normalizeStage(seed.status);
+        if ("ACTIVE".equals(normalized) || "OPEN".equals(normalized)) {
+            return "OPENED";
+        }
+        if ("PENDING".equals(normalized)) {
+            long opensAt = resolveStandalonePendingOpensAtEpochMillis(seed);
+            if (opensAt > nowMillis) {
+                long remainingSeconds = Math.max(0L, (opensAt - nowMillis + 999L) / 1000L);
+                return "CLOSED (opens in " + remainingSeconds + "s)";
+            }
+            return "CLOSED (opening)";
+        }
+        return normalized;
+    }
+
+    @Nonnull
+    private static String formatLinkedStatus(@Nonnull MobWaveManager.LinkedGateWaveTimingSnapshot linkedTiming,
+                                             long nowMillis) {
+        String stage = normalizeStage(linkedTiming.stage());
+        if ("PENDING".equals(stage)) {
+            long opensAt = linkedTiming.opensAtEpochMillis();
+            if (opensAt > nowMillis) {
+                long remainingSeconds = Math.max(0L, (opensAt - nowMillis + 999L) / 1000L);
+                return "CLOSED (opens in " + remainingSeconds + "s)";
+            }
+            return "CLOSED (opening)";
+        }
+        if ("ACTIVE".equals(stage)) {
+            return "OPENED";
+        }
+        return stage;
+    }
+
+    private static long resolveOpensAtEpochMillis(@Nonnull GateTrackerEntrySeed seed,
+                                                  long firstSeenMillis,
+                                                  @Nullable MobWaveManager.LinkedGateWaveTimingSnapshot linkedTiming) {
+        if (linkedTiming != null && "PENDING".equals(normalizeStage(linkedTiming.stage()))) {
+            long opensAt = linkedTiming.opensAtEpochMillis();
+            if (opensAt > 0L) {
+                return opensAt;
+            }
+        }
+
+        if (linkedTiming != null) {
+            long openedAt = linkedTiming.openedAtEpochMillis();
+            if (openedAt > 0L) {
+                return openedAt;
+            }
+        }
+
+        long standalonePendingOpensAt = resolveStandalonePendingOpensAtEpochMillis(seed);
+        if (standalonePendingOpensAt > 0L) {
+            return standalonePendingOpensAt;
+        }
+
+        return firstSeenMillis;
+    }
+
+    private static long resolveStandalonePendingOpensAtEpochMillis(@Nonnull GateTrackerEntrySeed seed) {
+        if (seed.ownerUuid == null) {
+            return 0L;
+        }
+        if (!"PENDING".equals(normalizeStage(seed.status))) {
+            return 0L;
+        }
+        return MobWaveManager.getPendingNaturalWaveOpensAtEpochMillis(seed.ownerUuid);
+    }
+
+    private static long resolveExpiresAtEpochMillis(@Nonnull GateTrackerEntrySeed seed,
+                                                    long opensAtEpochMillis,
+                                                    @Nullable MobWaveManager.LinkedGateWaveTimingSnapshot linkedTiming) {
+        if (linkedTiming != null && linkedTiming.expiresAtEpochMillis() > 0L) {
+            return linkedTiming.expiresAtEpochMillis();
+        }
+
+        if ((seed.type == GateEntryType.DUNGEON || seed.type == GateEntryType.HYBRID) && opensAtEpochMillis > 0L) {
+            return opensAtEpochMillis + NaturalPortalGateManager.getConfiguredGateLifetimeMillis();
+        }
+
+        return 0L;
     }
 
     @Nonnull
@@ -349,6 +496,7 @@ public final class GateTrackerManager {
     public record GateTrackerEntry(
             @Nonnull String displayId,
             @Nonnull String uniqueKey,
+            @Nullable String gateIdentity,
             @Nonnull GateEntryType type,
             @Nonnull String title,
             @Nonnull String rankLetter,
@@ -357,12 +505,16 @@ public final class GateTrackerManager {
             @Nullable Integer x,
             @Nullable Integer y,
             @Nullable Integer z,
-            long firstSeenMillis) {
+                long firstSeenMillis,
+                long opensAtEpochMillis,
+                long expiresAtEpochMillis) {
     }
 
     private record GateTrackerEntrySeed(
             @Nonnull GateEntryType type,
             @Nonnull String uniqueKey,
+            @Nullable String gateIdentity,
+            @Nullable UUID ownerUuid,
             @Nonnull String title,
             @Nonnull String rankLetter,
             @Nonnull String worldName,
