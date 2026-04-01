@@ -100,14 +100,6 @@ Examples:
 - `/gate dungeon instances list`
 - `/gate dungeon instances delete 4`
 
-### Tracked Activity
-
-- `/gate dungeon track [id|clear]`
-- Aliases: `tracks`, `tracking`, `listtrack`, `trackgatetypes`
-- Legacy access path for the live tracker commands.
-- With no argument it shows the same combined list as `/gate list`.
-- With an ID it behaves like `/gate track <id>`.
-
 ### Clear All Tracked Dungeon Instances
 
 - `/gate dungeon deleteinstances`

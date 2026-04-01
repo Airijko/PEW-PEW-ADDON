@@ -213,6 +213,13 @@ public final class NaturalPortalGateManager {
     }
 
     @Nonnull
+    public static CompletableFuture<Boolean> spawnGateNearPlayerWithRankAndForcedNoLinkedWave(@Nonnull Player player,
+                                                                                                @Nonnull GateRankTier rankTier,
+                                                                                                boolean isTestSpawn) {
+        return spawnGateNearPlayerWithOptionalRank(player, rankTier, isTestSpawn, Boolean.FALSE);
+    }
+
+    @Nonnull
     private static CompletableFuture<Boolean> spawnGateNearPlayerWithOptionalRank(@Nonnull Player player,
                                                                                    @Nullable GateRankTier forcedRankTier,
                                                                                    boolean isTestSpawn,

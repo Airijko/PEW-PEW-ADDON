@@ -1,41 +1,81 @@
 Group #EndlessGateTrackerHud {
   LayoutMode: Top;
-  Anchor: (Top: 36, Right: 24, Width: 320, Height: 114);
-  Padding: (Full: 6);
+  Anchor: (Top: 320, Left: 10, Width: 260);
 
-  Label #TrackerHeading {
-    Anchor: (Height: 16);
-    Style: (FontSize: 13, TextColor: #f8d66d, RenderBold: true, Alignment: Right);
-    Text: "Tracked Gate";
-  }
+  Group #TrackerPanel {
+    LayoutMode: Top;
+    Anchor: (Width: 260);
+    Padding: (Full: 12);
+    Background: (TexturePath: "../Common/ContainerFullPatch.png", Border: 20);
 
-  Label #TrackerName {
-    Anchor: (Top: 4, Height: 18);
-    Style: (FontSize: 14, TextColor: #ffffff, RenderBold: true, Alignment: Right);
-    Text: "--";
-  }
+    Label #TrackerHeading {
+      Anchor: (Left: 0, Right: 0, Height: 16);
+      Style: (
+        FontSize: 13,
+        TextColor: #f8d66d,
+        RenderBold: true,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center
+      );
+      Text: "Tracked Gate";
+    }
 
-  Label #TrackerMeta {
-    Anchor: (Top: 4, Height: 16);
-    Style: (FontSize: 11, TextColor: #8fd3ff, Alignment: Right);
-    Text: "--";
-  }
+    Label #TrackerName {
+      Anchor: (Top: 4, Left: 0, Right: 0, Height: 18);
+      Style: (
+        FontSize: 14,
+        TextColor: #ffffff,
+        RenderBold: true,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center,
+        Wrap: true
+      );
+      Text: "--";
+    }
 
-  Label #TrackerGateCoords {
-    Anchor: (Top: 6, Height: 16);
-    Style: (FontSize: 11, TextColor: #d9f0ff, Alignment: Right);
-    Text: "Gate: --";
-  }
+    Label #TrackerMeta {
+      Anchor: (Top: 4, Left: 0, Right: 0, Height: 16);
+      Style: (
+        FontSize: 11,
+        TextColor: #8fd3ff,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center,
+        Wrap: true
+      );
+      Text: "--";
+    }
 
-  Label #TrackerWorld {
-    Anchor: (Top: 2, Height: 16);
-    Style: (FontSize: 11, TextColor: #d9f0ff, Alignment: Right);
-    Text: "World: --";
-  }
+    Label #TrackerGateCoords {
+      Anchor: (Top: 6, Left: 0, Right: 0, Height: 16);
+      Style: (
+        FontSize: 11,
+        TextColor: #d9f0ff,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center
+      );
+      Text: "Gate: --";
+    }
 
-  Label #TrackerPlayerCoords {
-    Anchor: (Top: 2, Height: 16);
-    Style: (FontSize: 11, TextColor: #b9ffd1, Alignment: Right);
-    Text: "You: --";
+    Label #TrackerWorld {
+      Anchor: (Top: 2, Left: 0, Right: 0, Height: 16);
+      Style: (
+        FontSize: 11,
+        TextColor: #d9f0ff,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center
+      );
+      Text: "World: --";
+    }
+
+    Label #TrackerPlayerCoords {
+      Anchor: (Top: 2, Left: 0, Right: 0, Height: 16);
+      Style: (
+        FontSize: 11,
+        TextColor: #b9ffd1,
+        HorizontalAlignment: Center,
+        VerticalAlignment: Center
+      );
+      Text: "You: --";
+    }
   }
 }

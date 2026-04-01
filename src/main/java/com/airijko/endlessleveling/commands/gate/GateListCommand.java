@@ -34,32 +34,49 @@ public final class GateListCommand extends AbstractCommand {
             return;
         }
 
-        context.sendMessage(Message.raw("Live gate list: " + entries.size()).color("#8fd3ff"));
+        context.sendMessage(Message.raw("-- Live Gates (" + entries.size() + ") --").color("#8fd3ff"));
+
         int displayCount = Math.min(MAX_LIST_LINES, entries.size());
         for (int index = 0; index < displayCount; index++) {
             GateTrackerEntry entry = entries.get(index);
-            context.sendMessage(Message.raw(formatEntryLine(entry)).color("#d9f0ff"));
+            // Line 1: index, type, rank, name
+            context.sendMessage(Message.raw(
+                    String.format("#%-2d  %-9s  %s  %s",
+                            index + 1,
+                            entry.type().label(),
+                            entry.rankLetter(),
+                            entry.title())
+            ).color("#d9f0ff"));
+            // Line 2: coords | world | status | elapsed
+            context.sendMessage(Message.raw(
+                    String.format("      %s  |  %s  |  %s  |  %s",
+                            formatCoords(entry.x(), entry.y(), entry.z()),
+                            entry.worldName(),
+                            entry.status(),
+                            formatElapsed(entry.firstSeenMillis()))
+            ).color("#8fd3ff"));
         }
 
         if (entries.size() > displayCount) {
             context.sendMessage(Message.raw("Showing first " + displayCount + " entries.").color("#ffcc66"));
         }
         if (includeTrackerHint) {
-            context.sendMessage(Message.raw("Track one with /gate track <id> or clear with /gate track clear").color("#8fd3ff"));
+            context.sendMessage(Message.raw("Track one: /gate track <index>  (example: /gate track 1)").color("#8fd3ff"));
+            context.sendMessage(Message.raw("Token IDs also work: /gate track <token-id>  |  clear: /gate track clear").color("#8fd3ff"));
         }
     }
 
     @Nonnull
-    static String formatEntryLine(@Nonnull GateTrackerEntry entry) {
-        return String.format(
-                "[%s] %-8s rank=%s %-24s %s world=%s status=%s",
-                entry.displayId(),
-                entry.type().label(),
-                entry.rankLetter(),
-                truncate(entry.title(), 24),
-                formatCoords(entry.x(), entry.y(), entry.z()),
-                entry.worldName(),
-                entry.status());
+    private static String formatElapsed(long firstSeenMillis) {
+        long elapsed = (System.currentTimeMillis() - firstSeenMillis) / 1000L;
+        if (elapsed < 0) elapsed = 0;
+        if (elapsed < 60) return elapsed + "s";
+        long mins = elapsed / 60;
+        long secs = elapsed % 60;
+        if (mins < 60) return mins + "m " + secs + "s";
+        long hours = mins / 60;
+        long remainMins = mins % 60;
+        return hours + "h " + remainMins + "m";
     }
 
     @Nonnull
@@ -68,13 +85,5 @@ public final class GateListCommand extends AbstractCommand {
             return "(<untracked>)";
         }
         return String.format("(%4d, %3d, %4d)", x, y, z);
-    }
-
-    @Nonnull
-    private static String truncate(@Nonnull String value, int maxLength) {
-        if (value.length() <= maxLength) {
-            return value;
-        }
-        return value.substring(0, Math.max(1, maxLength - 1)) + "~";
     }
 }

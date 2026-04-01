@@ -25,11 +25,11 @@ public final class GateTrackCommand extends AbstractCommand {
 
     private final RequiredArg<String> idArg = this.withRequiredArg(
             "id",
-            "Gate tracker ID from /gate list, or clear/off/stop to remove the tracker HUD",
+            "Gate list index from /gate list (for example 1 or #1), or clear/off/stop to remove the tracker HUD",
             Objects.requireNonNull(ArgTypes.STRING));
 
     public GateTrackCommand() {
-        super("track", "Track one active gate entry in a live HUD, or list current tracker IDs");
+        super("track", "Track one active gate entry in a live HUD");
         this.addAliases("tracks", "tracking", "followgate", "trackgate");
     }
 
@@ -38,10 +38,7 @@ public final class GateTrackCommand extends AbstractCommand {
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         String rawArg = idArg.get(context);
         if (rawArg == null || rawArg.isBlank()) {
-            context.sendMessage(Message.raw("Gate tracker usage").color("#8fd3ff"));
-            context.sendMessage(Message.raw("- /gate list             Show active dungeon, outbreak, and hybrid gate IDs").color("#d9f0ff"));
-            context.sendMessage(Message.raw("- /gate track <id>       Open the live tracker HUD for one listed gate").color("#d9f0ff"));
-            context.sendMessage(Message.raw("- /gate track clear      Remove the tracker HUD").color("#d9f0ff"));
+            context.sendMessage(Message.raw("Usage: /gate track <index> (example: /gate track 1)").color("#ffcc66"));
             GateListCommand.sendGateList(context, true);
             return CompletableFuture.completedFuture(null);
         }
@@ -54,9 +51,9 @@ public final class GateTrackCommand extends AbstractCommand {
             });
         }
 
-        GateTrackerEntry entry = GateTrackerManager.findByDisplayId(rawArg);
+        GateTrackerEntry entry = GateTrackerManager.findByIndexOrDisplayId(rawArg);
         if (entry == null) {
-            context.sendMessage(Message.raw("Unknown gate tracker id '" + rawArg + "'.").color("#ff6666"));
+            context.sendMessage(Message.raw("Unknown gate list index or id '" + rawArg + "'.").color("#ff6666"));
             GateListCommand.sendGateList(context, true);
             return CompletableFuture.completedFuture(null);
         }

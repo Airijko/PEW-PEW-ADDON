@@ -10,6 +10,7 @@ import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
@@ -30,12 +31,14 @@ public final class GateTrackerHud extends CustomUIHud {
     private static final Map<UUID, Object> HUD_LOCKS = new ConcurrentHashMap<>();
 
     private final PlayerRef targetPlayerRef;
+    private final Ref<EntityStore> targetEntityRef;
     private final Map<String, Object> lastUiState = new HashMap<>();
     private final AtomicBoolean built = new AtomicBoolean(false);
 
-    public GateTrackerHud(@Nonnull PlayerRef playerRef) {
+    public GateTrackerHud(@Nonnull PlayerRef playerRef, @Nullable Ref<EntityStore> targetEntityRef) {
         super(playerRef);
         this.targetPlayerRef = playerRef;
+        this.targetEntityRef = targetEntityRef;
     }
 
     @Override
@@ -48,10 +51,26 @@ public final class GateTrackerHud extends CustomUIHud {
             return;
         }
         uiCommandBuilder.append("Hud/EndlessGateTrackerHud.ui");
+        // Write initial label values directly into the build packet so the HUD
+        // shows real data immediately rather than sitting on .ui defaults.
+        computeHudLabels(uuid, uiCommandBuilder);
     }
 
     public void refreshHud() {
-        pushHudState(new UICommandBuilder());
+        if (!built.get()) {
+            return;
+        }
+        UUID uuid = targetPlayerRef.getUuid();
+        if (uuid == null || !targetPlayerRef.isValid()) {
+            unregister(uuid);
+            return;
+        }
+        UICommandBuilder builder = new UICommandBuilder();
+        // Force a full HUD payload refresh so dynamic fields like player coordinates
+        // are always re-sent on refresh ticks.
+        lastUiState.clear();
+        computeHudLabels(uuid, builder);
+        update(false, builder);
     }
 
     public static OpenStatus open(@Nonnull Player player, @Nonnull PlayerRef playerRef) {
@@ -61,7 +80,7 @@ public final class GateTrackerHud extends CustomUIHud {
         }
 
         synchronized (getHudLock(uuid)) {
-            GateTrackerHud newHud = new GateTrackerHud(playerRef);
+            GateTrackerHud newHud = new GateTrackerHud(playerRef, player.getReference());
             ACTIVE_HUDS.put(uuid, newHud);
 
             if (GateTrackerMultipleHudCompatibility.showHud(player, playerRef, MULTI_HUD_SLOT, newHud)) {
@@ -144,7 +163,7 @@ public final class GateTrackerHud extends CustomUIHud {
         if (hud == null || !hud.built.get()) {
             return null;
         }
-        return hud.targetPlayerRef.getReference();
+        return hud.resolveLiveEntityRef();
     }
 
     public static boolean isHudInStore(@Nullable UUID uuid, @Nullable Store<EntityStore> store) {
@@ -155,7 +174,7 @@ public final class GateTrackerHud extends CustomUIHud {
         if (hud == null || !hud.built.get()) {
             return false;
         }
-        Ref<EntityStore> ref = hud.targetPlayerRef.getReference();
+        Ref<EntityStore> ref = hud.resolveLiveEntityRef();
         return ref != null && ref.getStore() == store;
     }
 
@@ -174,14 +193,31 @@ public final class GateTrackerHud extends CustomUIHud {
         hud.refreshHud();
     }
 
-    private void pushHudState(@Nonnull UICommandBuilder uiCommandBuilder) {
-        if (!built.get()) {
+    public static void refreshPlayerCoordsNow(@Nullable UUID uuid) {
+        if (uuid == null) {
             return;
         }
-        UUID playerUuid = targetPlayerRef.getUuid();
-        if (playerUuid == null || !targetPlayerRef.isValid()) {
-            unregister(playerUuid);
+        GateTrackerHud hud = ACTIVE_HUDS.get(uuid);
+        if (hud == null || !hud.built.get()) {
             return;
+        }
+        if (!hud.targetPlayerRef.isValid()) {
+            unregister(uuid);
+            return;
+        }
+        hud.refreshPlayerCoordsOnly();
+    }
+
+    /**
+     * Writes the current tracker state into {@code uiCommandBuilder} using
+     * {@link #setTextIfChanged} for all label fields. Returns {@code true} if any
+     * field changed (caller should call {@code update()} if desired). Safe to call
+     * from {@link #build} without a subsequent {@code update()} since the values
+     * go directly into the build packet.
+     */
+    private boolean computeHudLabels(@Nullable UUID playerUuid, @Nonnull UICommandBuilder uiCommandBuilder) {
+        if (playerUuid == null) {
+            return false;
         }
 
         GateTrackerEntry entry = GateTrackerManager.getTrackedEntry(playerUuid);
@@ -191,13 +227,10 @@ public final class GateTrackerHud extends CustomUIHud {
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerHeading.Text", "Tracked Gate");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerName.Text", "Tracked gate closed");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerMeta.Text", "No active target");
-            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerGateCoords.Text", "Gate: (<closed>)");
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerGateCoords.Text", "Gate: --");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerWorld.Text", "World: --");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords());
-            if (changed) {
-                update(false, uiCommandBuilder);
-            }
-            return;
+            return changed;
         }
 
         boolean changed = false;
@@ -215,15 +248,22 @@ public final class GateTrackerHud extends CustomUIHud {
         changed |= setTextIfChanged(uiCommandBuilder,
                 "#TrackerPlayerCoords.Text",
                 "You: " + resolvePlayerCoords());
+        return changed;
+    }
 
-        if (changed) {
-            update(false, uiCommandBuilder);
+    private void refreshPlayerCoordsOnly() {
+        if (!built.get()) {
+            return;
+        }
+        UICommandBuilder builder = new UICommandBuilder();
+        if (setTextIfChanged(builder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords())) {
+            update(false, builder);
         }
     }
 
     @Nonnull
     private String resolvePlayerCoords() {
-        Ref<EntityStore> ref = targetPlayerRef.getReference();
+        Ref<EntityStore> ref = resolveLiveEntityRef();
         if (ref == null || !ref.isValid()) {
             return "(<untracked>)";
         }
@@ -237,6 +277,41 @@ public final class GateTrackerHud extends CustomUIHud {
                 (int) Math.floor(transform.getPosition().getX()),
                 (int) Math.floor(transform.getPosition().getY()),
                 (int) Math.floor(transform.getPosition().getZ()));
+    }
+
+    @Nullable
+    private Ref<EntityStore> resolveLiveEntityRef() {
+        PlayerRef refreshed = resolveLivePlayerRef();
+        if (refreshed != null) {
+            Ref<EntityStore> refreshedRef = refreshed.getReference();
+            if (refreshedRef != null && refreshedRef.isValid()) {
+                return refreshedRef;
+            }
+        }
+
+        if (targetEntityRef != null && targetEntityRef.isValid()) {
+            return targetEntityRef;
+        }
+        Ref<EntityStore> fallback = targetPlayerRef.getReference();
+        return fallback != null && fallback.isValid() ? fallback : null;
+    }
+
+    @Nullable
+    private PlayerRef resolveLivePlayerRef() {
+        UUID playerUuid = targetPlayerRef.getUuid();
+        if (playerUuid == null) {
+            return null;
+        }
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return null;
+        }
+        PlayerRef refreshed = universe.getPlayer(playerUuid);
+        if (refreshed == null) {
+            return null;
+        }
+        Ref<EntityStore> refreshedRef = refreshed.getReference();
+        return refreshedRef != null && refreshedRef.isValid() ? refreshed : null;
     }
 
     @Nonnull

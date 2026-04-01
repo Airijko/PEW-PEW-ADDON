@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
 public final class GateTrackerManager {
 
     private static final Map<UUID, String> TRACKED_TARGETS_BY_PLAYER = new ConcurrentHashMap<>();
+    /** Records the first wall-clock time (ms) that each gate uniqueKey was seen in a list snapshot. */
+    private static final Map<String, Long> GATE_FIRST_SEEN = new ConcurrentHashMap<>();
 
     private GateTrackerManager() {
     }
@@ -96,12 +98,14 @@ public final class GateTrackerManager {
                 .thenComparingInt(entry -> entry.z == null ? Integer.MIN_VALUE : entry.z)
                 .thenComparing(entry -> entry.title == null ? "" : entry.title));
 
+        long now = System.currentTimeMillis();
         Map<String, Integer> displayIdCollisions = new HashMap<>();
         List<GateTrackerEntry> entries = new ArrayList<>(seeds.size());
         for (GateTrackerEntrySeed seed : seeds) {
             String baseDisplayId = seed.type.prefix + "-" + shortenHash(seed.uniqueKey);
             int collisionIndex = displayIdCollisions.merge(baseDisplayId, 1, Integer::sum);
             String displayId = collisionIndex == 1 ? baseDisplayId : baseDisplayId + collisionIndex;
+            long firstSeen = GATE_FIRST_SEEN.computeIfAbsent(seed.uniqueKey, k -> now);
             entries.add(new GateTrackerEntry(
                     displayId,
                     seed.uniqueKey,
@@ -112,19 +116,36 @@ public final class GateTrackerManager {
                     seed.status,
                     seed.x,
                     seed.y,
-                    seed.z));
+                    seed.z,
+                    firstSeen));
+        }
+        // Prune timestamps for gates that are no longer in the live snapshot.
+        if (entries.isEmpty()) {
+            GATE_FIRST_SEEN.clear();
+        } else {
+            Set<String> activeKeys = entries.stream()
+                    .map(GateTrackerEntry::uniqueKey)
+                    .collect(Collectors.toSet());
+            GATE_FIRST_SEEN.keySet().retainAll(activeKeys);
         }
         return entries;
     }
 
     @Nullable
-    public static GateTrackerEntry findByDisplayId(@Nullable String displayId) {
-        if (displayId == null || displayId.isBlank()) {
+    public static GateTrackerEntry findByIndexOrDisplayId(@Nullable String idOrIndex) {
+        if (idOrIndex == null || idOrIndex.isBlank()) {
             return null;
         }
 
-        String normalized = displayId.trim().toUpperCase(Locale.ROOT);
-        for (GateTrackerEntry entry : listEntries()) {
+        String trimmed = idOrIndex.trim();
+        Integer parsedIndex = parseListIndex(trimmed);
+        List<GateTrackerEntry> entries = listEntries();
+        if (parsedIndex != null && parsedIndex >= 1 && parsedIndex <= entries.size()) {
+            return entries.get(parsedIndex - 1);
+        }
+
+        String normalized = trimmed.toUpperCase(Locale.ROOT);
+        for (GateTrackerEntry entry : entries) {
             if (entry.displayId().equalsIgnoreCase(normalized)) {
                 return entry;
             }
@@ -170,6 +191,20 @@ public final class GateTrackerManager {
 
     public static void shutdown() {
         TRACKED_TARGETS_BY_PLAYER.clear();
+        GATE_FIRST_SEEN.clear();
+    }
+
+    @Nullable
+    private static Integer parseListIndex(@Nonnull String rawInput) {
+        String candidate = rawInput.startsWith("#") ? rawInput.substring(1) : rawInput;
+        if (candidate.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(candidate);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     @Nonnull
@@ -321,7 +356,8 @@ public final class GateTrackerManager {
             @Nonnull String status,
             @Nullable Integer x,
             @Nullable Integer y,
-            @Nullable Integer z) {
+            @Nullable Integer z,
+            long firstSeenMillis) {
     }
 
     private record GateTrackerEntrySeed(
