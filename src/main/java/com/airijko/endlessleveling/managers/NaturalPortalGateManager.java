@@ -691,6 +691,7 @@ public final class NaturalPortalGateManager {
         String gateId = buildStableGateId(worldUuid, x, y, z);
         ACTIVE_GATES.add(new ActiveGate(gateId, worldUuid, blockId, x, y, z));
         PortalLeveledInstanceRouter.registerGateExpectedInstance(gateId, blockId);
+        ChunkKeepaliveManager.register(gateId, worldUuid, ChunkUtil.indexChunkFromBlock(x, z));
     }
 
     @Nonnull
@@ -861,10 +862,16 @@ public final class NaturalPortalGateManager {
         if (worldUuid == null) {
             return;
         }
-        ACTIVE_GATES.removeIf(gate -> gate.worldUuid().equals(worldUuid)
-                && gate.x() == x
-                && gate.y() == y
-                && gate.z() == z);
+        ACTIVE_GATES.removeIf(gate -> {
+            boolean matches = gate.worldUuid().equals(worldUuid)
+                    && gate.x() == x
+                    && gate.y() == y
+                    && gate.z() == z;
+            if (matches) {
+                ChunkKeepaliveManager.unregister(gate.gateId());
+            }
+            return matches;
+        });
     }
 
     /**
@@ -963,6 +970,7 @@ public final class NaturalPortalGateManager {
             }
 
             ACTIVE_GATES.add(new ActiveGate(stableGateId, worldUuid, stored.blockId, x, y, z));
+                ChunkKeepaliveManager.register(stableGateId, worldUuid, ChunkUtil.indexChunkFromBlock(x, z));
             log(Level.INFO,
                     "[ELPortal] Restored active gate gateId=%s world=%s block=%s at %d %d %d",
                     stableGateId, worldUuid, stored.blockId, x, y, z);

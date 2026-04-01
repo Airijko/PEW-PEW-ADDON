@@ -32,6 +32,7 @@ import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
+import com.airijko.endlessleveling.listeners.GateTrackerHudReadyListener;
 import com.airijko.endlessleveling.listeners.PortalGateJoinNotificationListener;
 import com.airijko.endlessleveling.listeners.PortalReturnInteractionListener;
 import com.airijko.endlessleveling.listeners.WavePortalBreakBlockSystem;
@@ -39,7 +40,9 @@ import com.airijko.endlessleveling.managers.AddonFilesManager;
 import com.airijko.endlessleveling.managers.AddonGateInstanceRoutingManager;
 import com.airijko.endlessleveling.managers.AddonGatesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
+import com.airijko.endlessleveling.managers.ChunkKeepaliveManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
+import com.airijko.endlessleveling.managers.GateTrackerManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.airijko.endlessleveling.managers.GateInstancePersistenceManager;
 import com.airijko.endlessleveling.managers.PortalProximityManager;
@@ -54,6 +57,8 @@ import com.airijko.endlessleveling.registration.classes.ClassRegistration;
 import com.airijko.endlessleveling.registration.augments.AugmentRegistration;
 import com.airijko.endlessleveling.registration.passives.PassiveRegistration;
 import com.airijko.endlessleveling.registration.races.RaceRegistration;
+import com.airijko.endlessleveling.systems.GateTrackerHudRefreshSystem;
+import com.airijko.endlessleveling.ui.GateTrackerHud;
 import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 
 import javax.annotation.Nonnull;
@@ -121,6 +126,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
         if (isAddonRuntimeEnabled()) {
             this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
             this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
+            this.getEntityStoreRegistry().registerSystem(new GateTrackerHudRefreshSystem());
             NaturalPortalGateManager.initialize(this, this.filesManager);
             MobWaveManager.initialize();
             PortalProximityManager.initialize(this);
@@ -132,8 +138,10 @@ public class EndlessLevelingAddon extends JavaPlugin {
             this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
             PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
+            GateTrackerHudReadyListener gateTrackerHudReadyListener = new GateTrackerHudReadyListener();
             PortalReturnInteractionListener portalReturnInteractionListener = new PortalReturnInteractionListener();
             this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
+            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, gateTrackerHudReadyListener::onPlayerReady);
             this.getEventRegistry().registerGlobal(PlayerInteractEvent.class, portalReturnInteractionListener::onPlayerInteract);
             this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
             this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
@@ -160,6 +168,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
             MobWaveManager.shutdown();
             PortalLeveledInstanceRouter.saveGateInstances();
             NaturalPortalGateManager.shutdown();
+            ChunkKeepaliveManager.shutdown();
+            GateTrackerManager.shutdown();
+            GateTrackerHud.clearAllTrackedHuds();
             PortalProximityManager.shutdown();
             PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();
             PortalLeveledInstanceRouter.shutdown();
@@ -214,6 +225,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
             if (isAddonRuntimeEnabled()) {
                 NaturalPortalGateManager.shutdown();
                 MobWaveManager.shutdown();
+                ChunkKeepaliveManager.shutdown();
+                GateTrackerManager.shutdown();
+                GateTrackerHud.clearAllTrackedHuds();
             }
 
             EndlessLevelingCompatibility.unregisterDungeonGateContentProvider(dungeonGateContentProvider);

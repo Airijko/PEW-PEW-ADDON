@@ -48,12 +48,13 @@ public class PortalGateTestCommand extends AbstractCommand {
         String normalizedArg = rawArg == null ? "" : rawArg.trim().toUpperCase(Locale.ROOT);
 
         if (normalizedArg.isBlank()) {
-            context.sendMessage(Message.raw("Usage: /gate dungeon spawn <S|A|B|C|D|E|random>").color("#ffcc66"));
+            context.sendMessage(Message.raw("Usage: /gate dungeon spawn <S|A|B|C|D|E|random>").color("#d9f0ff"));
+            context.sendMessage(Message.raw("Examples: /gate dungeon spawn random   |   /gate dungeon spawn A").color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }
 
         if ("RANDOM".equals(normalizedArg)) {
-            return EndlessLevelingCompatibility.spawnRandomDungeonGate(player, true)
+            return EndlessLevelingCompatibility.spawnRandomDungeonGate(player, false)
                     .thenAccept(spawned -> {
                         if (spawned) {
                             context.sendMessage(
@@ -72,7 +73,7 @@ public class PortalGateTestCommand extends AbstractCommand {
             return CompletableFuture.completedFuture(null);
         }
 
-        return EndlessLevelingCompatibility.spawnDungeonGateWithRank(player, rankTier.name(), true)
+        return EndlessLevelingCompatibility.spawnDungeonGateWithRank(player, rankTier.name(), false)
             .thenAccept(spawned -> {
                 if (spawned) {
                     context.sendMessage(

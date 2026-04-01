@@ -21,7 +21,9 @@ public final class GateDebugPreventEnterCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /gate dungeon debug prevententer <true|false|status>").color("#ffcc66"));
+        context.sendMessage(Message.raw("Prevent-enter debug toggle").color("#8fd3ff"));
+        context.sendMessage(Message.raw("Usage: /gate dungeon debug prevententer <true|false|status>").color("#d9f0ff"));
+        context.sendMessage(Message.raw("Example: /gate dungeon debug prevententer status").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 

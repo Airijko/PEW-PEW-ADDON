@@ -52,15 +52,22 @@ public final class PortalWaveCommand extends AbstractCommand {
 
         String rawArg = rankArg.get(context);
         if (rawArg == null || rawArg.isBlank()) {
-            context.sendMessage(Message.raw(
-                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave spawn <rank>  -or-  /gate wave start <rank>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status (aliases: /gate wavegate ..., legacy /gate outbreak ...)")
-                    .color("#ffcc66"));
+            context.sendMessage(Message.raw("Wave gate commands").color("#8fd3ff"));
+            context.sendMessage(Message.raw("Quick use:").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave <S|A|B|C|D|E|random>         Schedule a natural wave gate countdown").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave spawn <rank>                  Same as above, explicit spawn verb").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave start <rank>                  Start waves immediately").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave test <rank>                   Immediate test wave, no countdown").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave testcombo <rank>              Force a dungeon gate + linked wave combo").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate wave <status|stop|skip|clearcombo|clearparticles>").color("#d9f0ff"));
+            context.sendMessage(Message.raw("Examples: /gate wave random   |   /gate wave test B   |   /gate wave clearcombo").color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }
         String normalizedArg = rawArg.trim().toUpperCase(Locale.ROOT);
         String rankTierId = "RANDOM".equals(normalizedArg) ? null : normalizedArg;
         if (rankTierId != null && parseRankTier(rankTierId) == null) {
-            context.sendMessage(Message.raw("Unknown rank '" + rawArg + "'. Use: S A B C D E random").color("#ff6666"));
+            context.sendMessage(Message.raw("Unknown wave rank or subcommand '" + rawArg + "'.").color("#ff6666"));
+            context.sendMessage(Message.raw("Use: S A B C D E random, or try /gate wave status | stop | skip | clearcombo | clearparticles").color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }
 

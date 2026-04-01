@@ -13,6 +13,8 @@ public final class GateCommand extends AbstractCommand {
     public GateCommand() {
         super("gate", "Root command for EL gate-type admin tools");
         this.addAliases("g", "elgate", "gatetype", "gatetypes");
+        this.addSubCommand(new GateListCommand());
+        this.addSubCommand(new GateTrackCommand());
         this.addSubCommand(new GateDungeonCommand());
         this.addSubCommand(new PortalWaveCommand());
     }
@@ -20,9 +22,13 @@ public final class GateCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw(
-            "Usage: /gate <dungeon|dungeongate|wave|wavegate|outbreak> ...")
-                .color("#ffcc66"));
+        context.sendMessage(Message.raw("EL gate commands").color("#8fd3ff"));
+        context.sendMessage(Message.raw("Use one of:").color("#d9f0ff"));
+        context.sendMessage(Message.raw("- /gate list           Unified live gate list with IDs for dungeon, outbreak, and hybrid gates").color("#d9f0ff"));
+        context.sendMessage(Message.raw("- /gate track <id>     Open the live gate tracker HUD for one active gate entry").color("#d9f0ff"));
+        context.sendMessage(Message.raw("- /gate dungeon ...    Dungeon gate tools, spawning, tracking, cleanup, debug").color("#d9f0ff"));
+        context.sendMessage(Message.raw("- /gate wave ...       Wave gate / outbreak tools, test waves, combo tools").color("#d9f0ff"));
+        context.sendMessage(Message.raw("Examples: /gate list   |   /gate track D-1A2B   |   /gate dungeon spawn D").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 }

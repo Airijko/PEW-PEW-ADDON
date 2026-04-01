@@ -336,7 +336,34 @@ public final class MobWaveManager {
 
     public static boolean isGateEntryLocked(@Nullable String gateIdentity) {
         String canonicalGateId = normalizeGateIdentity(gateIdentity);
-        return canonicalGateId != null && GATE_WAVE_STATES.containsKey(canonicalGateId);
+        if (canonicalGateId == null) {
+            return false;
+        }
+
+        LinkedGateWaveState state = GATE_WAVE_STATES.get(canonicalGateId);
+        if (state == null) {
+            return false;
+        }
+
+        // Treat orphaned map entries as stale so standalone gates are never permanently sealed.
+        boolean hasPendingCountdown = PENDING_LINKED_GATE_COUNTDOWNS.containsKey(canonicalGateId);
+        boolean hasActiveLinkedSession = false;
+        for (ActiveWaveSession session : ACTIVE_SESSIONS.values()) {
+            if (session == null || session.cancelled.get()) {
+                continue;
+            }
+            if (canonicalGateId.equals(session.linkedGateId)) {
+                hasActiveLinkedSession = true;
+                break;
+            }
+        }
+
+        if (!hasPendingCountdown && !hasActiveLinkedSession) {
+            GATE_WAVE_STATES.remove(canonicalGateId, state);
+            return false;
+        }
+
+        return true;
     }
 
     public static void unregisterLinkedGateWave(@Nullable String gateIdentity) {
@@ -2255,10 +2282,17 @@ public final class MobWaveManager {
 
     private static void trackWavePortalPlacement(@Nonnull WavePortalPlacement placement) {
         TRACKED_WAVE_PORTALS.put(placement.placementUuid, placement);
+        if (placement.worldUuid != null) {
+            ChunkKeepaliveManager.register(
+                    "wave-portal:" + placement.placementUuid,
+                    placement.worldUuid,
+                    ChunkUtil.indexChunkFromBlock(placement.x, placement.z));
+        }
         persistTrackedWavePortalsToDisk();
     }
 
     private static void untrackWavePortalPlacement(@Nonnull UUID placementUuid) {
+        ChunkKeepaliveManager.unregister("wave-portal:" + placementUuid);
         if (TRACKED_WAVE_PORTALS.remove(placementUuid) != null) {
             persistTrackedWavePortalsToDisk();
         }

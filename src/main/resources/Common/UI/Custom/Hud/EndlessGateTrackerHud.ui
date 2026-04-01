@@ -1,0 +1,41 @@
+Group #EndlessGateTrackerHud {
+  LayoutMode: Top;
+  Anchor: (Top: 36, Right: 24, Width: 320, Height: 114);
+  Padding: (Full: 6);
+
+  Label #TrackerHeading {
+    Anchor: (Height: 16);
+    Style: (FontSize: 13, TextColor: #f8d66d, RenderBold: true, Alignment: Right);
+    Text: "Tracked Gate";
+  }
+
+  Label #TrackerName {
+    Anchor: (Top: 4, Height: 18);
+    Style: (FontSize: 14, TextColor: #ffffff, RenderBold: true, Alignment: Right);
+    Text: "--";
+  }
+
+  Label #TrackerMeta {
+    Anchor: (Top: 4, Height: 16);
+    Style: (FontSize: 11, TextColor: #8fd3ff, Alignment: Right);
+    Text: "--";
+  }
+
+  Label #TrackerGateCoords {
+    Anchor: (Top: 6, Height: 16);
+    Style: (FontSize: 11, TextColor: #d9f0ff, Alignment: Right);
+    Text: "Gate: --";
+  }
+
+  Label #TrackerWorld {
+    Anchor: (Top: 2, Height: 16);
+    Style: (FontSize: 11, TextColor: #d9f0ff, Alignment: Right);
+    Text: "World: --";
+  }
+
+  Label #TrackerPlayerCoords {
+    Anchor: (Top: 2, Height: 16);
+    Style: (FontSize: 11, TextColor: #b9ffd1, Alignment: Right);
+    Text: "You: --";
+  }
+}

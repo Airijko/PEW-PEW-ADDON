@@ -3229,6 +3229,20 @@ public final class PortalLeveledInstanceRouter {
         return null;
     }
 
+    @Nullable
+    public static String resolveGateDisplayNameForBlockId(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return null;
+        }
+
+        String routingName = resolveRoutingName(blockId);
+        if (routingName == null || routingName.isBlank()) {
+            return null;
+        }
+
+        return resolveDungeonDisplayName(routingName);
+    }
+
     /**
      * Resolves the routing name for a placed block ID, stripping any rank suffix
      * (e.g. "_RankS", "_RankA", …) before the lookup so ranked portal variants

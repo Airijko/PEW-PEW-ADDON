@@ -43,9 +43,9 @@ public class PortalGiveCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw(
-                "Usage: /gate dungeon give <d1|d2|d3|swamp|frozen|void|all> <rank: E|D|C|B|A|S>")
-                .color("#ffcc66"));
+        context.sendMessage(Message.raw("Dungeon portal item commands").color("#8fd3ff"));
+        context.sendMessage(Message.raw("Usage: /gate dungeon give <d1|d2|d3|swamp|frozen|void|all> <E|D|C|B|A|S>").color("#d9f0ff"));
+        context.sendMessage(Message.raw("Examples: /gate dungeon give d1 E   |   /gate dungeon give frozen S   |   /gate dungeon give all D").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 

@@ -1,175 +1,142 @@
 package com.airijko.endlessleveling.commands.gate;
 
-import com.airijko.endlessleveling.api.gates.TrackedDungeonGateSnapshot;
-import com.airijko.endlessleveling.api.gates.TrackedWaveGateSnapshot;
-import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
+import com.airijko.endlessleveling.managers.GateTrackerManager;
+import com.airijko.endlessleveling.managers.GateTrackerManager.GateTrackerEntry;
+import com.airijko.endlessleveling.ui.GateTrackerHud;
+import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
+import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
+import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
+import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.universe.PlayerRef;
+import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 
 public final class GateTrackCommand extends AbstractCommand {
 
+    private final RequiredArg<String> idArg = this.withRequiredArg(
+            "id",
+            "Gate tracker ID from /gate list, or clear/off/stop to remove the tracker HUD",
+            Objects.requireNonNull(ArgTypes.STRING));
+
     public GateTrackCommand() {
-        super("track", "List tracked dungeon gates, wave gates, and dungeon+wave gate combos");
-        this.addAliases("tracks", "tracking", "listtrack", "trackgatetypes");
+        super("track", "Track one active gate entry in a live HUD, or list current tracker IDs");
+        this.addAliases("tracks", "tracking", "followgate", "trackgate");
     }
 
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        List<TrackedDungeonGateSnapshot> allGates = EndlessLevelingCompatibility.listTrackedDungeonGates();
-        List<TrackedWaveGateSnapshot> standaloneWaves = EndlessLevelingCompatibility.listTrackedStandaloneWaves();
-        List<TrackedWaveGateSnapshot> combos = EndlessLevelingCompatibility.listTrackedGateWaveCombos();
-
-        Set<String> comboGateIds = new HashSet<>();
-        for (TrackedWaveGateSnapshot combo : combos) {
-            if (combo.linkedGateId() != null && !combo.linkedGateId().isBlank()) {
-                comboGateIds.add(combo.linkedGateId());
-            }
+        String rawArg = idArg.get(context);
+        if (rawArg == null || rawArg.isBlank()) {
+            context.sendMessage(Message.raw("Gate tracker usage").color("#8fd3ff"));
+            context.sendMessage(Message.raw("- /gate list             Show active dungeon, outbreak, and hybrid gate IDs").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate track <id>       Open the live tracker HUD for one listed gate").color("#d9f0ff"));
+            context.sendMessage(Message.raw("- /gate track clear      Remove the tracker HUD").color("#d9f0ff"));
+            GateListCommand.sendGateList(context, true);
+            return CompletableFuture.completedFuture(null);
         }
 
-        List<TrackedDungeonGateSnapshot> standaloneGates = allGates.stream()
-                .filter(gate -> !comboGateIds.contains(gate.gateId()))
-                .toList();
+        if (isClearRequest(rawArg)) {
+            return runWithPlayerRef(context, (ctx, player, playerRef) -> {
+                GateTrackerManager.clearTrackedEntry(playerRef.getUuid());
+                GateTrackerHud.close(player, playerRef);
+                ctx.sendMessage(Message.raw("Gate tracker HUD cleared.").color("#6cff78"));
+            });
+        }
 
-        context.sendMessage(Message.raw("Tracked Gate-Type Activity").color("#8fd3ff"));
-        context.sendMessage(Message.raw(
-            "Standalone dungeon gates=" + standaloneGates.size()
-                        + " | standalone waves=" + standaloneWaves.size()
-                + " | dungeon+wave gate combos=" + combos.size()).color("#d9f0ff"));
+        GateTrackerEntry entry = GateTrackerManager.findByDisplayId(rawArg);
+        if (entry == null) {
+            context.sendMessage(Message.raw("Unknown gate tracker id '" + rawArg + "'.").color("#ff6666"));
+            GateListCommand.sendGateList(context, true);
+            return CompletableFuture.completedFuture(null);
+        }
 
-        sendGateSection(context, standaloneGates);
-        sendWaveSection(context, standaloneWaves);
-        sendComboSection(context, combos);
-
-        return CompletableFuture.completedFuture(null);
+        return runWithPlayerRef(context, (ctx, player, playerRef) -> {
+            GateTrackerManager.setTrackedEntry(playerRef.getUuid(), entry);
+            GateTrackerHud.OpenStatus status = GateTrackerHud.open(player, playerRef);
+            switch (status) {
+                case OPENED -> {
+                    ctx.sendMessage(Message.raw(
+                            "Tracking [" + entry.displayId() + "] " + entry.type().label() + " " + entry.title() + ".")
+                            .color("#6cff78"));
+                    ctx.sendMessage(Message.raw("Use /gate track clear to close the tracker HUD.").color("#8fd3ff"));
+                }
+                case BLOCKED_BY_EXISTING_HUD -> {
+                    GateTrackerManager.clearTrackedEntry(playerRef.getUuid());
+                    ctx.sendMessage(Message.raw(
+                            "Could not open the tracker HUD because another custom HUD already owns the slot.")
+                            .color("#ff6666"));
+                    ctx.sendMessage(Message.raw(
+                            "Install or enable MultipleHUD to stack the gate tracker beside the core HUD, or clear the current custom HUD first.")
+                            .color("#ffcc66"));
+                }
+                case PLAYER_INVALID -> {
+                    GateTrackerManager.clearTrackedEntry(playerRef.getUuid());
+                    ctx.sendMessage(Message.raw("Could not resolve live player state. Try again in a moment.").color("#ff6666"));
+                }
+            }
+        });
     }
 
-    private static void sendGateSection(@Nonnull CommandContext context,
-                                        @Nonnull List<TrackedDungeonGateSnapshot> gates) {
-        context.sendMessage(Message.raw("Standalone Dungeon Gates").color("#f8d66d"));
-        if (gates.isEmpty()) {
-            context.sendMessage(Message.raw("- none").color("#ffcc66"));
-            return;
-        }
-
-        Map<String, List<TrackedDungeonGateSnapshot>> grouped = new LinkedHashMap<>();
-        for (TrackedDungeonGateSnapshot gate : gates) {
-            grouped.computeIfAbsent(formatWorld(gate.worldName()), ignored -> new ArrayList<>()).add(gate);
-        }
-
-        for (Map.Entry<String, List<TrackedDungeonGateSnapshot>> entry : grouped.entrySet()) {
-            context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
-                    .color("#8fd3ff"));
-            for (TrackedDungeonGateSnapshot gate : entry.getValue()) {
-                context.sendMessage(Message.raw(String.format(
-                        "  %-5s %-18s %s",
-                        "[" + gate.rankTierId() + "]",
-                        formatCoords(gate.x(), gate.y(), gate.z()),
-                        shortenGateId(gate.gateId()))).color("#d9f0ff"));
-            }
-        }
-    }
-
-    private static void sendWaveSection(@Nonnull CommandContext context,
-                                        @Nonnull List<TrackedWaveGateSnapshot> waves) {
-        context.sendMessage(Message.raw("Standalone Wave Gates").color("#f8d66d"));
-        if (waves.isEmpty()) {
-            context.sendMessage(Message.raw("- none").color("#ffcc66"));
-            return;
-        }
-
-        Map<String, List<TrackedWaveGateSnapshot>> grouped = new LinkedHashMap<>();
-        for (TrackedWaveGateSnapshot wave : waves) {
-            grouped.computeIfAbsent(formatWorld(wave.worldName()), ignored -> new ArrayList<>()).add(wave);
-        }
-
-        for (Map.Entry<String, List<TrackedWaveGateSnapshot>> entry : grouped.entrySet()) {
-            context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
-                    .color("#8fd3ff"));
-            for (TrackedWaveGateSnapshot wave : entry.getValue()) {
-                context.sendMessage(Message.raw(String.format(
-                        "  %-5s %-8s %-18s owner=%s",
-                        "[" + wave.rankTierId() + "]",
-                        wave.stage().toUpperCase(),
-                        formatCoords(wave.x(), wave.y(), wave.z()),
-                        formatOwner(wave.ownerName()))).color("#d9f0ff"));
-            }
-        }
-    }
-
-    private static void sendComboSection(@Nonnull CommandContext context,
-                                         @Nonnull List<TrackedWaveGateSnapshot> combos) {
-        context.sendMessage(Message.raw("Dungeon Gate / Wave Gate Combos").color("#f8d66d"));
-        if (combos.isEmpty()) {
-            context.sendMessage(Message.raw("- none").color("#ffcc66"));
-            return;
-        }
-
-        Map<String, List<TrackedWaveGateSnapshot>> grouped = new LinkedHashMap<>();
-        for (TrackedWaveGateSnapshot combo : combos) {
-            grouped.computeIfAbsent(formatWorld(combo.worldName()), ignored -> new ArrayList<>()).add(combo);
-        }
-
-        for (Map.Entry<String, List<TrackedWaveGateSnapshot>> entry : grouped.entrySet()) {
-            context.sendMessage(Message.raw(String.format("- %s (%d)", entry.getKey(), entry.getValue().size()))
-                    .color("#8fd3ff"));
-            for (TrackedWaveGateSnapshot combo : entry.getValue()) {
-                context.sendMessage(Message.raw(String.format(
-                        "  %-5s %-8s %-18s gate=%s owner=%s",
-                        "[" + combo.rankTierId() + "]",
-                        combo.stage().toUpperCase(),
-                        formatCoords(combo.x(), combo.y(), combo.z()),
-                        shortenGateId(combo.linkedGateId()),
-                        formatOwner(combo.ownerName()))).color("#d9f0ff"));
-            }
-        }
+    private static boolean isClearRequest(@Nonnull String rawArg) {
+        String normalized = rawArg.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("clear")
+                || normalized.equals("off")
+                || normalized.equals("stop")
+                || normalized.equals("none");
     }
 
     @Nonnull
-    private static String formatWorld(@Nullable String worldName) {
-        return worldName == null || worldName.isBlank() ? "<unknown world>" : worldName;
+    private static CompletableFuture<Void> runWithPlayerRef(
+            @Nonnull CommandContext context,
+            @Nonnull PlayerAction action) {
+        if (!(context.sender() instanceof Player player)) {
+            context.sendMessage(Message.raw("This command is player-only and requires being in-world.").color("#ff9900"));
+            return CompletableFuture.completedFuture(null);
+        }
+
+        World world = player.getWorld();
+        if (world == null) {
+            context.sendMessage(Message.raw("This command is player-only and requires being in-world.").color("#ff9900"));
+            return CompletableFuture.completedFuture(null);
+        }
+
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        world.execute(() -> {
+            try {
+                Ref<EntityStore> ref = player.getReference();
+                if (ref == null || !ref.isValid()) {
+                    context.sendMessage(Message.raw("Could not resolve player state. Try again in a moment.").color("#ff6666"));
+                    return;
+                }
+
+                Store<EntityStore> store = ref.getStore();
+                PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
+                if (playerRef == null || !playerRef.isValid()) {
+                    context.sendMessage(Message.raw("Could not resolve player state. Try again in a moment.").color("#ff6666"));
+                    return;
+                }
+
+                action.run(context, player, playerRef);
+            } finally {
+                future.complete(null);
+            }
+        });
+        return future;
     }
 
-    @Nonnull
-    private static String formatCoords(@Nullable Integer x, @Nullable Integer y, @Nullable Integer z) {
-        if (x == null || y == null || z == null) {
-            return "(<untracked>)";
-        }
-        return String.format("(%4d, %3d, %4d)", x, y, z);
-    }
-
-    @Nonnull
-    private static String formatOwner(@Nullable String ownerName) {
-        return ownerName == null || ownerName.isBlank() ? "<unknown>" : ownerName;
-    }
-
-    @Nonnull
-    private static String shortenGateId(@Nullable String gateId) {
-        if (gateId == null || gateId.isBlank()) {
-            return "<unknown>";
-        }
-        if (!gateId.startsWith("el_gate:")) {
-            return gateId.length() <= 24 ? gateId : gateId.substring(0, 24);
-        }
-
-        String[] parts = gateId.split(":");
-        if (parts.length < 6) {
-            return gateId.length() <= 24 ? gateId : gateId.substring(0, 24);
-        }
-
-        String worldToken = parts[1];
-        String shortWorldToken = worldToken.length() <= 8 ? worldToken : worldToken.substring(0, 8);
-        return "el_gate:" + shortWorldToken + ":" + parts[parts.length - 3] + ":" + parts[parts.length - 2] + ":" + parts[parts.length - 1];
+    @FunctionalInterface
+    private interface PlayerAction {
+        void run(@Nonnull CommandContext context, @Nonnull Player player, @Nonnull PlayerRef playerRef);
     }
 }
