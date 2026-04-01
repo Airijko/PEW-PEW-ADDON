@@ -80,7 +80,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /gate blocks <list|remove-nearest|remove-all>").color("#ffcc66"));
+        context.sendMessage(Message.raw("Usage: /gate dungeon blocks <list|remove-nearest|remove-all>").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 

@@ -24,6 +24,7 @@ package com.airijko.endlessleveling;
 
 import com.airijko.endlessleveling.commands.gate.GateCommand;
 import com.airijko.endlessleveling.commands.AddonReloadCommand;
+import com.airijko.endlessleveling.compatibility.EndlessLevelingCompatibility;
 import com.airijko.endlessleveling.events.PortalDeathLoggingSystem;
 import com.airijko.endlessleveling.events.PortalInstanceDiagnostics;
 import com.airijko.endlessleveling.events.PortalLeveledInstanceRouter;
@@ -31,6 +32,7 @@ import com.airijko.endlessleveling.listeners.PortalGateJoinNotificationListener;
 import com.airijko.endlessleveling.listeners.PortalReturnInteractionListener;
 import com.airijko.endlessleveling.listeners.WavePortalBreakBlockSystem;
 import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.AddonGatesManager;
 import com.airijko.endlessleveling.managers.AddonLoggingManager;
 import com.airijko.endlessleveling.managers.ExampleFeatureManager;
 import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
@@ -88,6 +90,9 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
         this.getCommandRegistry().registerCommand(new GateCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
+        if (EndlessLevelingCompatibility.registerGatesManager(AddonGatesManager.INSTANCE)) {
+            AddonLoggingManager.log(this, Level.INFO, "[ELGateRegistry] Registered addon gates manager under key 'gates'.");
+        }
         this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
         this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
         NaturalPortalGateManager.initialize(this, this.filesManager);
@@ -111,6 +116,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
     @Override
     protected void shutdown() {
+        EndlessLevelingCompatibility.unregisterGatesManager(AddonGatesManager.INSTANCE);
         MobWaveManager.shutdown();
         PortalLeveledInstanceRouter.saveGateInstances();
         NaturalPortalGateManager.shutdown();
@@ -164,6 +170,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
             NaturalPortalGateManager.shutdown();
             MobWaveManager.shutdown();
+            EndlessLevelingCompatibility.unregisterGatesManager(AddonGatesManager.INSTANCE);
+            EndlessLevelingCompatibility.registerGatesManager(AddonGatesManager.INSTANCE);
             NaturalPortalGateManager.initialize(this, this.filesManager);
             MobWaveManager.initialize();
             PortalInstanceDiagnostics.initialize(this, this.filesManager);

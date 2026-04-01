@@ -28,7 +28,7 @@ public final class GateInstancesCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        context.sendMessage(Message.raw("Usage: /gate instances <list|delete <id>>").color("#ffcc66"));
+        context.sendMessage(Message.raw("Usage: /gate dungeon instances <list|delete <id>>").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
 
@@ -69,7 +69,7 @@ public final class GateInstancesCommand extends AbstractCommand {
 
             if (instances.size() > displayCount) {
                 context.sendMessage(Message.raw(
-                                "Showing first " + displayCount + " entries. Use /gate instances delete <id> to remove one.")
+                                "Showing first " + displayCount + " entries. Use /gate dungeon instances delete <id> to remove one.")
                         .color("#ffcc66"));
             }
 

@@ -42,7 +42,7 @@ public class PortalGiveCommand extends AbstractCommand {
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-                "Usage: /gate give <d1|d2|d3|swamp|frozen|void|all> <rank: E|D|C|B|A|S>")
+                "Usage: /gate dungeon give <d1|d2|d3|swamp|frozen|void|all> <rank: E|D|C|B|A|S>")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }

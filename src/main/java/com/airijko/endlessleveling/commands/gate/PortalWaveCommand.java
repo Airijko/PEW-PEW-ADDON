@@ -30,7 +30,7 @@ public final class PortalWaveCommand extends AbstractCommand {
 
     public PortalWaveCommand() {
         super("wave", "Dungeon break wave commands");
-        this.addAliases("waves");
+        this.addAliases("waves", "outbreak", "outbreaks");
         this.addSubCommand(new TestWaveSubCommand());
         this.addSubCommand(new TestGateWaveComboSubCommand());
         this.addSubCommand(new ClearGateWaveComboSubCommand());
@@ -47,7 +47,7 @@ public final class PortalWaveCommand extends AbstractCommand {
         String rawArg = rankArg.get(context);
         if (rawArg == null || rawArg.isBlank()) {
             context.sendMessage(Message.raw(
-                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status")
+                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status (also /gate outbreak ...)")
                     .color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }

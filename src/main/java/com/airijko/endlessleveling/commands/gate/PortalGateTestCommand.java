@@ -23,7 +23,7 @@ public class PortalGateTestCommand extends AbstractCommand {
             Objects.requireNonNull(ArgTypes.STRING));
 
     public PortalGateTestCommand() {
-        super("spawn", "Spawn an EL gate near you (/gate spawn <S|A|B|C|D|E|random>)");
+        super("spawn", "Spawn an EL gate near you (/gate dungeon spawn <S|A|B|C|D|E|random>)");
         this.addAliases("gatespawn", "elgatespawn", "spawnrandomgate");
     }
 
@@ -48,7 +48,7 @@ public class PortalGateTestCommand extends AbstractCommand {
         String normalizedArg = rawArg == null ? "" : rawArg.trim().toUpperCase(Locale.ROOT);
 
         if (normalizedArg.isBlank()) {
-            context.sendMessage(Message.raw("Usage: /gate spawn <S|A|B|C|D|E|random>").color("#ffcc66"));
+            context.sendMessage(Message.raw("Usage: /gate dungeon spawn <S|A|B|C|D|E|random>").color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }
 

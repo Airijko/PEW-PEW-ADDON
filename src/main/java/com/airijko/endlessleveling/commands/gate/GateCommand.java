@@ -13,22 +13,15 @@ public final class GateCommand extends AbstractCommand {
     public GateCommand() {
         super("gate", "Root command for EL gate admin tools");
         this.addAliases("g", "elgate");
-        this.addSubCommand(new PortalGiveCommand());
-        this.addSubCommand(new PortalGateTestCommand());
+        this.addSubCommand(new GateDungeonCommand());
         this.addSubCommand(new PortalWaveCommand());
-        this.addSubCommand(new PortalBlockAdminCommand());
-        this.addSubCommand(new PortalReturnPosCommand());
-        this.addSubCommand(new ClearElDungeonsCommand());
-        this.addSubCommand(new GateInstancesCommand());
-        this.addSubCommand(new GateTrackCommand());
-        this.addSubCommand(new GateDebugCommand());
     }
 
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
         context.sendMessage(Message.raw(
-            "Usage: /gate <give|spawn|wave|blocks|returnpos|deleteinstances|instances|track|debug> ...")
+            "Usage: /gate <dungeon|wave|outbreak> ...")
                 .color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }
