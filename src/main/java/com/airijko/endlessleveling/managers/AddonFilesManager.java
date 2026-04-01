@@ -60,6 +60,16 @@ public final class AddonFilesManager {
     private static final String LEGACY_GATE_WORLD_SETTINGS_FILE_NAME = "el-gate-dungeons.json";
     private static final String GATE_WORLD_OVERRIDES_PATH = "World_Overrides";
     private static final String CANONICAL_GATE_WORLD_OVERRIDE_KEY = "el_gate_*";
+        private static final String[] MAJOR_DUNGEON_CONTENT_MARKERS = {
+            "majordungeons",
+            "mj_instance"
+        };
+        private static final String[] ENDGAME_CONTENT_MARKERS = {
+            "endgameandqol",
+            "endgame&qol",
+            "config_endgame",
+            "endgame_qol"
+        };
     private static final DateTimeFormatter ARCHIVE_TIMESTAMP_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final Pattern MANIFEST_VERSION_PATTERN = Pattern.compile("\"Version\"\\s*:\\s*\"([^\"]+)\"");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -1147,6 +1157,52 @@ public final class AddonFilesManager {
 
     public boolean isDungeonGateEnabled() {
         return dungeonGateOptions == null || dungeonGateOptions.enabled;
+    }
+
+    public boolean isMajorDungeonContentAvailable() {
+        return detectContentMarker(MAJOR_DUNGEON_CONTENT_MARKERS);
+    }
+
+    public boolean isEndgameContentAvailable() {
+        return detectContentMarker(ENDGAME_CONTENT_MARKERS);
+    }
+
+    public boolean hasAnyDungeonDependencyContent() {
+        return isMajorDungeonContentAvailable() || isEndgameContentAvailable();
+    }
+
+    public boolean isPortalBlockSupported(@Nullable String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return false;
+        }
+        if (blockId.startsWith("EL_MajorDungeonPortal_")) {
+            return isMajorDungeonContentAvailable();
+        }
+        if (blockId.startsWith("EL_EndgamePortal_")) {
+            return isEndgameContentAvailable();
+        }
+        return true;
+    }
+
+    private boolean detectContentMarker(@Nonnull String[] markers) {
+        if (PluginManager.MODS_PATH == null) {
+            return false;
+        }
+
+        File[] entries = PluginManager.MODS_PATH.toFile().listFiles();
+        if (entries == null || entries.length == 0) {
+            return false;
+        }
+
+        for (File entry : entries) {
+            String name = entry.getName().toLowerCase(Locale.ROOT);
+            for (String marker : markers) {
+                if (name.contains(marker)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public int getDungeonMaxConcurrentSpawns() {

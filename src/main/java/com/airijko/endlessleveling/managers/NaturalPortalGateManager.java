@@ -252,6 +252,10 @@ public final class NaturalPortalGateManager {
 
         // store.getComponent must run on the world thread; defer via world.execute()
         String blockId = pickRandomPortalBlock();
+        if (blockId == null) {
+            player.sendMessage(Message.raw("Dungeon gates are unavailable: required content packs are missing.").color("#ff6666"));
+            return CompletableFuture.completedFuture(false);
+        }
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         world.execute(() -> {
             if (!ref.isValid()) {
@@ -317,6 +321,10 @@ public final class NaturalPortalGateManager {
             }
 
             String blockId = pickRandomPortalBlock();
+            if (blockId == null) {
+                log(Level.INFO, "[ELPortal] Spawn skipped: no supported dungeon portal content is currently available");
+                return;
+            }
             spawnGateViaWorldDispatch(world, target, blockId, false);
         } catch (Exception ex) {
             AddonLoggingManager.log(plugin, Level.WARNING, ex, "[ELPortal] Natural gate tick failed");
@@ -1963,9 +1971,18 @@ public final class NaturalPortalGateManager {
         universe.sendMessage(message);
     }
 
-    @Nonnull
+    @Nullable
     private static String pickRandomPortalBlock() {
-        return PORTAL_BLOCK_IDS.get((int) (Math.random() * PORTAL_BLOCK_IDS.size()));
+        List<String> candidates = new ArrayList<>(PORTAL_BLOCK_IDS.size());
+        for (String blockId : PORTAL_BLOCK_IDS) {
+            if (filesManager == null || filesManager.isPortalBlockSupported(blockId)) {
+                candidates.add(blockId);
+            }
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        return candidates.get((int) (Math.random() * candidates.size()));
     }
 
     private static int randomInt(int minInclusive, int maxInclusive) {

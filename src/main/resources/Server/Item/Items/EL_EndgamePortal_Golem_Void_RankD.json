@@ -1,15 +1,15 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.endgame_portal_void.name",
-    "Description": "endlesslevelingaddon.items.endgame_portal_void.description"
+    "Name": "server.items.EL_EndgamePortal_Golem_Void_RankD.name",
+    "Description": "server.items.EL_EndgamePortal_Golem_Void_RankD.description"
   },
-  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Golem_Void.png",
+  "Icon": "Icons/ItemsGenerated/PortalKey_Howling_Sands.png",
   "Categories": [
     "Blocks.Structural"
   ],
-  "PlayerAnimationsId": "Block",
+  "PlayerAnimationsId": "Item",
   "MaxStack": 1,
-  "Quality": "Legendary",
+  "Quality": "Common",
   "InteractionConfig": {
     "UseDistance": {
       "Adventure": 4.0,
@@ -27,7 +27,7 @@
     "Group": "Stone",
     "Textures": [
       {
-        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "All": "BlockTextures/EL_Portal_Anchor.png",
         "Weight": 1
       }
     ],

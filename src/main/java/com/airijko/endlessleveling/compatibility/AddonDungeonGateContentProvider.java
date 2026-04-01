@@ -22,7 +22,7 @@ public final class AddonDungeonGateContentProvider implements DungeonGateContent
 
     @Override
     public boolean isEnabled() {
-        return filesManager.isDungeonGateEnabled();
+        return filesManager.isDungeonGateEnabled() && filesManager.hasAnyDungeonDependencyContent();
     }
 
     @Override

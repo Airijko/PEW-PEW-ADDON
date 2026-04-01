@@ -1,15 +1,15 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.endgame_portal_frozen.name",
-    "Description": "endlesslevelingaddon.items.endgame_portal_frozen.description"
+    "Name": "server.items.EL_EndgamePortal_Frozen_Dungeon.name",
+    "Description": "server.items.EL_EndgamePortal_Frozen_Dungeon.description"
   },
-  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Frozen_Dungeon.png",
+  "Icon": "Icons/ItemsGenerated/PortalKey_Howling_Sands.png",
   "Categories": [
     "Blocks.Structural"
   ],
-  "PlayerAnimationsId": "Block",
+  "PlayerAnimationsId": "Item",
   "MaxStack": 1,
-  "Quality": "Rare",
+  "Quality": "Common",
   "InteractionConfig": {
     "UseDistance": {
       "Adventure": 4.0,
@@ -27,7 +27,7 @@
     "Group": "Stone",
     "Textures": [
       {
-        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "All": "BlockTextures/EL_Portal_Anchor.png",
         "Weight": 1
       }
     ],

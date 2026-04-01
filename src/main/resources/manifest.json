@@ -11,11 +11,12 @@
     "DisabledByDefault": false,
     "IncludesAssetPack": true,
     "Dependencies": {
-        "com.airijko:EndlessLeveling": ">=7.0.4",
+        "com.airijko:EndlessLeveling": ">=7.0.4"
+    },
+    "OptionalDependencies": {
         "MAJOR76:MajorDungeons": ">=0.4.4",
         "Config:Endgame&QoL": ">=4.1.1"
     },
-    "OptionalDependencies": {},
-    "ServerVersion": "*",
+    "ServerVersion": "2026.03.26-89796e57b",
     "Main": "com.airijko.endlessleveling.EndlessLevelingAddon"
 }

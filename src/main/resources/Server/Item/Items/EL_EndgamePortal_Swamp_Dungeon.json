@@ -1,15 +1,15 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.endgame_portal_swamp.name",
-    "Description": "endlesslevelingaddon.items.endgame_portal_swamp.description"
+    "Name": "server.items.EL_EndgamePortal_Swamp_Dungeon.name",
+    "Description": "server.items.EL_EndgamePortal_Swamp_Dungeon.description"
   },
-  "Icon": "Icons/ItemsGenerated/Endgame_Portal_Swamp_Dungeon.png",
+  "Icon": "Icons/ItemsGenerated/PortalKey_Howling_Sands.png",
   "Categories": [
     "Blocks.Structural"
   ],
-  "PlayerAnimationsId": "Block",
+  "PlayerAnimationsId": "Item",
   "MaxStack": 1,
-  "Quality": "Epic",
+  "Quality": "Common",
   "InteractionConfig": {
     "UseDistance": {
       "Adventure": 4.0,
@@ -27,7 +27,7 @@
     "Group": "Stone",
     "Textures": [
       {
-        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "All": "BlockTextures/EL_Portal_Anchor.png",
         "Weight": 1
       }
     ],

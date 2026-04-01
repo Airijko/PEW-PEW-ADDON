@@ -3,9 +3,13 @@ package com.airijko.endlessleveling.compatibility;
 import com.airijko.endlessleveling.api.gates.InstanceDungeonDefinition;
 
 import javax.annotation.Nonnull;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class AddonInstanceDungeonRegistry {
+
+        private static volatile boolean majorDungeonContentAvailable = true;
+        private static volatile boolean endgameContentAvailable = true;
 
     private static final List<InstanceDungeonDefinition> DEFINITIONS = List.of(
             new InstanceDungeonDefinition(
@@ -60,8 +64,24 @@ public final class AddonInstanceDungeonRegistry {
     private AddonInstanceDungeonRegistry() {
     }
 
+        public static void configureDependencyAvailability(boolean majorAvailable, boolean endgameAvailable) {
+                majorDungeonContentAvailable = majorAvailable;
+                endgameContentAvailable = endgameAvailable;
+        }
+
     @Nonnull
     public static List<InstanceDungeonDefinition> getDefinitions() {
-        return DEFINITIONS;
+                List<InstanceDungeonDefinition> filtered = new ArrayList<>();
+                for (InstanceDungeonDefinition definition : DEFINITIONS) {
+                            String portalBlockId = definition.basePortalBlockId();
+                        if (portalBlockId != null && portalBlockId.startsWith("EL_MajorDungeonPortal_") && !majorDungeonContentAvailable) {
+                                continue;
+                        }
+                        if (portalBlockId != null && portalBlockId.startsWith("EL_EndgamePortal_") && !endgameContentAvailable) {
+                                continue;
+                        }
+                        filtered.add(definition);
+                }
+                return List.copyOf(filtered);
     }
 }

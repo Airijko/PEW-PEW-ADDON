@@ -31,6 +31,7 @@ public final class PortalWaveCommand extends AbstractCommand {
     public PortalWaveCommand() {
         super("wave", "Wave gate commands");
         this.addAliases("waves", "wavegate", "wavegates", "outbreak", "outbreaks");
+        this.addSubCommand(new SpawnWaveSubCommand());
         this.addSubCommand(new TestWaveSubCommand());
         this.addSubCommand(new TestGateWaveComboSubCommand());
         this.addSubCommand(new ClearGateWaveComboSubCommand());
@@ -52,7 +53,7 @@ public final class PortalWaveCommand extends AbstractCommand {
         String rawArg = rankArg.get(context);
         if (rawArg == null || rawArg.isBlank()) {
             context.sendMessage(Message.raw(
-                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status (aliases: /gate wavegate ..., legacy /gate outbreak ...)")
+                    "Usage: /gate wave <S|A|B|C|D|E|random>  -or-  /gate wave spawn <rank>  -or-  /gate wave start <rank>  -or-  /gate wave test <rank>  -or-  /gate wave testcombo <rank>  |  clearcombo|clearparticles|stop|skip|status (aliases: /gate wavegate ..., legacy /gate outbreak ...)")
                     .color("#ffcc66"));
             return CompletableFuture.completedFuture(null);
         }
@@ -76,6 +77,48 @@ public final class PortalWaveCommand extends AbstractCommand {
             return GateRankTier.valueOf(input.trim().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ignored) {
             return null;
+        }
+    }
+
+    private static final class SpawnWaveSubCommand extends AbstractCommand {
+        private final RequiredArg<String> rankArg =
+                this.withRequiredArg("rank", "Wave rank tier (S/A/B/C/D/E)", Objects.requireNonNull(ArgTypes.STRING));
+
+        private SpawnWaveSubCommand() {
+            super("spawn", "Spawn a wave portal now and respect the normal mob-start countdown");
+            this.addAliases("schedule", "preview");
+        }
+
+        @Nullable
+        @Override
+        protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+            if (!(context.sender() instanceof Player player)) {
+                context.sendMessage(Message.raw("This command is player-only and requires being in-world.").color("#ff9900"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            GateRankTier tier = parseRankTier(Objects.requireNonNull(rankArg.get(context)));
+            if (tier == null) {
+                context.sendMessage(Message.raw("Invalid rank. Use one of: S A B C D E").color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            WaveSessionResults.NaturalStartResult result =
+                    EndlessLevelingCompatibility.startNaturalWaveForPlayer(player, tier.name());
+            if (!result.scheduled()) {
+                context.sendMessage(Message.raw(result.message()).color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            context.sendMessage(Message.raw(
+                    String.format(Locale.ROOT,
+                            "%s-rank wave portal spawned. Mob countdown started.",
+                            tier.letter()))
+                    .color("#6cff78"));
+            context.sendMessage(Message.raw(
+                    "Use /gate wave test <rank> for instant mobs or /gate wave stop to cancel the countdown.")
+                    .color("#8fd3ff"));
+            return CompletableFuture.completedFuture(null);
         }
     }
 
@@ -230,7 +273,7 @@ public final class PortalWaveCommand extends AbstractCommand {
                 this.withRequiredArg("rank", "Wave rank tier (S/A/B/C/D/E)", Objects.requireNonNull(ArgTypes.STRING));
 
         private StartWaveSubCommand() {
-            super("start", "Start a wave sequence");
+            super("start", "Start a wave sequence immediately with mobs spawning right away");
         }
 
         @Nullable

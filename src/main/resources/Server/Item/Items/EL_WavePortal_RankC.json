@@ -1,13 +1,13 @@
 {
   "TranslationProperties": {
-    "Name": "endlesslevelingaddon.items.portal_d01.name",
-    "Description": "endlesslevelingaddon.items.portal_d01.description"
+    "Name": "server.items.EL_WavePortal_RankC.name",
+    "Description": "server.items.EL_WavePortal_RankC.description"
   },
-  "Icon": "Icons/ItemsGenerated/MajorDungeons_PortalKey.png",
+  "Icon": "Icons/ItemsGenerated/PortalKey_Howling_Sands.png",
   "Categories": [
     "Blocks.Structural"
   ],
-  "PlayerAnimationsId": "Block",
+  "PlayerAnimationsId": "Item",
   "MaxStack": 1,
   "Quality": "Uncommon",
   "InteractionConfig": {
@@ -26,7 +26,7 @@
     "Group": "Stone",
     "Textures": [
       {
-        "All": "BlockTextures/MJ_Invisible_Block.png",
+        "All": "BlockTextures/EL_Portal_Anchor.png",
         "Weight": 1
       }
     ],

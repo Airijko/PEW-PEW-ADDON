@@ -1,6 +1,8 @@
 package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.enums.GateRankTier;
+import com.airijko.endlessleveling.managers.AddonFilesManager;
+import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -56,9 +58,21 @@ public class PortalGiveCommand extends AbstractCommand {
         }
     }
 
+    private static boolean isPortalSupported(@Nonnull String baseBlockId) {
+        AddonFilesManager manager = NaturalPortalGateManager.getFilesManager();
+        return manager == null || manager.isPortalBlockSupported(baseBlockId);
+    }
+
     private static CompletableFuture<Void> givePortal(@Nonnull CommandContext context,
                                                        @Nonnull String baseBlockId,
                                                        @Nonnull GateRankTier tier) {
+        if (!isPortalSupported(baseBlockId)) {
+            context.sendMessage(Message.raw(
+                    "That portal is unavailable because its dependency mod content is missing.")
+                    .color("#ff6666"));
+            return CompletableFuture.completedFuture(null);
+        }
+
         if (!(context.sender() instanceof Player player)) {
             context.sendMessage(Message.raw("This command is player-only.").color("#ff9900"));
             return CompletableFuture.completedFuture(null);
@@ -157,12 +171,34 @@ public class PortalGiveCommand extends AbstractCommand {
             }
 
             final GateRankTier finalTier = parsed;
-            return givePortal(context, PORTAL_D01, finalTier)
-                    .thenCompose(v -> givePortal(context, PORTAL_D02, finalTier))
-                    .thenCompose(v -> givePortal(context, PORTAL_D03, finalTier))
-                    .thenCompose(v -> givePortal(context, PORTAL_SWAMP, finalTier))
-                    .thenCompose(v -> givePortal(context, PORTAL_FROZEN, finalTier))
-                    .thenCompose(v -> givePortal(context, PORTAL_VOID, finalTier));
+            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+            boolean anySupported = false;
+
+            String[] portals = {
+                    PORTAL_D01,
+                    PORTAL_D02,
+                    PORTAL_D03,
+                    PORTAL_SWAMP,
+                    PORTAL_FROZEN,
+                    PORTAL_VOID
+            };
+
+            for (String portal : portals) {
+                if (!isPortalSupported(portal)) {
+                    continue;
+                }
+                anySupported = true;
+                chain = chain.thenCompose(v -> givePortal(context, portal, finalTier));
+            }
+
+            if (!anySupported) {
+                context.sendMessage(Message.raw(
+                        "No dungeon dependency content is available, so no portal items can be granted.")
+                        .color("#ff6666"));
+                return CompletableFuture.completedFuture(null);
+            }
+
+            return chain;
         }
     }
 }

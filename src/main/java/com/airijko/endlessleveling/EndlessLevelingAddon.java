@@ -57,6 +57,7 @@ import com.airijko.endlessleveling.registration.races.RaceRegistration;
 import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 
 import javax.annotation.Nonnull;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 
@@ -65,7 +66,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
     private AddonFilesManager filesManager;
     private AddonDungeonGateContentProvider dungeonGateContentProvider;
     private AddonWaveGateContentProvider waveGateContentProvider;
-    private final List<InstanceDungeonDefinition> instanceDungeonDefinitions = AddonInstanceDungeonRegistry.getDefinitions();
+    private final List<InstanceDungeonDefinition> registeredInstanceDungeonDefinitions = new ArrayList<>();
     private final Object reloadLock = new Object();
 
     public EndlessLevelingAddon(@Nonnull JavaPluginInit init) {
@@ -99,6 +100,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
 
         this.getCommandRegistry().registerCommand(new GateCommand());
         this.getCommandRegistry().registerCommand(new AddonReloadCommand(this));
+
+        configureDependencyAvailability();
 
         dungeonGateContentProvider = new AddonDungeonGateContentProvider(this.filesManager);
         waveGateContentProvider = new AddonWaveGateContentProvider(this.filesManager);
@@ -178,6 +181,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
             this.filesManager.refreshContentOptions();
             this.filesManager.refreshDungeonGateOptions();
             PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
+            configureDependencyAvailability();
 
             int unregisteredRaces = RaceRegistration.unregisterAll();
             int unregisteredClasses = ClassRegistration.unregisterAll();
@@ -280,15 +284,30 @@ public class EndlessLevelingAddon extends JavaPlugin {
     }
 
     private void registerInstanceDungeons() {
-        for (InstanceDungeonDefinition definition : instanceDungeonDefinitions) {
+        registeredInstanceDungeonDefinitions.clear();
+        registeredInstanceDungeonDefinitions.addAll(AddonInstanceDungeonRegistry.getDefinitions());
+        for (InstanceDungeonDefinition definition : registeredInstanceDungeonDefinitions) {
             EndlessLevelingCompatibility.registerInstanceDungeon(definition);
         }
     }
 
     private void unregisterInstanceDungeons() {
-        for (InstanceDungeonDefinition definition : instanceDungeonDefinitions) {
+        for (InstanceDungeonDefinition definition : registeredInstanceDungeonDefinitions) {
             EndlessLevelingCompatibility.unregisterInstanceDungeon(definition);
         }
+        registeredInstanceDungeonDefinitions.clear();
+    }
+
+    private void configureDependencyAvailability() {
+        boolean majorAvailable = this.filesManager != null && this.filesManager.isMajorDungeonContentAvailable();
+        boolean endgameAvailable = this.filesManager != null && this.filesManager.isEndgameContentAvailable();
+        AddonInstanceDungeonRegistry.configureDependencyAvailability(majorAvailable, endgameAvailable);
+
+        AddonLoggingManager.log(this,
+                Level.INFO,
+                "[ELDependency] Detected content dependencies: majorDungeons=%s endgame=%s",
+                majorAvailable,
+                endgameAvailable);
     }
 
     public static final class ReloadSummary {
