@@ -237,6 +237,22 @@ public final class AddonFilesManager {
         }
         text.append("\n");
 
+        text.append("# Spawn radius policy used for natural and manual gate placement.\n");
+        text.append("# center_mode: world_spawn (default) or custom.\n");
+        text.append("spawn_center_mode: ")
+            .append(options.spawnCenterMode.toLowerCase(Locale.ROOT))
+            .append("\n");
+        text.append("spawn_center_x: ").append(options.spawnCenterX).append("\n");
+        text.append("spawn_center_z: ").append(options.spawnCenterZ).append("\n");
+        text.append("# Minimum exclusion radius around the center where gates cannot spawn.\n");
+        text.append("spawn_min_exclusion_radius_blocks: ").append(options.spawnMinExclusionRadiusBlocks).append("\n");
+        text.append("# Maximum radius from center used when searching for gate spawn positions.\n");
+        text.append("spawn_max_distance_blocks: ").append(options.spawnMaxDistanceBlocks).append("\n");
+        text.append("# If true, candidate chunks can be loaded/generated even when no player is nearby.\n");
+        text.append("spawn_allow_unloaded_chunks: ").append(options.spawnAllowUnloadedChunks).append("\n");
+        text.append("# Number of random radius candidates tested per spawn attempt.\n");
+        text.append("spawn_candidate_attempts: ").append(options.spawnCandidateAttempts).append("\n\n");
+
         text.append("# Announce in global chat when a dungeon gate spawns.\n");
         text.append("announce_on_spawn: ").append(options.announceOnSpawn).append("\n\n");
 
@@ -1255,6 +1271,48 @@ public final class AddonFilesManager {
     }
 
     @Nonnull
+    public String getDungeonSpawnCenterMode() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnCenterMode
+                : dungeonGateOptions.spawnCenterMode;
+    }
+
+    public int getDungeonSpawnCenterX() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnCenterX
+                : dungeonGateOptions.spawnCenterX;
+    }
+
+    public int getDungeonSpawnCenterZ() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnCenterZ
+                : dungeonGateOptions.spawnCenterZ;
+    }
+
+    public int getDungeonSpawnMinExclusionRadiusBlocks() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnMinExclusionRadiusBlocks
+                : dungeonGateOptions.spawnMinExclusionRadiusBlocks;
+    }
+
+    public int getDungeonSpawnMaxDistanceBlocks() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnMaxDistanceBlocks
+                : dungeonGateOptions.spawnMaxDistanceBlocks;
+    }
+
+    public boolean isDungeonSpawnAllowUnloadedChunks() {
+        return dungeonGateOptions == null
+                || dungeonGateOptions.spawnAllowUnloadedChunks;
+    }
+
+    public int getDungeonSpawnCandidateAttempts() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnCandidateAttempts
+                : dungeonGateOptions.spawnCandidateAttempts;
+    }
+
+    @Nonnull
     public String getDungeonLevelReferenceMode() {
         return dungeonGateOptions == null
                 ? DungeonGateOptions.defaults().levelReferenceMode
@@ -1567,6 +1625,44 @@ public final class AddonFilesManager {
 
             List<String> portalWorldWhitelist = normalizeWorldWhitelist(root.get("portal_world_whitelist"),
                     defaults.portalWorldWhitelist);
+
+            String spawnCenterMode = defaults.spawnCenterMode;
+            if (root.get("spawn_center_mode") instanceof String centerModeRaw && !centerModeRaw.isBlank()) {
+                spawnCenterMode = normalizeSpawnCenterMode(centerModeRaw, defaults.spawnCenterMode);
+            }
+
+            int spawnCenterX = defaults.spawnCenterX;
+            if (root.get("spawn_center_x") instanceof Number n) {
+                spawnCenterX = n.intValue();
+            }
+
+            int spawnCenterZ = defaults.spawnCenterZ;
+            if (root.get("spawn_center_z") instanceof Number n) {
+                spawnCenterZ = n.intValue();
+            }
+
+            int spawnMinExclusionRadiusBlocks = defaults.spawnMinExclusionRadiusBlocks;
+            if (root.get("spawn_min_exclusion_radius_blocks") instanceof Number n) {
+                spawnMinExclusionRadiusBlocks = Math.max(0, n.intValue());
+            }
+
+            int spawnMaxDistanceBlocks = defaults.spawnMaxDistanceBlocks;
+            if (root.get("spawn_max_distance_blocks") instanceof Number n) {
+                spawnMaxDistanceBlocks = Math.max(1, n.intValue());
+            }
+
+            if (spawnMaxDistanceBlocks < spawnMinExclusionRadiusBlocks) {
+                spawnMaxDistanceBlocks = spawnMinExclusionRadiusBlocks;
+            }
+
+            boolean spawnAllowUnloadedChunks = readBoolean(
+                    root.get("spawn_allow_unloaded_chunks"),
+                    defaults.spawnAllowUnloadedChunks);
+
+            int spawnCandidateAttempts = defaults.spawnCandidateAttempts;
+            if (root.get("spawn_candidate_attempts") instanceof Number n) {
+                spawnCandidateAttempts = Math.max(1, n.intValue());
+            }
 
             int spawnIntervalMin = defaults.spawnIntervalMinutesMin;
             int spawnIntervalMax = defaults.spawnIntervalMinutesMax;
@@ -1886,6 +1982,9 @@ public final class AddonFilesManager {
                 return new DungeonGateOptions(enabled, allowReentry, announceOnSpawn, announceOnDespawn,
                     maxSpawns, spawnIntervalMin, spawnIntervalMax, gateDuration, maxPlayers, minLevel,
                     portalWorldWhitelist,
+                    spawnCenterMode, spawnCenterX, spawnCenterZ,
+                    spawnMinExclusionRadiusBlocks, spawnMaxDistanceBlocks,
+                    spawnAllowUnloadedChunks, spawnCandidateAttempts,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
                     rankFloorEMinOffset, rankFloorSMinOffset,
                     adaptiveRankFloorScalingEnabled,
@@ -1942,6 +2041,15 @@ public final class AddonFilesManager {
     private static String normalizeRankAnchorMode(@Nonnull String raw, @Nonnull String fallback) {
         String normalized = raw.trim().toUpperCase(Locale.ROOT).replace('-', '_');
         if ("LOWEST_MOB".equals(normalized) || "HIGHEST_MOB".equals(normalized) || "BOSS".equals(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    @Nonnull
+    private static String normalizeSpawnCenterMode(@Nonnull String raw, @Nonnull String fallback) {
+        String normalized = raw.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+        if ("WORLD_SPAWN".equals(normalized) || "CUSTOM".equals(normalized)) {
             return normalized;
         }
         return fallback;
@@ -2034,6 +2142,13 @@ public final class AddonFilesManager {
         private final int maxPlayersPerInstance;
         private final int minLevelRequired;
         private final List<String> portalWorldWhitelist;
+        private final String spawnCenterMode;
+        private final int spawnCenterX;
+        private final int spawnCenterZ;
+        private final int spawnMinExclusionRadiusBlocks;
+        private final int spawnMaxDistanceBlocks;
+        private final boolean spawnAllowUnloadedChunks;
+        private final int spawnCandidateAttempts;
         private final String levelReferenceMode;
         private final String levelReferenceScope;
         private final int levelOffsetMin;
@@ -2099,6 +2214,13 @@ public final class AddonFilesManager {
                 int maxPlayersPerInstance,
                 int minLevelRequired,
                 @Nonnull List<String> portalWorldWhitelist,
+                @Nonnull String spawnCenterMode,
+                int spawnCenterX,
+                int spawnCenterZ,
+                int spawnMinExclusionRadiusBlocks,
+                int spawnMaxDistanceBlocks,
+                boolean spawnAllowUnloadedChunks,
+                int spawnCandidateAttempts,
                 @Nonnull String levelReferenceMode,
                 @Nonnull String levelReferenceScope,
                 int levelOffsetMin,
@@ -2163,6 +2285,13 @@ public final class AddonFilesManager {
             this.maxPlayersPerInstance = maxPlayersPerInstance;
             this.minLevelRequired = minLevelRequired;
             this.portalWorldWhitelist = List.copyOf(portalWorldWhitelist);
+            this.spawnCenterMode = normalizeSpawnCenterMode(spawnCenterMode, "WORLD_SPAWN");
+            this.spawnCenterX = spawnCenterX;
+            this.spawnCenterZ = spawnCenterZ;
+            this.spawnMinExclusionRadiusBlocks = Math.max(0, spawnMinExclusionRadiusBlocks);
+            this.spawnMaxDistanceBlocks = Math.max(this.spawnMinExclusionRadiusBlocks, spawnMaxDistanceBlocks);
+            this.spawnAllowUnloadedChunks = spawnAllowUnloadedChunks;
+            this.spawnCandidateAttempts = Math.max(1, spawnCandidateAttempts);
             this.levelReferenceMode = levelReferenceMode;
             this.levelReferenceScope = levelReferenceScope;
             this.levelOffsetMin = Math.max(0, levelOffsetMin);
@@ -2225,6 +2354,7 @@ public final class AddonFilesManager {
         private static DungeonGateOptions defaults() {
                 return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
+                    "WORLD_SPAWN", 0, 0, 256, 10_000, true, 64,
                     "AVERAGE", "UPPER", 0, 30, 10, 110,
                     true,
                     true, 12, 3, 10, 8,

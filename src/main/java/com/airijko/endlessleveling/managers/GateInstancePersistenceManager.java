@@ -81,9 +81,17 @@ public final class GateInstancePersistenceManager {
                 inst.bossLevel,
                 inst.rankLetter,
                 inst.blockId,
-                deathLockedUuids);
+                deathLockedUuids,
+                inst.coordinateOnly);
             normalized.savedTimestamp = savedTimestamp;
             SAVED_INSTANCES.put(normalized.gateKey, normalized);
+            }
+
+            for (StoredGateInstance existingEntry : existing.values()) {
+                if (!existingEntry.coordinateOnly) {
+                    continue;
+                }
+                SAVED_INSTANCES.putIfAbsent(existingEntry.gateKey, existingEntry);
             }
             writeToDisk();
             System.out.println("[ELPortal-Persistence] Saved " + SAVED_INSTANCES.size()
@@ -117,7 +125,8 @@ public final class GateInstancePersistenceManager {
                 instance.bossLevel,
                 instance.rankLetter,
                 instance.blockId,
-                instance.deathLockedPlayerUuids);
+            instance.deathLockedPlayerUuids,
+            instance.coordinateOnly);
         normalized.savedTimestamp = savedTimestamp;
         SAVED_INSTANCES.put(normalized.gateKey, normalized);
         try {
@@ -232,6 +241,7 @@ public final class GateInstancePersistenceManager {
             gateObj.addProperty("rankLetter", instance.rankLetter);
             gateObj.addProperty("blockId", instance.blockId);
             gateObj.addProperty("savedTimestamp", instance.savedTimestamp);
+            gateObj.addProperty("coordinateOnly", instance.coordinateOnly);
 
             JsonArray deathLocks = new JsonArray();
             for (String playerUuid : instance.deathLockedPlayerUuids) {
@@ -306,7 +316,8 @@ public final class GateInstancePersistenceManager {
                         bossLevel,
                         rankLetter,
                         blockId,
-                        deathLockedPlayerUuids);
+                    deathLockedPlayerUuids,
+                    gateObj.has("coordinateOnly") && gateObj.get("coordinateOnly").getAsBoolean());
                 stored.savedTimestamp = savedTimestamp;
                 SAVED_INSTANCES.put(gateKey, stored);
             }
@@ -340,12 +351,14 @@ public final class GateInstancePersistenceManager {
         public final String blockId;
         /** UUID strings of players locked out from this gate instance due to death. */
         public final List<String> deathLockedPlayerUuids;
+        /** True when this entry exists only to persist gate coordinates before instance pairing. */
+        public final boolean coordinateOnly;
         public long savedTimestamp;
 
         public StoredGateInstance(String gateKey, String instanceWorldName,
                                   int minLevel, int maxLevel,
                                   int bossLevel, String rankLetter, String blockId) {
-            this(0, gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId, List.of());
+            this(0, gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId, List.of(), false);
         }
 
         public StoredGateInstance(String gateKey,
@@ -356,7 +369,19 @@ public final class GateInstancePersistenceManager {
                                   String rankLetter,
                                   String blockId,
                                   @Nonnull List<String> deathLockedPlayerUuids) {
-            this(0, gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId, deathLockedPlayerUuids);
+            this(0, gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId, deathLockedPlayerUuids, false);
+        }
+
+        public StoredGateInstance(String gateKey,
+                                  String instanceWorldName,
+                                  int minLevel,
+                                  int maxLevel,
+                                  int bossLevel,
+                                  String rankLetter,
+                                  String blockId,
+                                  @Nonnull List<String> deathLockedPlayerUuids,
+                                  boolean coordinateOnly) {
+            this(0, gateKey, instanceWorldName, minLevel, maxLevel, bossLevel, rankLetter, blockId, deathLockedPlayerUuids, coordinateOnly);
         }
 
         public StoredGateInstance(int entryId,
@@ -367,7 +392,8 @@ public final class GateInstancePersistenceManager {
                                   int bossLevel,
                                   String rankLetter,
                                   String blockId,
-                                  @Nonnull List<String> deathLockedPlayerUuids) {
+                                  @Nonnull List<String> deathLockedPlayerUuids,
+                                  boolean coordinateOnly) {
             this.entryId = entryId;
             this.gateKey = gateKey;
             this.instanceWorldName = instanceWorldName;
@@ -377,6 +403,7 @@ public final class GateInstancePersistenceManager {
             this.rankLetter = rankLetter != null ? rankLetter : "E";
             this.blockId = blockId != null ? blockId : "";
             this.deathLockedPlayerUuids = List.copyOf(deathLockedPlayerUuids);
+            this.coordinateOnly = coordinateOnly;
             this.savedTimestamp = System.currentTimeMillis();
         }
     }

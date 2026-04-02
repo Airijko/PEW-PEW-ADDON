@@ -13,7 +13,7 @@ public final class AddonVersionRegistry {
     public static final String CONFIG_VERSION_KEY = "config_version";
 
     public static final int CONFIG_YML_VERSION = 3;
-    public static final int DUNGEON_GATE_YML_VERSION = 20;
+    public static final int DUNGEON_GATE_YML_VERSION = 21;
 
     public static final int BUILTIN_AUGMENTS_VERSION = 1;
     public static final int BUILTIN_CLASSES_VERSION = 1;

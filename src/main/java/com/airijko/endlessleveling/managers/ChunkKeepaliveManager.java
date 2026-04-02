@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class ChunkKeepaliveManager {
 
-    private static final long KEEPALIVE_INTERVAL_SECONDS = 5L;
+    private static final long KEEPALIVE_INTERVAL_SECONDS = 2L;
 
     private static final Map<String, ChunkRef> TRACKED = new ConcurrentHashMap<>();
     private static volatile ScheduledFuture<?> keepaliveTask;
@@ -30,6 +30,7 @@ public final class ChunkKeepaliveManager {
 
     public static void register(@Nonnull String key, @Nonnull UUID worldUuid, long chunkIndex) {
         TRACKED.put(key, new ChunkRef(worldUuid, chunkIndex));
+        requestChunkLoad(worldUuid, chunkIndex);
         ensureTaskRunning();
     }
 
@@ -99,13 +100,22 @@ public final class ChunkKeepaliveManager {
                 continue;
             }
 
-            World world = universe.getWorld(ref.worldUuid());
-            if (world == null) {
-                continue;
-            }
-
-            world.getChunkAsync(ref.chunkIndex());
+            requestChunkLoad(ref.worldUuid(), ref.chunkIndex());
         }
+    }
+
+    private static void requestChunkLoad(@Nonnull UUID worldUuid, long chunkIndex) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return;
+        }
+
+        World world = universe.getWorld(worldUuid);
+        if (world == null) {
+            return;
+        }
+
+        world.getNonTickingChunkAsync(chunkIndex);
     }
 
     private record ChunkRef(UUID worldUuid, long chunkIndex) {

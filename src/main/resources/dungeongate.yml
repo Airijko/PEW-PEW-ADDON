@@ -24,6 +24,26 @@ portal_world_whitelist:
   - default
   - endless
 
+# Spawn radius policy used for natural and manual gate placement.
+# center_mode: world_spawn (default) or custom.
+spawn_center_mode: world_spawn
+
+# Used only when spawn_center_mode is custom.
+spawn_center_x: 0
+spawn_center_z: 0
+
+# Minimum exclusion radius around the center where gates cannot spawn.
+spawn_min_exclusion_radius_blocks: 400
+
+# Maximum radius from center used when searching for gate spawn positions.
+spawn_max_distance_blocks: 10000
+
+# If true, candidate chunks can be loaded/generated even when no player is nearby.
+spawn_allow_unloaded_chunks: true
+
+# Number of random radius candidates tested per spawn attempt.
+spawn_candidate_attempts: 64
+
 # Announce in global chat when a dungeon gate spawns.
 announce_on_spawn: true
 

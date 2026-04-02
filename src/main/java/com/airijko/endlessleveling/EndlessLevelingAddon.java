@@ -22,6 +22,7 @@
 
 package com.airijko.endlessleveling;
 
+import com.airijko.endlessleveling.analytics.HStats;
 import com.airijko.endlessleveling.commands.gate.GateCommand;
 import com.airijko.endlessleveling.commands.AddonReloadCommand;
 import com.airijko.endlessleveling.api.gates.InstanceDungeonDefinition;
@@ -62,11 +63,15 @@ import com.airijko.endlessleveling.ui.GateTrackerHud;
 import com.hypixel.hytale.server.core.universe.world.events.RemoveWorldEvent;
 
 import javax.annotation.Nonnull;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 
 public class EndlessLevelingAddon extends JavaPlugin {
+
+    private static final String HSTATS_MOD_UUID = "2839aba6-9173-4429-8f9c-68e1aef36d58";
+    private static final String HSTATS_MOD_VERSION = "2.2";
 
     private AddonFilesManager filesManager;
     private AddonDungeonGateContentProvider dungeonGateContentProvider;
@@ -82,6 +87,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
     protected void setup() {
         // Seed config and data folders from bundled resources on first startup.
         this.filesManager = new AddonFilesManager(this);
+        new HStats(HSTATS_MOD_UUID, resolvePluginManifestVersion());
         
         // Register all content from respective folders
         if (this.filesManager.shouldMergeRacesWithCore()) {
@@ -129,30 +135,34 @@ public class EndlessLevelingAddon extends JavaPlugin {
         GateTrackerHudReadyListener gateTrackerHudReadyListener = new GateTrackerHudReadyListener();
         this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, gateTrackerHudReadyListener::onPlayerReady);
 
+        // Portal entry runtime: proximity scanner, router, and all gate-entry event handlers
+        // must always run because the core has no proximity-scanning replacement. Only
+        // natural gate spawning and mob waves are delegated to the core.
+        this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
+        this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
+        PortalProximityManager.initialize(this);
+        PortalLeveledInstanceRouter.initialize(this);
+        PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
+        GateInstancePersistenceManager.initialize();
+        PortalLeveledInstanceRouter.restoreSavedGateInstances();
+        PortalInstanceDiagnostics.initialize(this, this.filesManager);
+        this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
+        this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
+        PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
+        PortalReturnInteractionListener portalReturnInteractionListener = new PortalReturnInteractionListener();
+        this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
+        this.getEventRegistry().registerGlobal(PlayerInteractEvent.class, portalReturnInteractionListener::onPlayerInteract);
+        this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
+        this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
+        this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);
+
         if (isAddonRuntimeEnabled()) {
-            this.getEntityStoreRegistry().registerSystem(new PortalDeathLoggingSystem());
-            this.getEntityStoreRegistry().registerSystem(new WavePortalBreakBlockSystem());
             NaturalPortalGateManager.initialize(this, this.filesManager);
             MobWaveManager.initialize();
-            PortalProximityManager.initialize(this);
-            PortalLeveledInstanceRouter.initialize(this);
-            PortalLeveledInstanceRouter.setFilesManager(this.filesManager);
-            GateInstancePersistenceManager.initialize();
-            PortalLeveledInstanceRouter.restoreSavedGateInstances();
-            PortalInstanceDiagnostics.initialize(this, this.filesManager);
-            this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalLeveledInstanceRouter::onAddPlayerToWorld);
-            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, PortalLeveledInstanceRouter::onPlayerReady);
-            PortalGateJoinNotificationListener portalGateJoinNotificationListener = new PortalGateJoinNotificationListener();
-            PortalReturnInteractionListener portalReturnInteractionListener = new PortalReturnInteractionListener();
-            this.getEventRegistry().registerGlobal(PlayerReadyEvent.class, portalGateJoinNotificationListener::onPlayerReady);
-            this.getEventRegistry().registerGlobal(PlayerInteractEvent.class, portalReturnInteractionListener::onPlayerInteract);
-            this.getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, PortalInstanceDiagnostics::onAddPlayerToWorld);
-            this.getEventRegistry().registerGlobal(DrainPlayerFromWorldEvent.class, PortalInstanceDiagnostics::onDrainPlayerFromWorld);
-            this.getEventRegistry().registerGlobal(RemoveWorldEvent.class, PortalInstanceDiagnostics::onWorldRemoved);
         } else {
             AddonLoggingManager.log(this,
                     Level.INFO,
-                    "[ELGateTypesRuntime] Addon runtime is disabled (core-owned mode). Dungeon gate and wave gate providers remain registered.");
+                    "[ELGateTypesRuntime] Core-owned mode: natural gate spawning and mob waves deferred to core. Portal entry runtime active.");
         }
     }
 
@@ -170,14 +180,15 @@ public class EndlessLevelingAddon extends JavaPlugin {
         GateTrackerManager.shutdown();
         GateTrackerHud.clearAllTrackedHuds();
 
+        MobWaveManager.shutdown();
+        PortalLeveledInstanceRouter.saveGateInstances();
+        ChunkKeepaliveManager.shutdown();
+        PortalProximityManager.shutdown();
+        PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();
+        PortalLeveledInstanceRouter.shutdown();
+
         if (isAddonRuntimeEnabled()) {
-            MobWaveManager.shutdown();
-            PortalLeveledInstanceRouter.saveGateInstances();
             NaturalPortalGateManager.shutdown();
-            ChunkKeepaliveManager.shutdown();
-            PortalProximityManager.shutdown();
-            PortalInstanceDiagnostics.purgeTrackedInstancesOnShutdown();
-            PortalLeveledInstanceRouter.shutdown();
         }
 
         RaceRegistration.unregisterAll();
@@ -229,10 +240,11 @@ public class EndlessLevelingAddon extends JavaPlugin {
             GateTrackerManager.shutdown();
             GateTrackerHud.clearAllTrackedHuds();
 
+            MobWaveManager.shutdown();
+            ChunkKeepaliveManager.shutdown();
+
             if (isAddonRuntimeEnabled()) {
                 NaturalPortalGateManager.shutdown();
-                MobWaveManager.shutdown();
-                ChunkKeepaliveManager.shutdown();
             }
 
             EndlessLevelingCompatibility.unregisterDungeonGateContentProvider(dungeonGateContentProvider);
@@ -259,8 +271,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
             if (isAddonRuntimeEnabled()) {
                 NaturalPortalGateManager.initialize(this, this.filesManager);
                 MobWaveManager.initialize();
-                PortalInstanceDiagnostics.initialize(this, this.filesManager);
             }
+            PortalInstanceDiagnostics.initialize(this, this.filesManager);
 
                 AddonLoggingManager.log(this,
                     Level.INFO,
@@ -327,6 +339,32 @@ public class EndlessLevelingAddon extends JavaPlugin {
                 "[ELDependency] Detected content dependencies: majorDungeons=%s endgame=%s",
                 majorAvailable,
                 endgameAvailable);
+    }
+
+    private String resolvePluginManifestVersion() {
+        try (var in = EndlessLevelingAddon.class.getClassLoader().getResourceAsStream("manifest.json")) {
+            if (in == null) {
+                return HSTATS_MOD_VERSION;
+            }
+
+            String json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            int keyIndex = json.indexOf("\"Version\"");
+            if (keyIndex < 0) {
+                return HSTATS_MOD_VERSION;
+            }
+
+            int colon = json.indexOf(':', keyIndex);
+            int firstQuote = json.indexOf('"', colon + 1);
+            int secondQuote = json.indexOf('"', firstQuote + 1);
+            if (colon < 0 || firstQuote < 0 || secondQuote < 0) {
+                return HSTATS_MOD_VERSION;
+            }
+
+            String parsed = json.substring(firstQuote + 1, secondQuote).trim();
+            return parsed.isEmpty() ? HSTATS_MOD_VERSION : parsed;
+        } catch (Exception ignored) {
+            return HSTATS_MOD_VERSION;
+        }
     }
 
     public static final class ReloadSummary {

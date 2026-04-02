@@ -338,12 +338,17 @@ public final class PortalInstanceDiagnostics {
 
         String worldName = world.getName();
         InstanceDebugDefinition definition = resolveDefinitionByWorldName(worldName);
-        if (definition == null) {
+
+        // Gate instance worlds (el_gate_ prefix) never have a static InstanceDebugDefinition,
+        // but still require death-lock and pending-death tracking so the player is blocked from
+        // re-entry and returned to the portal entrance on respawn.
+        boolean isGateInstanceWorld = worldName != null
+                && worldName.toLowerCase(Locale.ROOT).startsWith("el_gate_");
+
+        if (definition == null && !isGateInstanceWorld) {
             return;
         }
 
-        SpawnMatch nearestSpawn = definition.findNearest(actualPosition);
-        
         // Store return target information so player can be returned to portal entrance on respawn
         PlayerRef playerRef = null;
         UUID playerUuid = player.getUuid();
@@ -359,7 +364,7 @@ public final class PortalInstanceDiagnostics {
             if (playerRef != null) {
                 returnDiag = PortalLeveledInstanceRouter.resolveReturnTargetDiagnostics(playerRef, world);
             }
-        
+
         PendingDeath deathInfo = new PendingDeath(
             worldName,
             returnDiag != null ? returnDiag.worldName() : null,
@@ -370,6 +375,19 @@ public final class PortalInstanceDiagnostics {
             PENDING_DEATHS.put(playerUuid, deathInfo);
             PortalLeveledInstanceRouter.markPlayerDeathReentryLock(playerUuid, worldName);
         }
+
+        if (definition == null) {
+            log(Level.INFO,
+                    "player-death player=%s instance=%s actual=%s returnTarget=%s returnWorld=%s awaitingDrain=true",
+                    player.getDisplayName(),
+                    worldName,
+                    format(actualPosition),
+                    deathInfo.returnTargetSource,
+                    deathInfo.returnTargetWorldName != null ? deathInfo.returnTargetWorldName : "null");
+            return;
+        }
+
+        SpawnMatch nearestSpawn = definition.findNearest(actualPosition);
         
         log(Level.INFO,
                 "player-death player=%s instance=%s label=%s actual=%s expected=%s distance=%.3f" +

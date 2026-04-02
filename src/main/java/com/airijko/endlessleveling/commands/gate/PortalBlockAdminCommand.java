@@ -419,6 +419,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     long chunkIndex = chunkIndexObj;
                     WorldChunk chunk = world.getChunkIfInMemory(chunkIndex);
                     if (chunk == null) {
+                        world.getNonTickingChunkAsync(chunkIndex);
                         continue;
                     }
 
@@ -665,6 +666,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                 // Remove any persisted gate-instance associations for this world first.
                 // This also tears down paired instances and kicks players from those instances.
                 int persistenceCleanupCount = 0;
+                int persistedCoordinateRemovals = 0;
                 for (GateInstancePersistenceManager.StoredGateInstance stored
                     : GateInstancePersistenceManager.listSavedInstancesById()) {
                     ParsedGateIdentity parsed = parseGateIdentity(stored.gateKey);
@@ -675,6 +677,8 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     String blockId = stored.blockId == null || stored.blockId.isBlank()
                         ? "<unknown>"
                         : stored.blockId;
+                    NaturalPortalGateManager.forceRemoveGateAt(world, parsed.x(), parsed.y(), parsed.z(), blockId);
+                    persistedCoordinateRemovals++;
                     PortalLeveledInstanceRouter.cleanupGateInstanceByIdentity(stored.gateKey, blockId);
                     persistenceCleanupCount++;
                 }
@@ -686,6 +690,7 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                     NaturalPortalGateManager.forceRemoveGateAt(world, anchor.x(), anchor.y(), anchor.z(), anchor.blockId());
                 }
                 final int persistedCleanupCount = persistenceCleanupCount;
+                final int persistedCoordinateRemovalCount = persistedCoordinateRemovals;
                 int trackedCleanupCount = structures.size();
 
                 CompletableFuture.runAsync(() -> {
@@ -721,6 +726,9 @@ public class PortalBlockAdminCommand extends AbstractCommand {
                             .color("#6cff78"));
                         context.sendMessage(Message.raw("- Persisted gate-instance associations removed: "
                                 + persistedCleanupCount)
+                            .color("#ffbb44"));
+                        context.sendMessage(Message.raw("- Persisted gate coordinates force-cleared: "
+                            + persistedCoordinateRemovalCount)
                             .color("#ffbb44"));
                         context.sendMessage(Message.raw("- Tracked gate instances removed: "
                                 + trackedCleanupCount + " (players kicked)")

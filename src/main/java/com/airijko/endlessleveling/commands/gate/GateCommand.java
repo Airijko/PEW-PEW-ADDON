@@ -17,6 +17,7 @@ public final class GateCommand extends AbstractCommand {
         this.addSubCommand(new GateTrackCommand());
         this.addSubCommand(new GateDungeonCommand());
         this.addSubCommand(new PortalWaveCommand());
+        this.addSubCommand(new GateClearAllCommand());
     }
 
     @Nullable
@@ -28,6 +29,7 @@ public final class GateCommand extends AbstractCommand {
         context.sendMessage(Message.raw("- /gate track <id>     Open the live gate tracker HUD for one active gate entry").color("#d9f0ff"));
         context.sendMessage(Message.raw("- /gate dungeon ...    Dungeon gate tools, spawning, tracking, cleanup, debug").color("#d9f0ff"));
         context.sendMessage(Message.raw("- /gate wave ...       Wave gate / outbreak tools, test waves, combo tools").color("#d9f0ff"));
+        context.sendMessage(Message.raw("- /gate clearall       Clear dungeon/wave gates and stop active waves in your world").color("#d9f0ff"));
         context.sendMessage(Message.raw("Examples: /gate list   |   /gate track D-1A2B   |   /gate dungeon spawn D").color("#ffcc66"));
         return CompletableFuture.completedFuture(null);
     }

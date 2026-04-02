@@ -11,13 +11,13 @@ core_content_merge:
 # Addon updates are always migration-only and never force overwrite your files.
 
 # Master logging toggle:
-# true  = enables full addon logs according to logging.base_level
-# false = suppresses INFO/FINE logs unless explicitly enabled by debug sections
+# true  = shows all addon log levels
+# false = only shows logging.base_level and higher
 enable_logging: false
 
 logging:
   # Base level for addon logs. Supported values: SEVERE, WARNING, INFO, FINE
-  # When enable_logging is false, this is clamped to WARNING/SEVERE.
+  # Only used when enable_logging is false.
   base_level: WARNING
 
 examples:

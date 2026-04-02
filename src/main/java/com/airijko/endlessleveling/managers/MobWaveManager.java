@@ -66,6 +66,8 @@ public final class MobWaveManager {
     private static final int DEFAULT_BOSS_LEVEL_BONUS = 10;
     private static final int DEFAULT_PER_WAVE_LEVEL_INCREMENT = 2;
     private static final int DEFAULT_WAVE_EXPIRY_MINUTES = 30;
+    private static final int WAVE_DRY_LAND_ATTEMPTS_PER_MOB = 12;
+    private static final int WAVE_DRY_LAND_ATTEMPTS_FOR_BOSS = 16;
     private static final long WAVE_CLEAR_CHECK_INTERVAL_TICKS = 1L;
     private static final String WAVE_OVERRIDE_ID_PREFIX = "elwave:";
     private static final String WAVE_PORTAL_BLOCK_BASE_ID = "EL_WavePortal";
@@ -307,6 +309,10 @@ public final class MobWaveManager {
         int delayMinutes = resolveNaturalWaveOpenDelay(rankTier);
         long delaySeconds = Math.max(1L, TimeUnit.MINUTES.toSeconds(delayMinutes));
         long opensAtEpochMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(delaySeconds);
+        Vector3d linkedGateCenter = resolveLinkedGateWaveCenter(canonicalGateId, world);
+        if (linkedGateCenter == null) {
+            return false;
+        }
         GATE_WAVE_STATES.put(canonicalGateId,
             LinkedGateWaveState.pending(rankTier, playerRef.getUuid(), opensAtEpochMillis));
         if (announceLinkedBreak) {
@@ -327,7 +333,7 @@ public final class MobWaveManager {
                         false,
                         canonicalGateId,
                         null,
-                        null,
+                    linkedGateCenter,
                         WaveStartSource.LINKED_GATE);
                 if (result.started) {
                     GATE_WAVE_STATES.put(canonicalGateId,
@@ -341,6 +347,15 @@ public final class MobWaveManager {
 
         PENDING_LINKED_GATE_COUNTDOWNS.put(canonicalGateId, countdownFuture);
         return true;
+    }
+
+    @Nullable
+    private static Vector3d resolveLinkedGateWaveCenter(@Nonnull String canonicalGateId, @Nonnull World fallbackWorld) {
+        NaturalPortalGateManager.TrackedGateSnapshot trackedGate = NaturalPortalGateManager.findTrackedGate(canonicalGateId);
+        if (trackedGate != null) {
+            return new Vector3d(trackedGate.x(), trackedGate.y(), trackedGate.z());
+        }
+        return null;
     }
 
     public static boolean isGateEntryLocked(@Nullable String gateIdentity) {
@@ -599,6 +614,65 @@ public final class MobWaveManager {
         return stopForPlayer(playerRef);
     }
 
+    public static int stopAllWavesInWorld(@Nonnull World world) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return 0;
+        }
+
+        int stopped = 0;
+
+        for (ActiveWaveSession session : new ArrayList<>(ACTIVE_SESSIONS.values())) {
+            if (session == null || session.cancelled.get()) {
+                continue;
+            }
+
+            UUID sessionWorldUuid = session.world.getWorldConfig() == null
+                    ? null
+                    : session.world.getWorldConfig().getUuid();
+            if (!worldUuid.equals(sessionWorldUuid)) {
+                continue;
+            }
+
+            cleanupSession(session.playerUuid);
+            stopped++;
+        }
+
+        for (UUID ownerUuid : new ArrayList<>(PENDING_NATURAL_COUNTDOWNS.keySet())) {
+            if (!isPlayerInWorld(ownerUuid, worldUuid)) {
+                continue;
+            }
+
+            ScheduledFuture<?> countdown = PENDING_NATURAL_COUNTDOWNS.remove(ownerUuid);
+            if (countdown != null) {
+                countdown.cancel(false);
+                stopped++;
+            }
+            cancelScheduledFutures(PENDING_NATURAL_PRESTART_COUNTDOWNS.remove(ownerUuid));
+            clearPendingNaturalPreviewPortal(ownerUuid);
+            PENDING_NATURAL_SOURCES.remove(ownerUuid);
+            PENDING_NATURAL_RANKS.remove(ownerUuid);
+            PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.remove(ownerUuid);
+        }
+
+        return stopped;
+    }
+
+    private static boolean isPlayerInWorld(@Nonnull UUID playerUuid, @Nonnull UUID worldUuid) {
+        Universe universe = Universe.get();
+        if (universe == null) {
+            return false;
+        }
+
+        PlayerRef playerRef = universe.getPlayer(playerUuid);
+        if (playerRef == null) {
+            return false;
+        }
+
+        UUID playerWorldUuid = playerRef.getWorldUuid();
+        return worldUuid.equals(playerWorldUuid);
+    }
+
     @Nonnull
     public static SkipResult skipWaveForPlayer(@Nonnull PlayerRef playerRef) {
         UUID playerUuid = playerRef.getUuid();
@@ -776,20 +850,14 @@ public final class MobWaveManager {
                 return;
             }
 
-            Vector3d playerPos = transform.getPosition();
             NPCPlugin npcPlugin = NPCPlugin.get();
 
             for (int i = startIndex; i < endExclusive; i++) {
-                double angle = Math.random() * Math.PI * 2.0D;
-                double distance = (0.5D + Math.random() * 0.5D) * session.radius;
-                double x = waveCenter.x + Math.cos(angle) * distance;
-                double z = waveCenter.z + Math.sin(angle) * distance;
-                double y = NPCPhysicsMath.heightOverGround(Objects.requireNonNull(session.world), x, z);
-                if (y < 0.0D) {
-                    y = waveCenter.y;
+                Vector3d spawnPosition = findDryLandSpawnPosition(session.world, waveCenter, session.radius,
+                        WAVE_DRY_LAND_ATTEMPTS_PER_MOB);
+                if (spawnPosition == null) {
+                    continue;
                 }
-
-                Vector3d spawnPosition = new Vector3d(x, y, z);
                 Vector3f spawnRotation = new Vector3f(0.0F, (float) (Math.random() * Math.PI * 2.0D), 0.0F);
 
                 boolean spawnAsBoss = i == bossIndex;
@@ -884,22 +952,17 @@ public final class MobWaveManager {
 
     private static void spawnFallbackBoss(@Nonnull ActiveWaveSession session,
                                  @Nonnull Store<EntityStore> store,
-                                 @Nonnull Vector3d playerPos,
+                                 @Nonnull Vector3d waveCenter,
                                  @Nonnull LevelRange waveLevelRange,
                                  @Nonnull NPCPlugin npcPlugin,
                                  boolean useConfigBossPool) {
         applyBossLevelOverride(session, waveLevelRange.bossLevel);
 
-        double angle = Math.random() * Math.PI * 2.0D;
-        double distance = (0.4D + Math.random() * 0.6D) * session.radius;
-        double x = playerPos.x + Math.cos(angle) * distance;
-        double z = playerPos.z + Math.sin(angle) * distance;
-        double y = NPCPhysicsMath.heightOverGround(session.world, x, z);
-        if (y < 0.0D) {
-            y = playerPos.y;
+        Vector3d spawnPosition = findDryLandSpawnPosition(session.world, waveCenter, session.radius,
+                WAVE_DRY_LAND_ATTEMPTS_FOR_BOSS);
+        if (spawnPosition == null) {
+            return;
         }
-
-        Vector3d spawnPosition = new Vector3d(x, y, z);
         Vector3f spawnRotation = new Vector3f(0.0F, (float) (Math.random() * Math.PI * 2.0D), 0.0F);
         String bossRole;
         if (useConfigBossPool) {
@@ -924,6 +987,66 @@ public final class MobWaveManager {
                 Message.raw(String.format(Locale.ROOT, "[Wave] Boss fallback promoted: %s (Lv %d)", bossRole, waveLevelRange.bossLevel))
                         .color("#f3b37a")
         );
+    }
+
+    @Nullable
+    private static Vector3d findDryLandSpawnPosition(@Nonnull World world,
+                                                      @Nonnull Vector3d waveCenter,
+                                                      double radius,
+                                                      int attempts) {
+        int maxAttempts = Math.max(1, attempts);
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            double angle = Math.random() * Math.PI * 2.0D;
+            double distance = (0.35D + Math.random() * 0.65D) * Math.max(1.0D, radius);
+            double x = waveCenter.x + Math.cos(angle) * distance;
+            double z = waveCenter.z + Math.sin(angle) * distance;
+            double y = NPCPhysicsMath.heightOverGround(world, x, z);
+            if (y < 0.0D) {
+                continue;
+            }
+            if (!isDryLandSpawnLocation(world, x, y, z)) {
+                continue;
+            }
+            return new Vector3d(x, y, z);
+        }
+        return null;
+    }
+
+    private static boolean isDryLandSpawnLocation(@Nonnull World world, double x, double y, double z) {
+        int blockX = (int) Math.floor(x);
+        int blockZ = (int) Math.floor(z);
+        int blockY = Math.max(WORLD_MIN_Y + 1, Math.min(WORLD_MAX_Y - 1, (int) Math.floor(y)));
+
+        WorldChunk chunk = world.getChunkIfLoaded(ChunkUtil.indexChunkFromBlock(blockX, blockZ));
+        if (chunk == null) {
+            return false;
+        }
+
+        int support = chunk.getBlock(blockX, blockY - 1, blockZ);
+        int feet = chunk.getBlock(blockX, blockY, blockZ);
+        int head = chunk.getBlock(blockX, blockY + 1, blockZ);
+
+        if (support == AIR_BLOCK_ID) {
+            return false;
+        }
+
+        return !isLikelyLiquidBlock(support)
+                && !isLikelyLiquidBlock(feet)
+                && !isLikelyLiquidBlock(head);
+    }
+
+    private static boolean isLikelyLiquidBlock(int blockIntId) {
+        BlockType blockType = BlockType.getAssetMap().getAsset(blockIntId);
+        if (blockType == null || blockType.getId() == null) {
+            return false;
+        }
+
+        String id = blockType.getId().toLowerCase(Locale.ROOT);
+        return id.contains("water")
+                || id.contains("ocean")
+                || id.contains("river")
+                || id.contains("lava")
+                || id.contains("liquid");
     }
 
     private static void scheduleWaveMonitor(@Nonnull ActiveWaveSession session) {
@@ -1801,6 +1924,11 @@ public final class MobWaveManager {
             return 0;
         }
 
+        int removedFromTracked = clearWavePortalVisualsByTrackedDataInWorld(world);
+        if (removedFromTracked > 0) {
+            return removedFromTracked;
+        }
+
         UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
         int removed = 0;
 
@@ -1873,6 +2001,98 @@ public final class MobWaveManager {
         }
 
         return removed;
+    }
+
+    public static int clearWavePortalVisualsByTrackedDataInWorld(@Nonnull World world) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return 0;
+        }
+
+        int removed = 0;
+
+        for (WavePortalPlacement placement : new ArrayList<>(TRACKED_WAVE_PORTALS.values())) {
+            if (placement == null || placement.worldUuid == null || !worldUuid.equals(placement.worldUuid)) {
+                continue;
+            }
+
+            removed += clearTrackedWavePortalPlacement(world, placement);
+        }
+
+        for (UUID pendingOwner : Set.copyOf(PENDING_NATURAL_PREVIEW_PORTALS.keySet())) {
+            WavePortalPlacement pending = PENDING_NATURAL_PREVIEW_PORTALS.get(pendingOwner);
+            if (pending == null || pending.worldUuid == null || !worldUuid.equals(pending.worldUuid)) {
+                continue;
+            }
+
+            removed += clearTrackedWavePortalPlacement(world, pending);
+            PENDING_NATURAL_PREVIEW_PORTALS.remove(pendingOwner);
+            PENDING_NATURAL_SOURCES.remove(pendingOwner);
+            PENDING_NATURAL_RANKS.remove(pendingOwner);
+            PENDING_NATURAL_OPENS_AT_EPOCH_MILLIS.remove(pendingOwner);
+            ScheduledFuture<?> countdown = PENDING_NATURAL_COUNTDOWNS.remove(pendingOwner);
+            if (countdown != null) {
+                countdown.cancel(false);
+            }
+            cancelScheduledFutures(PENDING_NATURAL_PRESTART_COUNTDOWNS.remove(pendingOwner));
+        }
+
+        for (ActiveWaveSession session : ACTIVE_SESSIONS.values()) {
+            if (session == null || session.wavePortalPlacement == null) {
+                continue;
+            }
+            WavePortalPlacement sessionPlacement = session.wavePortalPlacement;
+            if (sessionPlacement.worldUuid == null || !worldUuid.equals(sessionPlacement.worldUuid)) {
+                continue;
+            }
+
+            removed += clearTrackedWavePortalPlacement(world, sessionPlacement);
+            session.wavePortalPlacement = null;
+        }
+
+        return removed;
+    }
+
+    private static int clearTrackedWavePortalPlacement(@Nonnull World world,
+                                                       @Nonnull WavePortalPlacement placement) {
+        WorldChunk chunk = world.getChunkIfLoaded(ChunkUtil.indexChunkFromBlock(placement.x, placement.z));
+        if (chunk == null) {
+            requestTrackedWavePortalClearWithChunkLoad(world, placement);
+            return 0;
+        }
+
+        int removed = 0;
+        int currentBlock = chunk.getBlock(placement.x, placement.y, placement.z);
+        if (isAnyWavePortalBlockIntId(currentBlock)) {
+            clearWavePortalBlock(world, chunk, placement.x, placement.y, placement.z);
+            chunk.markNeedsSaving();
+            requestWavePortalChunkRefresh(world, placement.x, placement.z);
+            removed = 1;
+        }
+
+        untrackWavePortalPlacement(placement.placementUuid);
+        return removed;
+    }
+
+    private static void requestTrackedWavePortalClearWithChunkLoad(@Nonnull World world,
+                                                                    @Nonnull WavePortalPlacement placement) {
+        long chunkIndex = ChunkUtil.indexChunkFromBlock(placement.x, placement.z);
+        world.getNonTickingChunkAsync(chunkIndex).whenComplete((loadedChunk, throwable) ->
+                world.execute(() -> {
+                    WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
+                    if (chunk == null) {
+                        return;
+                    }
+
+                    int currentBlock = chunk.getBlock(placement.x, placement.y, placement.z);
+                    if (isAnyWavePortalBlockIntId(currentBlock)) {
+                        clearWavePortalBlock(world, chunk, placement.x, placement.y, placement.z);
+                        chunk.markNeedsSaving();
+                        requestWavePortalChunkRefresh(world, placement.x, placement.z);
+                    }
+
+                    untrackWavePortalPlacement(placement.placementUuid);
+                }));
     }
 
     private static int resolveNaturalWaveOpenDelay(@Nonnull GateRankTier rankTier) {

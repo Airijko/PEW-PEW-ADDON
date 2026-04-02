@@ -446,27 +446,57 @@ public final class NaturalPortalGateManager {
                                                           boolean isTestSpawn,
                                                           @Nullable Boolean forceLinkedWave,
                                                           @Nonnull CompletableFuture<Boolean> future) {
-            List<Long> loadedChunkIndexes = resolveLoadedChunkIndexes(world);
-            if (loadedChunkIndexes.isEmpty()) {
-                log(Level.INFO,
-                        "[ELPortal] Spawn skipped: no active loaded chunks in world %s",
-                        world.getName());
-                future.complete(false);
-                return;
+            SpawnPlacementPolicy policy = resolveSpawnPlacementPolicy();
+            SpawnCenter center = resolveSpawnCenter(world, playerRef, policy);
+
+            List<Long> loadedChunkIndexes = null;
+            if (!policy.allowUnloadedChunks()) {
+                loadedChunkIndexes = resolveLoadedChunkIndexes(world);
+                if (loadedChunkIndexes.isEmpty()) {
+                    log(Level.INFO,
+                            "[ELPortal] Spawn skipped: no active loaded chunks in world %s",
+                            world.getName());
+                    future.complete(false);
+                    return;
+                }
             }
 
-            int attempts = Math.max(PLACEMENT_ATTEMPTS, loadedChunkIndexes.size());
+            int attempts = Math.max(PLACEMENT_ATTEMPTS, policy.candidateAttempts());
+            if (loadedChunkIndexes != null) {
+                attempts = Math.max(attempts, loadedChunkIndexes.size());
+            }
+
             for (int attempt = 0; attempt < attempts; attempt++) {
-                long chunkIndex = loadedChunkIndexes.get(randomInt(0, loadedChunkIndexes.size() - 1));
-                WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
-                if (chunk == null) {
+                int x;
+                int z;
+                WorldChunk chunk;
+
+                if (loadedChunkIndexes != null) {
+                    long chunkIndex = loadedChunkIndexes.get(randomInt(0, loadedChunkIndexes.size() - 1));
+                    chunk = world.getChunkIfLoaded(chunkIndex);
+                    if (chunk == null) {
+                        continue;
+                    }
+
+                    int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
+                    int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
+                    x = (chunkX << 5) + randomInt(0, 31);
+                    z = (chunkZ << 5) + randomInt(0, 31);
+                } else {
+                    SpawnCandidate candidate = sampleSpawnCandidate(center, policy);
+                    x = candidate.x();
+                    z = candidate.z();
+                    long chunkIndex = ChunkUtil.indexChunkFromBlock(x, z);
+                    chunk = resolvePlacementChunk(world, chunkIndex, true);
+                    if (chunk == null) {
+                        continue;
+                    }
+                }
+
+                if (isWithinExclusionRadius(center, x, z, policy.minExclusionRadiusBlocks())) {
                     continue;
                 }
 
-                int chunkX = ChunkUtil.xOfChunkIndex(chunkIndex);
-                int chunkZ = ChunkUtil.zOfChunkIndex(chunkIndex);
-                int x = (chunkX << 5) + randomInt(0, 31);
-                int z = (chunkZ << 5) + randomInt(0, 31);
                 int y = resolveGroundPlacementY(chunk, x, z);
                 if (y < 0) {
                     continue;
@@ -505,13 +535,16 @@ public final class NaturalPortalGateManager {
                         announceGate(gateId, world.getName(), x, y, z, gateRank, normalLevelMin, normalLevelMax, bossLevel);
                     }
                 }
-                String expectedGroupId = gateId == null || gateId.isBlank() ? "<unknown>" : gateId;
+                String expectedGroupId = PortalLeveledInstanceRouter.resolveExpectedGateWorldId(gateId, rankedBlockId);
+                if (expectedGroupId == null || expectedGroupId.isBlank()) {
+                    expectedGroupId = gateId == null || gateId.isBlank() ? "<unknown>" : gateId;
+                }
                 log(Level.INFO,
                         "[ELPortal] Spawn mode=%s world=%s block=%s gateId=%s expectedGroupId=%s test=%s at %d %d %d rank=%s roll=%d normalRange=%d-%d bossLevel=%d",
                         linkedWaveTriggered ? "gate+wave" : "gate-only",
                         world.getName(),
                         rankedBlockId,
-                        expectedGroupId,
+                    gateId,
                         expectedGroupId,
                         isTestSpawn,
                         x,
@@ -528,11 +561,111 @@ public final class NaturalPortalGateManager {
             }
 
             log(Level.INFO,
-                    "[ELPortal] No valid ground placement found for player=%s in world %s (loadedChunks=%d)",
+                    "[ELPortal] No valid ground placement found for player=%s in world %s (mode=%s attempts=%d)",
                     playerRef.getUsername(),
                     world.getName(),
-                    loadedChunkIndexes.size());
+                    policy.allowUnloadedChunks() ? "radius-unloaded" : "loaded-only",
+                    attempts);
             future.complete(false);
+    }
+
+    @Nullable
+    private static WorldChunk resolvePlacementChunk(@Nonnull World world, long chunkIndex, boolean allowUnloadedChunks) {
+        if (!allowUnloadedChunks) {
+            return world.getChunkIfLoaded(chunkIndex);
+        }
+
+        WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
+        if (chunk != null) {
+            return chunk;
+        }
+
+        try {
+            return world.getChunk(chunkIndex);
+        } catch (Throwable throwable) {
+            log(Level.FINE,
+                    "[ELPortal] Failed to load chunk for placement world=%s chunk=%d error=%s",
+                    world.getName(),
+                    chunkIndex,
+                    throwable.getMessage());
+            return null;
+        }
+    }
+
+    private static boolean isWithinExclusionRadius(@Nonnull SpawnCenter center,
+                                                   int x,
+                                                   int z,
+                                                   int minExclusionRadiusBlocks) {
+        if (minExclusionRadiusBlocks <= 0) {
+            return false;
+        }
+
+        long dx = (long) x - center.x();
+        long dz = (long) z - center.z();
+        long radiusSquared = (long) minExclusionRadiusBlocks * (long) minExclusionRadiusBlocks;
+        return dx * dx + dz * dz < radiusSquared;
+    }
+
+    @Nonnull
+    private static SpawnCandidate sampleSpawnCandidate(@Nonnull SpawnCenter center, @Nonnull SpawnPlacementPolicy policy) {
+        int minRadius = Math.max(0, policy.minExclusionRadiusBlocks());
+        int maxRadius = Math.max(minRadius, policy.maxDistanceBlocks());
+
+        if (maxRadius <= 0) {
+            return new SpawnCandidate(center.x(), center.z());
+        }
+
+        double minSquared = (double) minRadius * (double) minRadius;
+        double maxSquared = (double) maxRadius * (double) maxRadius;
+        double sampledRadius = Math.sqrt(minSquared + (Math.random() * (maxSquared - minSquared)));
+        double angle = Math.random() * Math.PI * 2.0D;
+
+        int x = center.x() + (int) Math.round(Math.cos(angle) * sampledRadius);
+        int z = center.z() + (int) Math.round(Math.sin(angle) * sampledRadius);
+        return new SpawnCandidate(x, z);
+    }
+
+    @Nonnull
+    private static SpawnCenter resolveSpawnCenter(@Nonnull World world,
+                                                  @Nonnull PlayerRef playerRef,
+                                                  @Nonnull SpawnPlacementPolicy policy) {
+        if ("CUSTOM".equals(policy.centerMode())) {
+            return new SpawnCenter(policy.centerX(), policy.centerZ());
+        }
+
+        if (world.getWorldConfig() != null && world.getWorldConfig().getSpawnProvider() != null) {
+            var spawn = world.getWorldConfig().getSpawnProvider().getSpawnPoint(world, playerRef.getUuid());
+            if (spawn != null && spawn.getPosition() != null) {
+                int spawnX = MathUtil.floor(spawn.getPosition().x);
+                int spawnZ = MathUtil.floor(spawn.getPosition().z);
+                return new SpawnCenter(spawnX, spawnZ);
+            }
+        }
+
+        var playerTransform = playerRef.getTransform();
+        if (playerTransform != null && playerTransform.getPosition() != null) {
+            return new SpawnCenter(
+                    MathUtil.floor(playerTransform.getPosition().x),
+                    MathUtil.floor(playerTransform.getPosition().z));
+        }
+
+        return new SpawnCenter(policy.centerX(), policy.centerZ());
+    }
+
+    @Nonnull
+    private static SpawnPlacementPolicy resolveSpawnPlacementPolicy() {
+        if (filesManager == null) {
+            return SpawnPlacementPolicy.defaults();
+        }
+
+        return new SpawnPlacementPolicy(
+                filesManager.getDungeonSpawnCenterMode(),
+                filesManager.getDungeonSpawnCenterX(),
+                filesManager.getDungeonSpawnCenterZ(),
+                Math.max(0, filesManager.getDungeonSpawnMinExclusionRadiusBlocks()),
+                Math.max(1, filesManager.getDungeonSpawnMaxDistanceBlocks()),
+                filesManager.isDungeonSpawnAllowUnloadedChunks(),
+                Math.max(1, filesManager.getDungeonSpawnCandidateAttempts()));
     }
 
     @Nonnull
@@ -715,7 +848,9 @@ public final class NaturalPortalGateManager {
     private static int resolveGroundPlacementY(@Nonnull WorldChunk chunk, int x, int z) {
         for (int y = WORLD_MAX_Y - 2; y >= WORLD_MIN_Y + 1; y--) {
             int supportBlock = chunk.getBlock(x, y, z);
-            if (supportBlock == AIR_BLOCK_ID || isLikelyFoliageOrWood(supportBlock)) {
+            if (supportBlock == AIR_BLOCK_ID
+                    || isLikelyFoliageOrWood(supportBlock)
+                    || isLikelyLiquidBlock(supportBlock)) {
                 continue;
             }
 
@@ -750,6 +885,20 @@ public final class NaturalPortalGateManager {
                 || id.contains("vine")
                 || id.contains("canopy")
                 || id.contains("bamboo");
+    }
+
+    private static boolean isLikelyLiquidBlock(int blockIntId) {
+        BlockType blockType = BlockType.getAssetMap().getAsset(blockIntId);
+        if (blockType == null || blockType.getId() == null) {
+            return false;
+        }
+
+        String id = blockType.getId().toLowerCase(Locale.ROOT);
+        return id.contains("water")
+                || id.contains("ocean")
+                || id.contains("river")
+                || id.contains("lava")
+                || id.contains("liquid");
     }
 
     private static void refreshConfigSnapshot() {
@@ -867,6 +1016,16 @@ public final class NaturalPortalGateManager {
         }
         String gateId = buildStableGateId(worldUuid, x, y, z);
         ACTIVE_GATES.add(new ActiveGate(gateId, worldUuid, blockId, x, y, z));
+        GateInstancePersistenceManager.upsertGateInstance(new GateInstancePersistenceManager.StoredGateInstance(
+            gateId,
+            "",
+            0,
+            0,
+            0,
+            "E",
+            blockId,
+            List.of(),
+            true));
         PortalLeveledInstanceRouter.registerGateExpectedInstance(gateId, blockId);
         ChunkKeepaliveManager.register(gateId, worldUuid, ChunkUtil.indexChunkFromBlock(x, z));
     }
@@ -949,6 +1108,24 @@ public final class NaturalPortalGateManager {
                 .thenComparingInt(TrackedGateSnapshot::x)
                 .thenComparingInt(TrackedGateSnapshot::z));
         return snapshots;
+    }
+
+    public static int forceRemoveAllTrackedGatesInWorld(@Nonnull World world) {
+        UUID worldUuid = world.getWorldConfig() == null ? null : world.getWorldConfig().getUuid();
+        if (worldUuid == null) {
+            return 0;
+        }
+
+        int removed = 0;
+        for (TrackedGateSnapshot snapshot : listTrackedGates()) {
+            if (!worldUuid.equals(snapshot.worldUuid())) {
+                continue;
+            }
+
+            forceRemoveGateAt(world, snapshot.x(), snapshot.y(), snapshot.z(), snapshot.blockId());
+            removed++;
+        }
+        return removed;
     }
 
     @Nullable
@@ -1066,6 +1243,7 @@ public final class NaturalPortalGateManager {
                                          int x, int y, int z,
                                          @Nonnull String blockId) {
         String gateId = resolveGateIdAt(world, x, y, z);
+        clearGateAnchorBlock(world, x, y, z, blockId);
         MobWaveManager.unregisterLinkedGateWave(gateId);
         if (gateId != null && !gateId.isBlank()) {
             // Kick any players inside the instance before tearing it down.
@@ -1087,6 +1265,60 @@ public final class NaturalPortalGateManager {
                 blockId,
                 x, y, z,
                 gateId != null ? gateId : "<untracked>");
+    }
+
+    private static void clearGateAnchorBlock(@Nonnull World world,
+                                             int x,
+                                             int y,
+                                             int z,
+                                             @Nullable String expectedBlockId) {
+        if (clearLoadedGateAnchorBlock(world, x, y, z, expectedBlockId)) {
+            return;
+        }
+
+        long chunkIndex = ChunkUtil.indexChunkFromBlock(x, z);
+        world.getNonTickingChunkAsync(chunkIndex).whenComplete((loadedChunk, throwable) ->
+                world.execute(() -> clearLoadedGateAnchorBlock(world, x, y, z, expectedBlockId)));
+    }
+
+    private static boolean clearLoadedGateAnchorBlock(@Nonnull World world,
+                                                      int x,
+                                                      int y,
+                                                      int z,
+                                                      @Nullable String expectedBlockId) {
+        long chunkIndex = ChunkUtil.indexChunkFromBlock(x, z);
+        WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
+        if (chunk == null) {
+            return false;
+        }
+
+        int currentBlockIntId = chunk.getBlock(x, y, z);
+        if (currentBlockIntId == AIR_BLOCK_ID) {
+            return true;
+        }
+
+        boolean shouldClear = false;
+        if (expectedBlockId != null && !expectedBlockId.isBlank()) {
+            int expectedIntId = BlockType.getAssetMap().getIndex(expectedBlockId);
+            if (expectedIntId != Integer.MIN_VALUE && expectedIntId == currentBlockIntId) {
+                shouldClear = true;
+            }
+        }
+
+        if (!shouldClear) {
+            BlockType currentBlockType = BlockType.getAssetMap().getAsset(currentBlockIntId);
+            if (currentBlockType != null && currentBlockType.getId() != null) {
+                shouldClear = isPortalBlockId(currentBlockType.getId());
+            }
+        }
+
+        if (!shouldClear) {
+            return true;
+        }
+
+        chunk.setBlock(x, y, z, AIR_BLOCK_ID);
+        chunk.markNeedsSaving();
+        return true;
     }
 
     /**
@@ -2220,6 +2452,25 @@ public final class NaturalPortalGateManager {
     }
 
     private record GateRemovalRequest(@Nonnull String blockId, int x, int y, int z) {
+    }
+
+    private record SpawnPlacementPolicy(@Nonnull String centerMode,
+                                        int centerX,
+                                        int centerZ,
+                                        int minExclusionRadiusBlocks,
+                                        int maxDistanceBlocks,
+                                        boolean allowUnloadedChunks,
+                                        int candidateAttempts) {
+        @Nonnull
+        private static SpawnPlacementPolicy defaults() {
+            return new SpawnPlacementPolicy("WORLD_SPAWN", 0, 0, 256, 10_000, true, 64);
+        }
+    }
+
+    private record SpawnCenter(int x, int z) {
+    }
+
+    private record SpawnCandidate(int x, int z) {
     }
 
     private record ActiveGate(@Nonnull String gateId,

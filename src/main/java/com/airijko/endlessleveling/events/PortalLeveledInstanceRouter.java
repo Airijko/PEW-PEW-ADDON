@@ -427,6 +427,16 @@ public final class PortalLeveledInstanceRouter {
                     String gateKey = stored.gateKey;
                     String instanceWorldName = stored.instanceWorldName;
 
+                    if (stored.coordinateOnly) {
+                        NaturalPortalGateManager.restoreActiveGate(stored, universe);
+                        log(Level.INFO,
+                                "[ELPortal] Restored coordinate-only gate tracking key=%s block=%s",
+                                gateKey,
+                                stored.blockId);
+                        restored++;
+                        continue;
+                    }
+
                     // The instance world is rarely loaded at startup — accept either loaded
                     // or loadable. For stale entries where the world no longer exists, still
                     // restore expectations so registerGateExpectedInstance finds them and doesn't
@@ -621,6 +631,21 @@ public final class PortalLeveledInstanceRouter {
                 routingName,
                 expectedGroupId,
                 expectedWorldId);
+    }
+
+    @Nullable
+    public static String resolveExpectedGateWorldId(@Nullable String gateIdentity,
+                                                    @Nullable String blockId) {
+        if (gateIdentity == null || gateIdentity.isBlank() || blockId == null || blockId.isBlank()) {
+            return null;
+        }
+
+        String canonicalGateIdentity = canonicalizeGateIdentity(gateIdentity);
+        String routingName = resolveRoutingName(blockId);
+        if (routingName == null || routingName.isBlank()) {
+            return null;
+        }
+        return buildExpectedGroupId(canonicalGateIdentity, routingName);
     }
 
     /**
@@ -1400,6 +1425,10 @@ public final class PortalLeveledInstanceRouter {
                                                      @Nonnull String routingName,
                                                      @Nonnull World returnWorld,
                                                      @Nullable Transform returnTransform) {
+        if (handleGateDeathReentryDenial(playerRef, gateKey, null)) {
+            return true;
+        }
+
         if (!gateKey.startsWith("el_gate:")) {
             log(Level.WARNING,
                     "[ELPortal] Route-to-gate using non-canonical key=%s player=%s world=%s block=%s template=%s",
@@ -1441,7 +1470,22 @@ public final class PortalLeveledInstanceRouter {
                         return true;
                     }
 
-                    CompletableFuture<World> loadFuture = universe.loadWorld(existingInstance);
+                    CompletableFuture<World> loadFuture;
+                    try {
+                        loadFuture = universe.loadWorld(existingInstance);
+                    } catch (IllegalArgumentException loadRace) {
+                        PAIRED_INSTANCE_RELOADS_IN_FLIGHT.remove(existingInstance);
+                        World racedWorld = universe.getWorld(existingInstance);
+                        if (racedWorld != null) {
+                            log(Level.WARNING,
+                                    "[ELPortal] Paired gate reload race: world already loaded world=%s gateId=%s player=%s",
+                                    existingInstance,
+                                    gateKey,
+                                    playerRef.getUsername());
+                            return true;
+                        }
+                        throw loadRace;
+                    }
                     loadFuture.thenAccept(loadedWorld -> {
                         try {
                             if (loadedWorld == null) {
@@ -1593,6 +1637,10 @@ public final class PortalLeveledInstanceRouter {
         }
 
         String expectedWorldId = expectation.expectedWorldId();
+        if (handleGateDeathReentryDenial(playerRef, gateKey, expectedWorldId)) {
+            return true;
+        }
+
         Universe universe = Universe.get();
         if (universe == null) {
             return false;
@@ -1637,7 +1685,23 @@ public final class PortalLeveledInstanceRouter {
             return false;
         }
 
-        universe.loadWorld(expectedWorldId)
+        CompletableFuture<World> loadFuture;
+        try {
+            loadFuture = universe.loadWorld(expectedWorldId);
+        } catch (IllegalArgumentException loadRace) {
+            World racedWorld = universe.getWorld(expectedWorldId);
+            if (racedWorld != null) {
+                log(Level.WARNING,
+                        "[ELPortal] Expected-world reload race: world already loaded world=%s gateId=%s player=%s",
+                        expectedWorldId,
+                        gateKey,
+                        playerRef.getUsername());
+                return true;
+            }
+            throw loadRace;
+        }
+
+        loadFuture
                 .thenAccept(reloadedWorld -> {
                     if (reloadedWorld == null) {
                         return;
@@ -3391,13 +3455,19 @@ public final class PortalLeveledInstanceRouter {
         if (routingName == null || routingName.isBlank()) {
             return "el_gate";
         }
-        return EndlessLevelingAPI.get().buildInstanceDungeonGroupId(gateIdentity, routingName);
+        String originalTemplateName = resolveOriginalDungeonTemplateName(routingName);
+        String templateToken = sanitizeInstanceToken(originalTemplateName, sanitizeInstanceToken(routingName, "dungeon"));
+        String gateToken = sanitizeInstanceToken(legacyGateIdentity(gateIdentity), "gate");
+        return "el_gate_" + templateToken + "_" + gateToken;
     }
 
     @Nonnull
     private static String buildGateInstanceWorldName(@Nonnull String routingName,
                                                      @Nullable String gateIdentity) {
-        return EndlessLevelingAPI.get().buildInstanceDungeonWorldName(routingName, gateIdentity);
+        String originalTemplateName = resolveOriginalDungeonTemplateName(routingName);
+        String templateToken = sanitizeInstanceToken(originalTemplateName, sanitizeInstanceToken(routingName, "dungeon"));
+        String gateToken = sanitizeInstanceToken(legacyGateIdentity(gateIdentity), "gate");
+        return "el_gate_" + templateToken + "_" + gateToken;
     }
 
     @Nonnull
@@ -4033,10 +4103,18 @@ public final class PortalLeveledInstanceRouter {
             String normalizedLegacy = candidate.legacyTemplateName() == null
                     ? null
                     : candidate.legacyTemplateName().toLowerCase(Locale.ROOT);
-            String worldPrefix = "el_gate_"
-                    + sanitizeInstanceToken(candidate.worldNameToken(), "dungeon").toLowerCase(Locale.ROOT);
-            boolean matches = normalizedWorldName.equals(worldPrefix)
-                    || normalizedWorldName.startsWith(worldPrefix + "_")
+            String templateWorldPrefix = "el_gate_"
+                + sanitizeInstanceToken(
+                    candidate.legacyTemplateName() == null || candidate.legacyTemplateName().isBlank()
+                        ? candidate.routingTemplateName()
+                        : candidate.legacyTemplateName(),
+                    "dungeon").toLowerCase(Locale.ROOT);
+            String legacyTokenWorldPrefix = "el_gate_"
+                + sanitizeInstanceToken(candidate.worldNameToken(), "dungeon").toLowerCase(Locale.ROOT);
+            boolean matches = normalizedWorldName.equals(templateWorldPrefix)
+                || normalizedWorldName.startsWith(templateWorldPrefix + "_")
+                || normalizedWorldName.equals(legacyTokenWorldPrefix)
+                || normalizedWorldName.startsWith(legacyTokenWorldPrefix + "_")
                     || normalizedWorldName.equals(normalizedRouting)
                     || normalizedWorldName.contains(normalizedRouting)
                     || (normalizedLegacy != null
@@ -4045,7 +4123,7 @@ public final class PortalLeveledInstanceRouter {
             if (!matches) {
                 continue;
             }
-            int candidateLength = Math.max(worldPrefix.length(), normalizedRouting.length());
+            int candidateLength = Math.max(templateWorldPrefix.length(), normalizedRouting.length());
             if (best == null || candidateLength > bestLength) {
                 best = candidate;
                 bestLength = candidateLength;
@@ -4424,6 +4502,15 @@ public final class PortalLeveledInstanceRouter {
     @Nonnull
     private static DeathReentryDecision evaluateDeathReentry(@Nonnull PlayerRef playerRef,
                                                              @Nonnull World targetWorld) {
+        String targetWorldName = targetWorld.getName();
+        String targetGateIdentity = findGateIdentityForInstanceWorld(targetWorldName);
+        return evaluateDeathReentry(playerRef, targetGateIdentity, targetWorldName);
+    }
+
+    @Nonnull
+    private static DeathReentryDecision evaluateDeathReentry(@Nonnull PlayerRef playerRef,
+                                                             @Nullable String gateIdentity,
+                                                             @Nullable String targetWorldName) {
         if (filesManager == null) {
             return DeathReentryDecision.allow();
         }
@@ -4433,15 +4520,9 @@ public final class PortalLeveledInstanceRouter {
             return DeathReentryDecision.allow();
         }
 
-        String targetWorldName = targetWorld.getName();
-        if (targetWorldName == null) {
-            return DeathReentryDecision.allow();
-        }
-
-        String targetGateIdentity = findGateIdentityForInstanceWorld(targetWorldName);
-        String canonicalTargetGateIdentity = targetGateIdentity == null || targetGateIdentity.isBlank()
+        String canonicalTargetGateIdentity = gateIdentity == null || gateIdentity.isBlank()
                 ? null
-                : canonicalizeGateIdentity(targetGateIdentity);
+                : canonicalizeGateIdentity(gateIdentity);
 
         boolean gateLocked = false;
         Set<String> gateLocks = PLAYER_DEATH_REENTRY_GATE_LOCKS.get(playerUuid);
@@ -4452,9 +4533,11 @@ public final class PortalLeveledInstanceRouter {
         }
 
         boolean worldLocked = false;
-        Set<String> worldLocks = PLAYER_DEATH_REENTRY_LOCKS.get(playerUuid);
-        if (worldLocks != null && !worldLocks.isEmpty() && worldLocks.contains(targetWorldName)) {
-            worldLocked = true;
+        if (targetWorldName != null && !targetWorldName.isBlank()) {
+            Set<String> worldLocks = PLAYER_DEATH_REENTRY_LOCKS.get(playerUuid);
+            if (worldLocks != null && !worldLocks.isEmpty() && worldLocks.contains(targetWorldName)) {
+                worldLocked = true;
+            }
         }
 
         if (!gateLocked && !worldLocked) {
@@ -4466,6 +4549,24 @@ public final class PortalLeveledInstanceRouter {
         }
 
         return DeathReentryDecision.block();
+    }
+
+    private static boolean handleGateDeathReentryDenial(@Nonnull PlayerRef playerRef,
+                                                         @Nullable String gateIdentity,
+                                                         @Nullable String targetWorldName) {
+        DeathReentryDecision deathReentryDecision = evaluateDeathReentry(playerRef, gateIdentity, targetWorldName);
+        if (!deathReentryDecision.blocked()) {
+            return false;
+        }
+
+        playerRef.sendMessage(Message.raw(ENDLESS_LEVELING_PREFIX + "You cannot re-enter this gate after dying.").color("#ff6666"));
+        log(Level.WARNING,
+                "[ELPortal] Death re-entry denied player=%s gateId=%s targetWorld=%s",
+                playerRef.getUsername(),
+                gateIdentity == null ? "<unknown>" : gateIdentity,
+                targetWorldName == null ? "<unknown>" : targetWorldName);
+        clearPendingGateEntry(playerRef);
+        return true;
     }
 
     private static boolean shouldSkipFixedSpawnTeleport(@Nonnull PlayerRef playerRef,
