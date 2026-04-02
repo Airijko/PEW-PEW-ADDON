@@ -37,7 +37,7 @@ public final class GateInstancePersistenceManager {
     }
 
     public static void initialize() {
-        File dataFolder = PluginManager.MODS_PATH.resolve("EndlessLevelingAddon").toFile();
+        File dataFolder = PluginManager.MODS_PATH.resolve("EndlessDungeonsAndGates").toFile();
         if (!dataFolder.exists()) {
             dataFolder.mkdirs();
         }

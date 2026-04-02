@@ -52,7 +52,7 @@ import java.util.logging.Level;
  */
 public final class AddonFilesManager {
 
-    private static final String PLUGIN_FOLDER_NAME = "EndlessLevelingAddon";
+    private static final String PLUGIN_FOLDER_NAME = "EndlessDungeonsAndGates";
     private static final String CORE_PLUGIN_FOLDER_NAME = "EndlessLeveling";
     private static final String CORE_WORLD_SETTINGS_FOLDER_NAME = "world-settings";
     private static final String GATE_WORLD_SETTINGS_RESOURCE = "world-settings/el-gate-dungeons.json";
@@ -98,7 +98,7 @@ public final class AddonFilesManager {
         this.plugin = plugin;
 
         if (PluginManager.MODS_PATH == null) {
-            throw new IllegalStateException("Mods path is not initialized for EndlessLevelingAddon");
+            throw new IllegalStateException("Mods path is not initialized for EndlessDungeonsAndGates");
         }
 
         this.pluginFolder = PluginManager.MODS_PATH.resolve(PLUGIN_FOLDER_NAME).toFile();
@@ -211,7 +211,7 @@ public final class AddonFilesManager {
 
     private void writeDungeonGateConfig(DungeonGateOptions options, int targetVersion) {
         StringBuilder text = new StringBuilder();
-        text.append("# EndlessLevelingAddon - Dungeon Gate configuration\n\n");
+        text.append("# EndlessDungeonsAndGates - Dungeon Gate configuration\n\n");
         text.append("# Master switch. Set to false to completely disable dungeon gate spawning.\n");
         text.append("enabled: ").append(options.enabled).append("\n\n");
 
@@ -529,7 +529,7 @@ public final class AddonFilesManager {
             Files.createDirectories(passivesFolder.toPath());
             Files.createDirectories(wavesFolder.toPath());
         } catch (IOException exception) {
-            throw new IllegalStateException("Unable to create EndlessLevelingAddon folders", exception);
+            throw new IllegalStateException("Unable to create EndlessDungeonsAndGates folders", exception);
         }
     }
 
@@ -602,7 +602,7 @@ public final class AddonFilesManager {
 
     private void writeNormalizedConfig(AddonContentOptions options, int targetVersion) {
         StringBuilder text = new StringBuilder();
-        text.append("# EndlessLevelingAddon configuration\n\n");
+        text.append("# EndlessDungeonsAndGates configuration\n\n");
         text.append("# True = merge Endless Leveling Core defaults with your custom content.\n");
         text.append("# False = fresh start for that system (Core defaults are not merged in by this addon workflow).\n");
         text.append("core_content_merge:\n");

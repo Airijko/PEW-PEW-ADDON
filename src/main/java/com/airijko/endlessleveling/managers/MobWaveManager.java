@@ -2663,7 +2663,7 @@ public final class MobWaveManager {
 
     private static void initializeWavePortalPersistence() {
         try {
-            File dataFolder = PluginManager.MODS_PATH.resolve("EndlessLevelingAddon").toFile();
+            File dataFolder = PluginManager.MODS_PATH.resolve("EndlessDungeonsAndGates").toFile();
             if (!dataFolder.exists()) {
                 dataFolder.mkdirs();
             }

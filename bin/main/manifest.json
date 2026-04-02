@@ -1,6 +1,6 @@
 {
     "Group": "com.airijko",
-    "Name": "EndlessLevelingAddon",
+    "Name": "EndlessDungeonsAndGates",
     "Version": "2.2.0",
     "Description": "Description of your plugin",
     "Authors": [
@@ -18,5 +18,5 @@
         "Config:Endgame&QoL": ">=4.1.1"
     },
     "ServerVersion": "2026.03.26-89796e57b",
-    "Main": "com.airijko.endlessleveling.EndlessLevelingAddon"
+    "Main": "com.airijko.endlessleveling.EndlessDungeonsAndGates"
 }

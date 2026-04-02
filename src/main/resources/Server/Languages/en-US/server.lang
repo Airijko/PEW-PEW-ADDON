@@ -82,4 +82,4 @@ items.EL_WavePortal_RankC.name = Wave Gateway [C Rank]
 items.EL_WavePortal_RankC.description = Gateway key used to enter a C Rank wave encounter.
 items.EL_WavePortal_RankD.name = Wave Gateway [D Rank]
 items.EL_WavePortal_RankD.description = Gateway key used to enter a D Rank wave encounter.
-endlesslevelingaddon.portals.interact = Enter dungeon ({key})
+endlessdungeonsandgates.portals.interact = Enter dungeon ({key})

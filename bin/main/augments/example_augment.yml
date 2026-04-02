@@ -1,7 +1,7 @@
 id: example_augment
 name: "Example Augment"
 tier: COMMON
-description: "Starter augment definition for EndlessLevelingAddon"
+description: "Starter augment definition for EndlessDungeonsAndGates"
 category: PASSIVE_STAT
 enabled: true
 

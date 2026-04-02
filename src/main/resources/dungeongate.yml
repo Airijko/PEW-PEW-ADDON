@@ -1,4 +1,4 @@
-# EndlessLevelingAddon - Dungeon Gate configuration
+# EndlessDungeonsAndGates - Dungeon Gate configuration
 
 # Master switch. Set to false to completely disable dungeon gate spawning.
 enabled: true

@@ -1,6 +1,6 @@
 package com.airijko.endlessleveling.commands;
 
-import com.airijko.endlessleveling.EndlessLevelingAddon;
+import com.airijko.endlessleveling.EndlessDungeonsAndGates;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
@@ -11,9 +11,9 @@ import java.util.concurrent.CompletableFuture;
 
 public final class AddonReloadCommand extends AbstractCommand {
 
-    private final EndlessLevelingAddon addon;
+    private final EndlessDungeonsAndGates addon;
 
-    public AddonReloadCommand(@Nonnull EndlessLevelingAddon addon) {
+    public AddonReloadCommand(@Nonnull EndlessDungeonsAndGates addon) {
         super("elreload", "Reload Endless Leveling addon YAML content and dungeon gate config");
         this.addon = addon;
         this.addAliases("endreload", "eladdonreload", "elmodreload");
@@ -25,7 +25,7 @@ public final class AddonReloadCommand extends AbstractCommand {
         context.sendMessage(Message.raw("Reloading Endless Leveling addon content...").color("#ffcc66"));
 
         return CompletableFuture.runAsync(() -> {
-            EndlessLevelingAddon.ReloadSummary summary = addon.reloadAddonRuntime();
+            EndlessDungeonsAndGates.ReloadSummary summary = addon.reloadAddonRuntime();
             context.sendMessage(Message.raw("Reload complete.").color("#6cff78"));
             context.sendMessage(Message.raw(String.format(
                     "Unregistered: races=%d classes=%d augments=%d passives=%d",

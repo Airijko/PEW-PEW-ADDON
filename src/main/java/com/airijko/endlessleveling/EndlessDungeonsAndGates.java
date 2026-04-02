@@ -68,7 +68,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 
-public class EndlessLevelingAddon extends JavaPlugin {
+public class EndlessDungeonsAndGates extends JavaPlugin {
 
     private static final String HSTATS_MOD_UUID = "2839aba6-9173-4429-8f9c-68e1aef36d58";
     private static final String HSTATS_MOD_VERSION_FALLBACK = "Unknown";
@@ -80,7 +80,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
     private final List<InstanceDungeonDefinition> registeredInstanceDungeonDefinitions = new ArrayList<>();
     private final Object reloadLock = new Object();
 
-    public EndlessLevelingAddon(@Nonnull JavaPluginInit init) {
+    public EndlessDungeonsAndGates(@Nonnull JavaPluginInit init) {
         super(init);
     }
 
@@ -344,7 +344,7 @@ public class EndlessLevelingAddon extends JavaPlugin {
     }
 
     private String resolvePluginManifestVersion() {
-        try (var in = EndlessLevelingAddon.class.getClassLoader().getResourceAsStream("manifest.json")) {
+        try (var in = EndlessDungeonsAndGates.class.getClassLoader().getResourceAsStream("manifest.json")) {
             if (in == null) {
                 return HSTATS_MOD_VERSION_FALLBACK;
             }
