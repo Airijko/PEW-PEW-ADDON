@@ -71,9 +71,10 @@ import java.util.logging.Level;
 public class EndlessLevelingAddon extends JavaPlugin {
 
     private static final String HSTATS_MOD_UUID = "2839aba6-9173-4429-8f9c-68e1aef36d58";
-    private static final String HSTATS_MOD_VERSION = "2.2";
+    private static final String HSTATS_MOD_VERSION_FALLBACK = "Unknown";
 
     private AddonFilesManager filesManager;
+    private String hstatsModVersion = HSTATS_MOD_VERSION_FALLBACK;
     private AddonDungeonGateContentProvider dungeonGateContentProvider;
     private AddonWaveGateContentProvider waveGateContentProvider;
     private final List<InstanceDungeonDefinition> registeredInstanceDungeonDefinitions = new ArrayList<>();
@@ -87,7 +88,8 @@ public class EndlessLevelingAddon extends JavaPlugin {
     protected void setup() {
         // Seed config and data folders from bundled resources on first startup.
         this.filesManager = new AddonFilesManager(this);
-        new HStats(HSTATS_MOD_UUID, resolvePluginManifestVersion());
+        this.hstatsModVersion = resolvePluginManifestVersion();
+        new HStats(HSTATS_MOD_UUID, this.hstatsModVersion);
         
         // Register all content from respective folders
         if (this.filesManager.shouldMergeRacesWithCore()) {
@@ -344,26 +346,26 @@ public class EndlessLevelingAddon extends JavaPlugin {
     private String resolvePluginManifestVersion() {
         try (var in = EndlessLevelingAddon.class.getClassLoader().getResourceAsStream("manifest.json")) {
             if (in == null) {
-                return HSTATS_MOD_VERSION;
+                return HSTATS_MOD_VERSION_FALLBACK;
             }
 
             String json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             int keyIndex = json.indexOf("\"Version\"");
             if (keyIndex < 0) {
-                return HSTATS_MOD_VERSION;
+                return HSTATS_MOD_VERSION_FALLBACK;
             }
 
             int colon = json.indexOf(':', keyIndex);
             int firstQuote = json.indexOf('"', colon + 1);
             int secondQuote = json.indexOf('"', firstQuote + 1);
             if (colon < 0 || firstQuote < 0 || secondQuote < 0) {
-                return HSTATS_MOD_VERSION;
+                return HSTATS_MOD_VERSION_FALLBACK;
             }
 
             String parsed = json.substring(firstQuote + 1, secondQuote).trim();
-            return parsed.isEmpty() ? HSTATS_MOD_VERSION : parsed;
+            return parsed.isEmpty() ? HSTATS_MOD_VERSION_FALLBACK : parsed;
         } catch (Exception ignored) {
-            return HSTATS_MOD_VERSION;
+            return HSTATS_MOD_VERSION_FALLBACK;
         }
     }
 
