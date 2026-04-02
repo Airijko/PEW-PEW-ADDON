@@ -20,6 +20,11 @@ public final class GateCommand extends AbstractCommand {
         this.addSubCommand(new GateClearAllCommand());
     }
 
+    @Override
+    protected boolean canGeneratePermission() {
+        return false;
+    }
+
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {

@@ -33,6 +33,11 @@ public final class GateTrackCommand extends AbstractCommand {
         this.addAliases("tracks", "tracking", "followgate", "trackgate");
     }
 
+    @Override
+    protected boolean canGeneratePermission() {
+        return false;
+    }
+
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {

@@ -23,6 +23,11 @@ public final class GateListCommand extends AbstractCommand {
         this.addAliases("ls", "active", "gatelist", "gates");
     }
 
+    @Override
+    protected boolean canGeneratePermission() {
+        return false;
+    }
+
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
