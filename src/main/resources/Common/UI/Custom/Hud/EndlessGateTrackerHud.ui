@@ -4,17 +4,13 @@ Group #EndlessGateTrackerHud {
 
   // --- Decorative banner header (gate name) ---
   Group #TrackerBanner {
-    Anchor: (Width: 320, Height: 48);
-    Background: (TexturePath: "Images/TrackerHeader.png");
-    LayoutMode: Full;
-
-    Group {
-      Anchor: (Top: 1, Bottom: 1, Left: 1, Right: 1);
-      Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
-    }
+    Anchor: (Width: 320, Bottom: 6);
+    LayoutMode: Top;
+    Padding: (Top: 7, Bottom: 7);
+    Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
 
     Label #TrackerHeading {
-      Anchor: (Top: 5, Height: 15, Left: 0, Right: 0);
+      Anchor: (Left: 0, Right: 0, Bottom: 3);
       Style: (
         FontSize: 11,
         TextColor: #d7e7f7,
@@ -28,7 +24,7 @@ Group #EndlessGateTrackerHud {
     }
 
     Label #TrackerName {
-      Anchor: (Bottom: 5, Height: 20, Left: 0, Right: 0);
+      Anchor: (Left: 0, Right: 0);
       Style: (
         FontSize: 18,
         TextColor: #ffe396,
@@ -51,7 +47,7 @@ Group #EndlessGateTrackerHud {
     // Type | Rank | Status row with icon
     Group {
       LayoutMode: Left;
-      Anchor: (Height: 18, Bottom: 6);
+      Anchor: (Bottom: 6);
 
       Group #TrackerTypeIcon {
         Anchor: (Width: 14, Height: 14, Top: 2);
@@ -76,19 +72,18 @@ Group #EndlessGateTrackerHud {
     }
 
     Label #TrackerGateCoords {
-      Anchor: (Height: 16, Bottom: 3);
+      Anchor: (Bottom: 3);
       Style: (FontSize: 13, TextColor: #ecf7ff, RenderBold: true, VerticalAlignment: Center);
       Text: "Gate: --";
     }
 
     Label #TrackerWorld {
-      Anchor: (Height: 16, Bottom: 3);
+      Anchor: (Bottom: 3);
       Style: (FontSize: 13, TextColor: #ecf7ff, RenderBold: true, VerticalAlignment: Center);
       Text: "World: --";
     }
 
     Label #TrackerPlayerCoords {
-      Anchor: (Height: 16);
       Style: (FontSize: 13, TextColor: #d2ffdf, RenderBold: true, VerticalAlignment: Center);
       Text: "You: --";
     }
