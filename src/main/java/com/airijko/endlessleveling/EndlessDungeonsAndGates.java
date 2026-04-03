@@ -313,7 +313,9 @@ public class EndlessDungeonsAndGates extends JavaPlugin {
         if (env != null) {
             return Boolean.parseBoolean(env);
         }
-        return false;
+        // Default to addon-owned runtime to preserve natural gate spawning unless
+        // explicitly delegated to core via property or environment override.
+        return true;
     }
 
     private void registerInstanceDungeons() {
