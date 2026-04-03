@@ -36,13 +36,17 @@ spawn_center_z: 0
 spawn_min_exclusion_radius_blocks: 400
 
 # Maximum radius from center used when searching for gate spawn positions.
-spawn_max_distance_blocks: 10000
+spawn_max_distance_blocks: 5000
 
 # If true, candidate chunks can be loaded/generated even when no player is nearby.
 spawn_allow_unloaded_chunks: true
 
 # Number of random radius candidates tested per spawn attempt.
 spawn_candidate_attempts: 64
+
+# Minimum distance in blocks from OrbisGuard regions and SimpleClaims chunks.
+# Set to 0 to disable protection-zone distance checks.
+spawn_protection_zone_min_distance_blocks: 50
 
 # Announce in global chat when a dungeon gate spawns.
 announce_on_spawn: true

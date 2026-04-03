@@ -190,6 +190,30 @@ public final class GateTrackerHud extends CustomUIHud {
         hud.refreshHud(store);
     }
 
+    public static void refreshHudNow(@Nullable UUID uuid) {
+        if (uuid == null) {
+            return;
+        }
+        GateTrackerHud hud = ACTIVE_HUDS.get(uuid);
+        if (hud == null || !hud.built.get()) {
+            return;
+        }
+        if (!hud.targetPlayerRef.isValid()) {
+            unregister(uuid);
+            return;
+        }
+        Ref<EntityStore> ref = hud.targetPlayerRef.getReference();
+        if (ref == null || !ref.isValid()) {
+            unregister(uuid);
+            return;
+        }
+        Store<EntityStore> liveStore = ref.getStore();
+        if (liveStore == null || liveStore.isShutdown()) {
+            return;
+        }
+        hud.refreshHud(liveStore);
+    }
+
     /**
      * Writes the current tracker state into {@code uiCommandBuilder}. Pass the
      * ticking {@code store} from a {@link TickingSystem} so that
@@ -235,8 +259,8 @@ public final class GateTrackerHud extends CustomUIHud {
     }
 
     /**
-     * Writes only the fields that need live refresh after build: the gate meta /
-     * status line and the player's current coordinates.
+     * Writes the fields that need live refresh after build. Keep coordinate/world
+     * lines in this path so /gate track mirrors the old continuously-updating HUD.
      */
     private boolean computeDynamicHudLabels(@Nullable UUID playerUuid, @Nullable Store<EntityStore> store,
             @Nonnull UICommandBuilder uiCommandBuilder) {
@@ -249,6 +273,8 @@ public final class GateTrackerHud extends CustomUIHud {
             GateTrackerManager.clearTrackedEntry(playerUuid);
             boolean changed = false;
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerMeta.Text", "No active target");
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerGateCoords.Text", "Gate: --");
+            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerWorld.Text", "World: --");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords(store));
             return changed;
         }
@@ -257,6 +283,12 @@ public final class GateTrackerHud extends CustomUIHud {
         changed |= setTextIfChanged(uiCommandBuilder,
                 "#TrackerMeta.Text",
                 entry.type().label() + " | Rank " + entry.rankLetter() + " | " + entry.status());
+        changed |= setTextIfChanged(uiCommandBuilder,
+            "#TrackerGateCoords.Text",
+            "Gate: " + formatCoords(entry.x(), entry.y(), entry.z()));
+        changed |= setTextIfChanged(uiCommandBuilder,
+            "#TrackerWorld.Text",
+            "World: " + entry.worldName());
         changed |= setTextIfChanged(uiCommandBuilder,
                 "#TrackerPlayerCoords.Text",
                 "You: " + resolvePlayerCoords(store));

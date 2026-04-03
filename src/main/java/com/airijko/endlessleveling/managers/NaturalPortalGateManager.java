@@ -502,6 +502,14 @@ public final class NaturalPortalGateManager {
                     continue;
                 }
 
+                int protectionMinDist = filesManager != null
+                        ? filesManager.getSpawnProtectionZoneMinDistanceBlocks()
+                        : 50;
+                if (protectionMinDist > 0
+                        && ProtectionZoneChecker.isBlockedByProtectionZone(world.getName(), x, z, protectionMinDist)) {
+                    continue;
+                }
+
                 GateRank gateRank = forcedRankTier == null
                     ? resolveGateRank(playerRef)
                     : new GateRank(forcedRankTier, -1);

@@ -253,6 +253,11 @@ public final class AddonFilesManager {
         text.append("# Number of random radius candidates tested per spawn attempt.\n");
         text.append("spawn_candidate_attempts: ").append(options.spawnCandidateAttempts).append("\n\n");
 
+        text.append("# Minimum distance in blocks that a gate must keep from any OrbisGuard region\n");
+        text.append("# or SimpleClaims chunk. Set to 0 to disable the check entirely.\n");
+        text.append("spawn_protection_zone_min_distance_blocks: ")
+            .append(options.spawnProtectionZoneMinDistanceBlocks).append("\n\n");
+
         text.append("# Announce in global chat when a dungeon gate spawns.\n");
         text.append("announce_on_spawn: ").append(options.announceOnSpawn).append("\n\n");
 
@@ -1312,6 +1317,12 @@ public final class AddonFilesManager {
                 : dungeonGateOptions.spawnCandidateAttempts;
     }
 
+    public int getSpawnProtectionZoneMinDistanceBlocks() {
+        return dungeonGateOptions == null
+                ? DungeonGateOptions.defaults().spawnProtectionZoneMinDistanceBlocks
+                : dungeonGateOptions.spawnProtectionZoneMinDistanceBlocks;
+    }
+
     @Nonnull
     public String getDungeonLevelReferenceMode() {
         return dungeonGateOptions == null
@@ -1664,6 +1675,11 @@ public final class AddonFilesManager {
                 spawnCandidateAttempts = Math.max(1, n.intValue());
             }
 
+            int spawnProtectionZoneMinDistanceBlocks = defaults.spawnProtectionZoneMinDistanceBlocks;
+            if (root.get("spawn_protection_zone_min_distance_blocks") instanceof Number n) {
+                spawnProtectionZoneMinDistanceBlocks = Math.max(0, n.intValue());
+            }
+
             int spawnIntervalMin = defaults.spawnIntervalMinutesMin;
             int spawnIntervalMax = defaults.spawnIntervalMinutesMax;
             if (root.get("spawn_interval_minutes_min") instanceof Number n) {
@@ -1985,6 +2001,7 @@ public final class AddonFilesManager {
                     spawnCenterMode, spawnCenterX, spawnCenterZ,
                     spawnMinExclusionRadiusBlocks, spawnMaxDistanceBlocks,
                     spawnAllowUnloadedChunks, spawnCandidateAttempts,
+                    spawnProtectionZoneMinDistanceBlocks,
                     levelReferenceMode, levelReferenceScope, levelOffsetMin, levelOffsetMax,
                     rankFloorEMinOffset, rankFloorSMinOffset,
                     adaptiveRankFloorScalingEnabled,
@@ -2149,6 +2166,7 @@ public final class AddonFilesManager {
         private final int spawnMaxDistanceBlocks;
         private final boolean spawnAllowUnloadedChunks;
         private final int spawnCandidateAttempts;
+        private final int spawnProtectionZoneMinDistanceBlocks;
         private final String levelReferenceMode;
         private final String levelReferenceScope;
         private final int levelOffsetMin;
@@ -2221,6 +2239,7 @@ public final class AddonFilesManager {
                 int spawnMaxDistanceBlocks,
                 boolean spawnAllowUnloadedChunks,
                 int spawnCandidateAttempts,
+                int spawnProtectionZoneMinDistanceBlocks,
                 @Nonnull String levelReferenceMode,
                 @Nonnull String levelReferenceScope,
                 int levelOffsetMin,
@@ -2292,6 +2311,7 @@ public final class AddonFilesManager {
             this.spawnMaxDistanceBlocks = Math.max(this.spawnMinExclusionRadiusBlocks, spawnMaxDistanceBlocks);
             this.spawnAllowUnloadedChunks = spawnAllowUnloadedChunks;
             this.spawnCandidateAttempts = Math.max(1, spawnCandidateAttempts);
+            this.spawnProtectionZoneMinDistanceBlocks = Math.max(0, spawnProtectionZoneMinDistanceBlocks);
             this.levelReferenceMode = levelReferenceMode;
             this.levelReferenceScope = levelReferenceScope;
             this.levelOffsetMin = Math.max(0, levelOffsetMin);
@@ -2355,6 +2375,7 @@ public final class AddonFilesManager {
                 return new DungeonGateOptions(true, false, true, true, 3, 30, 30, 30, -1, 1,
                     List.of("world", "default"),
                     "WORLD_SPAWN", 0, 0, 256, 10_000, true, 64,
+                    50,
                     "AVERAGE", "UPPER", 0, 30, 10, 110,
                     true,
                     true, 12, 3, 10, 8,

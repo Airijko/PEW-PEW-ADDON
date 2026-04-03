@@ -2,12 +2,11 @@ package com.airijko.endlessleveling.commands.gate;
 
 import com.airijko.endlessleveling.managers.GateTrackerManager;
 import com.airijko.endlessleveling.managers.GateTrackerManager.GateTrackerEntry;
-import com.airijko.endlessleveling.managers.NaturalPortalGateManager;
+import com.airijko.endlessleveling.ui.GateListUIPage;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.entity.entities.Player;
-import com.hypixel.hytale.server.core.universe.world.World;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -31,19 +30,9 @@ public final class GateListCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
-        if (context.sender() instanceof Player player) {
-            World world = player.getWorld();
-            if (world != null) {
-                CompletableFuture<Void> future = new CompletableFuture<>();
-                world.execute(() -> {
-                    NaturalPortalGateManager.reconcileTrackedGatesFromLoadedChunks(world);
-                    sendGateList(context, true);
-                    future.complete(null);
-                });
-                return future;
-            }
+        if (context.sender() instanceof Player) {
+            return GateListUIPage.openForSender(context);
         }
-
         sendGateList(context, true);
         return CompletableFuture.completedFuture(null);
     }

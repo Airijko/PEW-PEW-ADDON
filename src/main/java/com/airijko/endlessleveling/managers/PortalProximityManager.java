@@ -139,7 +139,6 @@ public final class PortalProximityManager {
         Vector3d position = playerRef.getTransform().getPosition();
         PortalCandidate candidate = findNearestPortal(world, position);
         if (candidate == null) {
-            debugNearbyPortalLikeBlocks(world, playerRef, position, now);
             return;
         }
 

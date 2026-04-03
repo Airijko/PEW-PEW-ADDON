@@ -1,7 +1,7 @@
 {
     "Group": "com.airijko",
     "Name": "EndlessDungeonsAndGates",
-    "Version": "2.2.0",
+    "Version": "2.3.0",
     "Description": "Description of your plugin",
     "Authors": [
         {
@@ -15,7 +15,9 @@
     },
     "OptionalDependencies": {
         "MAJOR76:MajorDungeons": ">=0.4.4",
-        "Config:Endgame&QoL": ">=4.1.1"
+        "Config:Endgame&QoL": ">=4.1.1",
+        "OrbisGuard:OrbisGuard": ">=0.8.8",
+        "Buuz135:SimpleClaims": ">=1.0.34"
     },
     "ServerVersion": "2026.03.26-89796e57b",
     "Main": "com.airijko.endlessleveling.EndlessDungeonsAndGates"

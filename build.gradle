@@ -21,4 +21,9 @@ dependencies {
     compileOnly files('../endlessleveling/build/classes/java/main')
     // Augment registration parses YAML definitions from this addon.
     compileOnly 'org.yaml:snakeyaml:2.2'
+    // Optional protection-zone integration: OrbisGuard and SimpleClaims.
+    // Neither is bundled; all calls are wrapped in Throwable catches so they are
+    // safe to omit at runtime when the mods are not installed.
+    compileOnly files('../WorldProtections/OrbisGuard-0.8.8')
+    compileOnly files('../WorldProtections/SimpleClaims-1.0.34')
 }

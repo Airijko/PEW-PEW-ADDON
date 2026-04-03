@@ -281,9 +281,9 @@ public final class GateTrackerManager {
     private static String resolveDungeonName(@Nullable String blockId) {
         String resolved = PortalLeveledInstanceRouter.resolveGateDisplayNameForBlockId(blockId);
         if (resolved != null && !resolved.isBlank()) {
-            return resolved;
+            return formatGateTitle(resolved);
         }
-        return prettifyBlockId(blockId);
+        return formatGateTitle(prettifyBlockId(blockId));
     }
 
     @Nonnull
@@ -431,21 +431,51 @@ public final class GateTrackerManager {
             raw = raw.substring(separatorIndex + 1);
         }
 
-        String[] parts = raw.split("[_-]");
-        StringBuilder text = new StringBuilder();
-        for (String part : parts) {
-            if (part == null || part.isBlank()) {
+        return formatGateTitle(raw);
+    }
+
+    @Nonnull
+    private static String formatGateTitle(@Nullable String rawTitle) {
+        if (rawTitle == null || rawTitle.isBlank()) {
+            return "Unknown Gate";
+        }
+
+        String normalized = rawTitle.trim()
+                .replace('_', ' ')
+                .replace('-', ' ')
+                .replaceAll("(?<=[a-z0-9])(?=[A-Z])", " ")
+                .replaceAll("(?i)^EL\\b\\s*", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        if (normalized.isBlank()) {
+            return "Unknown Gate";
+        }
+
+        StringBuilder out = new StringBuilder();
+        for (String word : normalized.split(" ")) {
+            if (word.isBlank() || word.equalsIgnoreCase("EL")) {
                 continue;
             }
-            if (!text.isEmpty()) {
-                text.append(' ');
+            if (!out.isEmpty()) {
+                out.append(' ');
             }
-            text.append(Character.toUpperCase(part.charAt(0)));
-            if (part.length() > 1) {
-                text.append(part.substring(1).toLowerCase(Locale.ROOT));
-            }
+            out.append(formatTitleWord(word));
         }
-        return text.isEmpty() ? "Unknown Gate" : text.toString();
+
+        return out.isEmpty() ? "Unknown Gate" : out.toString();
+    }
+
+    @Nonnull
+    private static String formatTitleWord(@Nonnull String word) {
+        if (word.matches("^[A-Za-z]\\d+$")) {
+            return word.toUpperCase(Locale.ROOT);
+        }
+        if (word.matches("^[A-Z0-9]+$") && word.length() <= 4) {
+            return word;
+        }
+        String lower = word.toLowerCase(Locale.ROOT);
+        return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
     private static int rankOrder(@Nullable String rankLetter) {

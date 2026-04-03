@@ -38,5 +38,21 @@ public final class GateTrackerHudRefreshSystem extends TickingSystem<EntityStore
                 break;
             }
         }
+
+        // Fallback from the previous working implementation: if store identity
+        // matching filtered everything, force-refresh active HUDs using each
+        // player's live reference store so movement coordinates still update.
+        if (refreshed == 0) {
+            for (UUID uuid : GateTrackerHud.getActiveHudUuids()) {
+                if (uuid == null) {
+                    continue;
+                }
+                GateTrackerHud.refreshHudNow(uuid);
+                refreshed++;
+                if (refreshed >= MAX_REFRESHES_PER_PASS) {
+                    break;
+                }
+            }
+        }
     }
 }

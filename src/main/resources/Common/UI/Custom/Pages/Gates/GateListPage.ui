@@ -1,0 +1,66 @@
+Group {
+  Background: #000000(0.45);
+}
+
+Group #GateListRoot {
+  Anchor: (Top: 170, Bottom: 170, Left: 550, Right: 550);
+  LayoutMode: Top;
+  Padding: (Full: 14);
+  Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
+
+  Label #GatePageTitle {
+    Anchor: (Height: 24);
+    Text: "LIVE GATE LIST";
+    Style: (FontSize: 18, TextColor: #f2f9ff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center);
+  }
+
+  Label #GatePageSubtitle {
+    Anchor: (Height: 16, Top: 2);
+    Text: "Track one active dungeon, outbreak, or hybrid gate.";
+    Style: (FontSize: 11, TextColor: #9fc0dc, HorizontalAlignment: Center, VerticalAlignment: Center);
+  }
+  
+  Group {
+    Anchor: (Height: 2, Top: 8, Bottom: 8);
+    Background: #30465f;
+  }
+
+  Group {
+    LayoutMode: Left;
+    Anchor: (Height: 22, Bottom: 8);
+
+    Label #GateCountLabel {
+      Anchor: (Height: 22);
+      Text: "Active Gates: 0";
+      Style: (FontSize: 12, TextColor: #9ed8ff, RenderBold: true, VerticalAlignment: Center);
+    }
+
+    Group { FlexWeight: 1; }
+
+    Label {
+      Anchor: (Height: 22);
+      Text: "Click TRACK to bind tracker HUD.";
+      Style: (FontSize: 11, TextColor: #8ea7be, VerticalAlignment: Center);
+    }
+  }
+
+  Group {
+    FlexWeight: 1;
+    LayoutMode: TopScrolling;
+
+    Group #GateRows {
+      LayoutMode: Top;
+    }
+  }
+
+  Group {
+    Anchor: (Height: 2, Top: 8, Bottom: 8);
+    Background: #30465f;
+  }
+
+  Label #FeedbackText {
+    Anchor: (Height: 20);
+    Text: "Select a gate entry to track.";
+    Style: (FontSize: 12, TextColor: #8fd3ff, HorizontalAlignment: Center, VerticalAlignment: Center);
+  }
+}

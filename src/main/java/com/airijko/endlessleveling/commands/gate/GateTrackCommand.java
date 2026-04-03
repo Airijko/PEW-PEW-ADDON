@@ -69,7 +69,7 @@ public final class GateTrackCommand extends AbstractCommand {
             switch (status) {
                 case OPENED -> {
                     ctx.sendMessage(Message.raw(
-                            "Tracking [" + entry.displayId() + "] " + entry.type().label() + " " + entry.title() + ".")
+                            "Tracking " + entry.type().label() + " " + entry.title() + ".")
                             .color("#6cff78"));
                     ctx.sendMessage(Message.raw("Use /gate track clear to close the tracker HUD.").color("#8fd3ff"));
                 }

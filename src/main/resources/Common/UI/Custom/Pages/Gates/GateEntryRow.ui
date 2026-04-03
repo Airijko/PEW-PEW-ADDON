@@ -1,0 +1,60 @@
+@RowTrackButtonStyle = TextButtonStyle(
+  Default: (
+    Background: (TexturePath: "Images/TrackButtonSecondary.png", Border: 8),
+    LabelStyle: (FontSize: 10, TextColor: #bfd7ea, RenderBold: true)
+  ),
+  Hovered: (
+    Background: (TexturePath: "Images/TrackButtonSecondaryHovered.png", Border: 8),
+    LabelStyle: (FontSize: 10, TextColor: #e6f4ff, RenderBold: true)
+  ),
+  Pressed: (
+    Background: (TexturePath: "Images/TrackButtonSecondaryPressed.png", Border: 8),
+    LabelStyle: (FontSize: 10, TextColor: #a8cde7, RenderBold: true)
+  )
+);
+
+Group {
+  LayoutMode: Left;
+  Anchor: (Bottom: 5);
+  Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
+
+  Group #TypeAccent {
+    Anchor: (Width: 5);
+    Background: #3d7bbf;
+  }
+
+  Group {
+    FlexWeight: 1;
+    LayoutMode: Top;
+    Padding: (Left: 10, Right: 6, Top: 8, Bottom: 8);
+
+    Label #Title {
+      Anchor: (Height: 15);
+      Text: "-";
+      Style: (FontSize: 12, TextColor: #ddeeff, RenderBold: true, VerticalAlignment: Center);
+    }
+
+    Label #Meta {
+      Anchor: (Height: 12, Top: 3);
+      Text: "-";
+      Style: (FontSize: 10, TextColor: #6e93b0, VerticalAlignment: Center);
+    }
+
+    Label #Status {
+      Anchor: (Height: 12, Top: 2);
+      Text: "-";
+      Style: (FontSize: 10, TextColor: #82c8e8, VerticalAlignment: Center);
+    }
+  }
+
+  Group {
+    Anchor: (Width: 116);
+    Padding: (Left: 10, Right: 10, Top: 11, Bottom: 11);
+
+    TextButton #TrackButton {
+      Anchor: (Width: 96, Height: 30);
+      Text: "TRACK";
+      Style: @RowTrackButtonStyle;
+    }
+  }
+}

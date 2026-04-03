@@ -1,8 +1,10 @@
 package com.airijko.endlessleveling.commands.gate;
 
+import com.airijko.endlessleveling.ui.GateListUIPage;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
+import com.hypixel.hytale.server.core.entity.entities.Player;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -28,6 +30,10 @@ public final class GateCommand extends AbstractCommand {
     @Nullable
     @Override
     protected CompletableFuture<Void> execute(@Nonnull CommandContext context) {
+        if (context.sender() instanceof Player) {
+            return GateListUIPage.openForSender(context);
+        }
+
         context.sendMessage(Message.raw("EL gate commands").color("#8fd3ff"));
         context.sendMessage(Message.raw("Use one of:").color("#d9f0ff"));
         context.sendMessage(Message.raw("- /gate list           Unified live gate list with IDs for dungeon, outbreak, and hybrid gates").color("#d9f0ff"));
