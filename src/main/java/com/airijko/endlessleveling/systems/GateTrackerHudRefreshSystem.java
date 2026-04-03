@@ -6,53 +6,63 @@ import com.hypixel.hytale.component.system.tick.TickingSystem;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
+import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class GateTrackerHudRefreshSystem extends TickingSystem<EntityStore> {
 
-    // Refresh every 5 game ticks (~250 ms at 20 TPS). Coordinates and status
-    // are sampled on the correct per-player entity-store thread via isHudInStore.
-    private static final int REFRESH_EVERY_TICKS = 5;
-    private static final int MAX_REFRESHES_PER_PASS = 48;
+    // Minimum real-time gap between refreshes per player (250 ms).
+    // NOTE: The TickingSystem second parameter is systemIndex (registry position), NOT
+    // a tick counter, so modulo-based throttling is wrong and was removed.
+    private static final long REFRESH_INTERVAL_NANOS = 250_000_000L;
+    private static final long DIAG_LOG_EVERY_NANOS = 5_000_000_000L;
+
+    // Per-player last-refresh timestamp, shared across all per-store tick invocations.
+    private static final ConcurrentHashMap<UUID, Long> LAST_REFRESH_NANOS = new ConcurrentHashMap<>();
+
+    private static volatile long lastDiagLogNanos = 0L;
 
     @Override
-    public void tick(float deltaSeconds, int tickCount, @Nonnull Store<EntityStore> store) {
-        if (store == null || store.isShutdown() || !GateTrackerHud.hasActiveHuds()) {
-            return;
-        }
-        if (tickCount % REFRESH_EVERY_TICKS != 0) {
+    public void tick(float deltaSeconds, int systemIndex, @Nonnull Store<EntityStore> store) {
+        if (store == null || store.isShutdown()) {
             return;
         }
 
-        int refreshed = 0;
+        long now = System.nanoTime();
+
+        // Diagnostic log fires BEFORE the activeHuds guard so we can confirm
+        // this tick system is alive even when no HUDs are open.
+        if (now - lastDiagLogNanos >= DIAG_LOG_EVERY_NANOS) {
+            lastDiagLogNanos = now;
+            logDirect("[GateTrackDiag] tick alive store=%s activeHuds=%d",
+                    Integer.toHexString(System.identityHashCode(store)),
+                    GateTrackerHud.getActiveHudUuids().size());
+        }
+
+        if (!GateTrackerHud.hasActiveHuds()) {
+            return;
+        }
+
         for (UUID uuid : GateTrackerHud.getActiveHudUuids()) {
             if (uuid == null) {
                 continue;
             }
-            if (!GateTrackerHud.isHudInStore(uuid, store)) {
+            Long lastRefresh = LAST_REFRESH_NANOS.get(uuid);
+            if (lastRefresh != null && now - lastRefresh < REFRESH_INTERVAL_NANOS) {
                 continue;
             }
-            GateTrackerHud.refreshHudNow(uuid, store);
-            refreshed++;
-            if (refreshed >= MAX_REFRESHES_PER_PASS) {
-                break;
-            }
+            LAST_REFRESH_NANOS.put(uuid, now);
+            // Use the no-store fallback: resolves store via ref.getStore() internally.
+            // This is proven to work (same path as the /gate track command).
+            GateTrackerHud.refreshHudNow(uuid);
         }
+    }
 
-        // Fallback from the previous working implementation: if store identity
-        // matching filtered everything, force-refresh active HUDs using each
-        // player's live reference store so movement coordinates still update.
-        if (refreshed == 0) {
-            for (UUID uuid : GateTrackerHud.getActiveHudUuids()) {
-                if (uuid == null) {
-                    continue;
-                }
-                GateTrackerHud.refreshHudNow(uuid);
-                refreshed++;
-                if (refreshed >= MAX_REFRESHES_PER_PASS) {
-                    break;
-                }
-            }
-        }
+    private static void logDirect(@Nonnull String message, Object... args) {
+        String formatted = (args == null || args.length == 0)
+                ? message
+                : String.format(Locale.ROOT, message, args);
+        System.out.println(formatted);
     }
 }

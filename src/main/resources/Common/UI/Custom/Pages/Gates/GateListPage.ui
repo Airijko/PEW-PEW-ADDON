@@ -48,6 +48,7 @@ Group #GateListRoot {
     Anchor: (Left: 0, Right: 0);
     FlexWeight: 1;
     LayoutMode: TopScrolling;
+    ScrollbarStyle: (Spacing: 0, Size: 0);
 
     Group #GateRows {
       Anchor: (Top: 0, Left: 0, Right: 0);

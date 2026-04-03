@@ -15,7 +15,7 @@
 
 Group {
   LayoutMode: Left;
-  Anchor: (Top: 0, Left: 0, Right: 0, Height: 56, Bottom: 5);
+  Anchor: (Left: 0, Right: 0, Bottom: 6);
   Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
 
   Group #TypeAccent {
@@ -26,33 +26,39 @@ Group {
   Group {
     FlexWeight: 1;
     LayoutMode: Top;
-    Padding: (Left: 10, Right: 6, Top: 8, Bottom: 8);
+    Padding: (Left: 12, Right: 8, Top: 10, Bottom: 10);
 
     Label #Title {
-      Anchor: (Height: 15);
       Text: "-";
       Style: (FontSize: 12, TextColor: #ddeeff, RenderBold: true, VerticalAlignment: Center);
     }
 
+    Group {
+      Anchor: (Height: 4);
+    }
+
     Label #Meta {
-      Anchor: (Height: 12, Top: 3);
       Text: "-";
       Style: (FontSize: 10, TextColor: #6e93b0, VerticalAlignment: Center);
     }
 
+    Group {
+      Anchor: (Height: 3);
+    }
+
     Label #Status {
-      Anchor: (Height: 12, Top: 2);
       Text: "-";
       Style: (FontSize: 10, TextColor: #82c8e8, VerticalAlignment: Center);
     }
   }
 
   Group {
-    Anchor: (Width: 116);
-    Padding: (Left: 10, Right: 10, Top: 11, Bottom: 11);
+    Anchor: (Width: 126);
+    LayoutMode: Full;
+    Padding: (Left: 10, Right: 10, Top: 10, Bottom: 10);
 
     TextButton #TrackButton {
-      Anchor: (Width: 96, Height: 30);
+      Anchor: (Left: 0, Right: 0, Top: 0, Bottom: 0);
       Text: "TRACK";
       Style: @RowTrackButtonStyle;
     }

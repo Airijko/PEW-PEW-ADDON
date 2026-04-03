@@ -20,14 +20,22 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Locale;
+import java.util.logging.Level;
 
 public final class GateTrackerHud extends CustomUIHud {
 
     public static final String MULTI_HUD_SLOT = "EndlessGateTrackerHud";
-
     private static final Map<UUID, GateTrackerHud> ACTIVE_HUDS = new ConcurrentHashMap<>();
     private static final Map<UUID, Object> HUD_LOCKS = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, Long> LAST_NO_CHANGE_LOG_NANOS = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, Long> LAST_COORD_FAIL_LOG_NANOS = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<UUID, Long> LAST_COORD_SAMPLE_LOG_NANOS = new ConcurrentHashMap<>();
+    private static final long NO_CHANGE_LOG_EVERY_NANOS = 5_000_000_000L;
+    private static final long COORD_FAIL_LOG_EVERY_NANOS = 5_000_000_000L;
+    private static final long COORD_SAMPLE_LOG_EVERY_NANOS = 2_000_000_000L;
 
     private final PlayerRef targetPlayerRef;
     private final Map<String, Object> lastUiState = new HashMap<>();
@@ -61,14 +69,29 @@ public final class GateTrackerHud extends CustomUIHud {
             return;
         }
         UICommandBuilder builder = new UICommandBuilder();
-        if (computeDynamicHudLabels(uuid, store, builder)) {
+        boolean changed = computeDynamicHudLabels(uuid, store, builder);
+        if (changed) {
             update(false, builder);
+            return;
+        }
+
+        if (shouldLogNow(LAST_NO_CHANGE_LOG_NANOS, uuid, NO_CHANGE_LOG_EVERY_NANOS)) {
+            logDirect(
+                Level.INFO,
+                    "[GateTrackDiag] refreshHud produced no UI changes uuid=%s store=%s",
+                    uuid,
+                    Integer.toHexString(System.identityHashCode(store)));
         }
     }
 
     public static OpenStatus open(@Nonnull Player player, @Nonnull PlayerRef playerRef) {
         UUID uuid = playerRef.getUuid();
         if (uuid == null || !playerRef.isValid()) {
+            logDirect(
+                Level.WARNING,
+                    "[GateTrackDiag] open rejected: invalid playerRef uuid=%s valid=%s",
+                    uuid,
+                    playerRef.isValid());
             return OpenStatus.PLAYER_INVALID;
         }
 
@@ -77,6 +100,10 @@ public final class GateTrackerHud extends CustomUIHud {
             ACTIVE_HUDS.put(uuid, newHud);
 
             if (GateTrackerMultipleHudCompatibility.showHud(player, playerRef, MULTI_HUD_SLOT, newHud)) {
+                logDirect(
+                    Level.INFO,
+                        "[GateTrackDiag] open success via multi-hud uuid=%s",
+                        uuid);
                 return OpenStatus.OPENED;
             }
 
@@ -84,11 +111,20 @@ public final class GateTrackerHud extends CustomUIHud {
             var existingHud = hudManager.getCustomHud();
             if (existingHud != null && !(existingHud instanceof GateTrackerHud) && !(existingHud instanceof GateTrackerHudHide)) {
                 ACTIVE_HUDS.remove(uuid);
+                logDirect(
+                    Level.WARNING,
+                        "[GateTrackDiag] open blocked by existing custom HUD uuid=%s hud=%s",
+                        uuid,
+                        existingHud.getClass().getSimpleName());
                 return OpenStatus.BLOCKED_BY_EXISTING_HUD;
             }
 
             hudManager.setCustomHud(playerRef, null);
             hudManager.setCustomHud(playerRef, newHud);
+                logDirect(
+                    Level.INFO,
+                    "[GateTrackDiag] open success via fallback custom HUD slot uuid=%s",
+                    uuid);
             return OpenStatus.OPENED;
         }
     }
@@ -202,11 +238,13 @@ public final class GateTrackerHud extends CustomUIHud {
             unregister(uuid);
             return;
         }
+
         Ref<EntityStore> ref = hud.targetPlayerRef.getReference();
         if (ref == null || !ref.isValid()) {
             unregister(uuid);
             return;
         }
+
         Store<EntityStore> liveStore = ref.getStore();
         if (liveStore == null || liveStore.isShutdown()) {
             return;
@@ -259,8 +297,8 @@ public final class GateTrackerHud extends CustomUIHud {
     }
 
     /**
-     * Writes the fields that need live refresh after build. Keep coordinate/world
-     * lines in this path so /gate track mirrors the old continuously-updating HUD.
+     * Writes only the fields that need live refresh after build: the gate meta /
+     * status line and the player's current coordinates.
      */
     private boolean computeDynamicHudLabels(@Nullable UUID playerUuid, @Nullable Store<EntityStore> store,
             @Nonnull UICommandBuilder uiCommandBuilder) {
@@ -273,8 +311,6 @@ public final class GateTrackerHud extends CustomUIHud {
             GateTrackerManager.clearTrackedEntry(playerUuid);
             boolean changed = false;
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerMeta.Text", "No active target");
-            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerGateCoords.Text", "Gate: --");
-            changed |= setTextIfChanged(uiCommandBuilder, "#TrackerWorld.Text", "World: --");
             changed |= setTextIfChanged(uiCommandBuilder, "#TrackerPlayerCoords.Text", "You: " + resolvePlayerCoords(store));
             return changed;
         }
@@ -284,40 +320,37 @@ public final class GateTrackerHud extends CustomUIHud {
                 "#TrackerMeta.Text",
                 entry.type().label() + " | Rank " + entry.rankLetter() + " | " + entry.status());
         changed |= setTextIfChanged(uiCommandBuilder,
-            "#TrackerGateCoords.Text",
-            "Gate: " + formatCoords(entry.x(), entry.y(), entry.z()));
-        changed |= setTextIfChanged(uiCommandBuilder,
-            "#TrackerWorld.Text",
-            "World: " + entry.worldName());
-        changed |= setTextIfChanged(uiCommandBuilder,
                 "#TrackerPlayerCoords.Text",
                 "You: " + resolvePlayerCoords(store));
         return changed;
     }
 
     /**
-     * Reads the player's current position using the ticking {@code store} so that
-     * component access is always on the correct store thread (mirrors
-     * {@code HudRefreshSystem.shouldRefreshForMovement}). When {@code store} is
-     * {@code null} (build-time call on the world thread) we fall back to
-     * {@code ref.getStore()} which is safe at that point.
+     * Returns the player's current position as a formatted coordinate string,
+     * delegating the actual component read to {@link PlayerCoordsFetcher}.
      */
     @Nonnull
     private String resolvePlayerCoords(@Nullable Store<EntityStore> store) {
-        Ref<EntityStore> ref = targetPlayerRef.getReference();
-        if (ref == null || !ref.isValid()) {
+        UUID uuid = targetPlayerRef.getUuid();
+        com.hypixel.hytale.math.vector.Vector3d pos = PlayerCoordsFetcher.fetchPosition(targetPlayerRef, store);
+        if (pos == null) {
+            if (uuid != null && shouldLogNow(LAST_COORD_FAIL_LOG_NANOS, uuid, COORD_FAIL_LOG_EVERY_NANOS)) {
+                logDirect(
+                        Level.WARNING,
+                        "[GateTrackDiag] resolvePlayerCoords failed: entity ref invalid or missing transform uuid=%s", uuid);
+            }
             return "(<untracked>)";
         }
-        Store<EntityStore> effectiveStore = (store != null) ? store : ref.getStore();
-        TransformComponent transform = effectiveStore.getComponent(ref, TransformComponent.getComponentType());
-        if (transform == null || transform.getPosition() == null) {
-            return "(<untracked>)";
+        String coords = PlayerCoordsFetcher.formatCoords(pos);
+        if (uuid != null && shouldLogNow(LAST_COORD_SAMPLE_LOG_NANOS, uuid, COORD_SAMPLE_LOG_EVERY_NANOS)) {
+            logDirect(
+                    Level.INFO,
+                    "[GateTrackDiag] sampled player coords uuid=%s coords=%s store=%s",
+                    uuid,
+                    coords,
+                    Integer.toHexString(System.identityHashCode(store)));
         }
-        return String.format(
-                "(%4d, %3d, %4d)",
-                (int) Math.floor(transform.getPosition().getX()),
-                (int) Math.floor(transform.getPosition().getY()),
-                (int) Math.floor(transform.getPosition().getZ()));
+        return coords;
     }
 
     @Nonnull
@@ -341,6 +374,32 @@ public final class GateTrackerHud extends CustomUIHud {
 
     private static Object getHudLock(@Nonnull UUID uuid) {
         return HUD_LOCKS.computeIfAbsent(uuid, ignored -> new Object());
+    }
+
+    private static void logDirect(@Nonnull Level level, @Nonnull String message, Object... args) {
+        String formatted = (args == null || args.length == 0)
+                ? message
+                : String.format(Locale.ROOT, message, args);
+        if (level.intValue() >= Level.SEVERE.intValue()) {
+            System.err.println(formatted);
+            return;
+        }
+        System.out.println(formatted);
+    }
+
+    private static boolean shouldLogNow(@Nonnull ConcurrentMap<UUID, Long> lastLogTimes,
+                                        @Nullable UUID uuid,
+                                        long intervalNanos) {
+        if (uuid == null) {
+            return false;
+        }
+        long now = System.nanoTime();
+        Long previous = lastLogTimes.get(uuid);
+        if (previous != null && now - previous < intervalNanos) {
+            return false;
+        }
+        lastLogTimes.put(uuid, now);
+        return true;
     }
 
     public enum OpenStatus {
