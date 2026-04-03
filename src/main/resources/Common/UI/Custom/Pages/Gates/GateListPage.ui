@@ -45,10 +45,13 @@ Group #GateListRoot {
   }
 
   Group {
+    Anchor: (Left: 0, Right: 0);
     FlexWeight: 1;
     LayoutMode: TopScrolling;
 
     Group #GateRows {
+      Anchor: (Top: 0, Left: 0, Right: 0);
+      FlexWeight: 1;
       LayoutMode: Top;
     }
   }

@@ -1,21 +1,21 @@
 @RowTrackButtonStyle = TextButtonStyle(
   Default: (
     Background: (TexturePath: "Images/TrackButtonSecondary.png", Border: 8),
-    LabelStyle: (FontSize: 10, TextColor: #bfd7ea, RenderBold: true)
+    LabelStyle: (FontSize: 10, TextColor: #bfd7ea, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)
   ),
   Hovered: (
     Background: (TexturePath: "Images/TrackButtonSecondaryHovered.png", Border: 8),
-    LabelStyle: (FontSize: 10, TextColor: #e6f4ff, RenderBold: true)
+    LabelStyle: (FontSize: 10, TextColor: #e6f4ff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)
   ),
   Pressed: (
     Background: (TexturePath: "Images/TrackButtonSecondaryPressed.png", Border: 8),
-    LabelStyle: (FontSize: 10, TextColor: #a8cde7, RenderBold: true)
+    LabelStyle: (FontSize: 10, TextColor: #a8cde7, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)
   )
 );
 
 Group {
   LayoutMode: Left;
-  Anchor: (Bottom: 5);
+  Anchor: (Top: 0, Left: 0, Right: 0, Height: 56, Bottom: 5);
   Background: (TexturePath: "Images/ObjectivePanelContainer.png", Border: 15);
 
   Group #TypeAccent {
